@@ -344,10 +344,18 @@ flowchart LR
 - Uncommitted changes preserved in working directory
 
 **Circuit Breaker Pattern:**
-- Opens after 3 consecutive failures without progress
+
+| Trigger | Threshold | Action |
+|---------|-----------|--------|
+| No file changes | 3 consecutive spawns | HALF_OPEN → prompt user |
+| Same error repeated | 5 consecutive spawns | OPEN → halt execution |
+| Test-only work | 3 consecutive spawns with `work_type: TESTING` | Warn user, suggest implementation focus |
+| Declining output | 70% reduction in output length | HALF_OPEN → check for stagnation |
+
 - States: CLOSED (normal) → HALF_OPEN (monitoring) → OPEN (halted)
 - Requires user intervention to reset when OPEN
 - Prevents runaway token consumption
+- Test-only detection prevents Claude from getting stuck in test loops
 
 ### Implementation Status Protocol
 
@@ -433,6 +441,19 @@ Comprehensive logging for debugging and audit:
 - Shows Claude command arguments, raw output, parse results
 - Useful for troubleshooting prompt/output issues
 
+**Log Management:**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `LOG_MAX_SIZE_MB` | 50 | Max size per log file before rotation |
+| `LOG_MAX_FILES` | 10 | Number of rotated files to keep |
+| `LOG_RETENTION_DAYS` | 30 | Days to keep old logs |
+
+- Log rotation: When `server.log` exceeds max size, rotated to `server.log.1`, etc.
+- Claude output logs: One file per spawn, cleaned up after `LOG_RETENTION_DAYS`
+- Archived sessions: Logs moved to `logs/archive/{sessionId}/` on session completion
+- Cleanup job: Runs daily at midnight to remove expired logs
+
 ### Git Commit Strategy
 
 Commits are created **only when implementation completes without re-planning**:
@@ -481,7 +502,9 @@ Session data is stored as JSON files in `~/.clrke/` directory, organized by proj
 │       ├── todos.json                # Discovered/collected TODOs
 │       ├── reviews.json              # Review iterations and findings
 │       ├── pr.json                   # Pull request info + reviews
-│       └── events.json               # Audit log (separate, can grow large)
+│       ├── events.json               # Audit log (separate, can grow large)
+│       ├── status.json               # Live execution status (updated frequently)
+│       └── progress.json             # Real-time progress during Claude execution
 ```
 
 ### File Organization
@@ -496,6 +519,8 @@ Session data is stored as JSON files in `~/.clrke/` directory, organized by proj
 | `reviews.json` | Review iteration findings |
 | `pr.json` | Pull request info and review comments |
 | `events.json` | Audit log of all session events |
+| `status.json` | Live execution status for UI updates |
+| `progress.json` | Real-time progress during Claude execution |
 
 ### File Formats
 
@@ -649,6 +674,42 @@ Session data is stored as JSON files in `~/.clrke/` directory, organized by proj
       "createdAt": "2026-01-10T13:30:00Z"
     }
   ]
+}
+```
+
+#### status.json
+Updated frequently during execution for UI state:
+```json
+{
+  "version": "1.0",
+  "sessionId": "uuid-v4",
+  "timestamp": "2026-01-10T14:30:00Z",
+  "currentStage": 3,
+  "currentStepId": "step-uuid-2",
+  "status": "executing",
+  "claudeSpawnCount": 5,
+  "callsThisHour": 15,
+  "maxCallsPerHour": 100,
+  "nextHourReset": "2026-01-10T15:00:00Z",
+  "circuitBreakerState": "CLOSED",
+  "lastAction": "executing_step",
+  "lastActionAt": "2026-01-10T14:29:55Z"
+}
+```
+
+#### progress.json
+Updated every few seconds during active Claude execution:
+```json
+{
+  "version": "1.0",
+  "sessionId": "uuid-v4",
+  "isExecuting": true,
+  "startedAt": "2026-01-10T14:25:00Z",
+  "elapsedSeconds": 300,
+  "lastOutputLine": "Writing auth middleware...",
+  "filesModifiedThisStep": 2,
+  "testsStatus": "NOT_RUN",
+  "estimatedProgress": 60
 }
 ```
 
@@ -839,6 +900,16 @@ sequenceDiagram
 | `--append-system-prompt` | Inject loop context into Claude's system prompt |
 | `-p` | Pass prompts programmatically |
 
+**Allowed Tools by Stage:**
+
+| Stage | Tools | Rationale |
+|-------|-------|-----------|
+| Stage 1: Discovery | `Read,Glob,Grep,Task` | Read-only exploration of codebase |
+| Stage 2: Plan Review | `Read,Glob,Grep,Task` | Read-only review and analysis |
+| Stage 3: Implementation | `Read,Write,Edit,Bash,Glob,Grep,Task` | Full access for implementation |
+| Stage 4: PR Creation | `Read,Bash(git *),Bash(gh *)` | Git operations and PR creation only |
+| Stage 5: PR Review | `Read,Glob,Grep,Task,Bash(git diff*)` | Read-only review with diff access |
+
 **Note:** Plan mode is handled via the `EnterPlanMode` tool in prompts, not a CLI flag. Claude enters plan mode programmatically based on prompt instructions.
 
 ### Session Continuity
@@ -850,15 +921,41 @@ Session context is maintained across Claude Code spawns (like Ralph):
 3. **24-hour expiration** - Sessions expire after 24 hours of inactivity
 4. **Loop context** - Previous actions/state appended to help Claude understand where it left off
 
+**Claude CLI JSON Response Format:**
+
+When using `--output-format json`, Claude CLI returns:
+```json
+{
+  "result": "The actual text response from Claude",
+  "sessionId": "uuid-v4-session-id",
+  "costUSD": 0.0234,
+  "durationMs": 45000,
+  "isError": false,
+  "metadata": {
+    "session_id": "uuid-v4-session-id",
+    "model": "claude-sonnet-4-20250514"
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `result` | Claude's text response (parse for markers) |
+| `sessionId` | Session ID for `--continue` flag |
+| `costUSD` | API cost for this call |
+| `durationMs` | Execution time in milliseconds |
+| `isError` | Whether an error occurred |
+| `metadata.session_id` | Alternative location for session ID |
+
 **Session ID Extraction:**
 ```javascript
 // Claude CLI returns session ID in JSON output
 const sessionId = output.sessionId || output.metadata?.session_id;
 
 // Stored with timestamp for expiration tracking
-db.sessions.update(sessionId, {
-  claude_session_id: sessionId,
-  session_updated_at: new Date().toISOString()
+sessions.update(sessionId, {
+  claudeSessionId: sessionId,
+  updatedAt: new Date().toISOString()
 });
 ```
 
