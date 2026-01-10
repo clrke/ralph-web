@@ -22,9 +22,8 @@ When starting a new session, users fill out a structured template:
 | **Project Path** | Yes | Absolute path to the project/codebase |
 | **Description** | Yes | Detailed explanation of what the feature should do |
 | **Acceptance Criteria** | Yes | Bullet list of conditions that must be met |
-| **Affected Files** | No | Known files that will likely need changes |
-| **Technical Notes** | No | Implementation hints, constraints, or preferences |
-| **Priority** | Yes | High / Medium / Low |
+| **Affected Files** | No | Known files that will likely need changes (helps subagent exploration) |
+| **Technical Notes** | No | Implementation hints, constraints, or preferences (appended to prompts) |
 
 ### Default Acceptance Criteria
 
@@ -116,7 +115,7 @@ flowchart TB
         AH --> AC
         AD -->|No| AI["PR approved"]
         AI --> AJ{"User chooses action"}
-        AJ -->|Merge now| AK["Merge PR to base branch"]
+        AJ -->|Open in GitHub| AK["User merges via GitHub web"]
         AJ -->|Keep open| AL["PR stays open, session complete"]
         AJ -->|Start new feature| AM["Begin new session"]
     end
@@ -168,7 +167,6 @@ flowchart TB
 
     subgraph ClaudeCode["Claude Code CLI"]
         CC["claude-code process"]
-        PlanMode["--plan mode"]
         Subagents["Subagent execution"]
     end
 
@@ -276,42 +274,47 @@ Each review iteration checks for:
 
 ### TODO Handling (Re-planning Flow)
 
-When Claude encounters unknowns during implementation, they're collected and trigger a return to Plan Review:
+When Claude encounters unknowns during implementation, handling depends on severity:
 
 ```mermaid
 flowchart TB
     subgraph Implementation["Stage 3: Implementation"]
-        A["Execute plan step"] --> B{"Checkpoint"}
-        B --> C["Collect TODOs/unknowns"]
-        C --> D{"Any items?"}
-        D -->|Yes| E["Return to Plan Review"]
-        D -->|No| F["Continue to next step"]
+        A["Execute plan step"] --> B{"Unknown encountered?"}
+        B -->|Critical blocker| C["Pause immediately"]
+        C --> D["Present blocker to user"]
+        D --> E["User provides guidance"]
+        E --> A
+        B -->|Non-critical| F["Add to collection"]
+        F --> G{"Checkpoint reached?"}
+        G -->|No| A
+        G -->|Yes| H{"Items collected?"}
+        H -->|Yes| I["Return to Plan Review"]
+        H -->|No| J["Continue to next step"]
     end
 
     subgraph PlanReview["Stage 2: Plan Review (Re-entry)"]
-        E --> G["Present collected TODOs"]
-        G --> H["Full plan re-review"]
-        H --> I["Update plan with new steps"]
-        I --> J["Resume implementation"]
+        I --> K["Present collected items"]
+        K --> L["Full plan re-review"]
+        L --> M["Update plan with new steps"]
+        M --> N["Resume implementation"]
     end
 ```
 
-**Why this approach:**
-- TODOs discovered during implementation may be larger than the original feature
-- Full re-review ensures the plan accounts for new complexity
-- Prevents accumulating technical debt in TODO comments
+### Blocker vs Non-Critical Unknown
 
-### TODO Collection
+| Situation | Handling | Example |
+|-----------|----------|---------|
+| **Critical Blocker** | Pause immediately, present as `[DECISION_NEEDED priority="1"]` | "Cannot find required API endpoint - need clarification" |
+| **Non-Critical Unknown** | Collect, continue to checkpoint | "Edge case for empty input - should validate?" |
+| **Discovered Dependency** | Collect, add to plan in review | "Need auth middleware - not in original plan" |
+| **Scope Expansion** | Collect, reassess in review | "This feature needs 3 more components than planned" |
 
-At each checkpoint during implementation, Claude collects:
+**Critical blockers** are presented immediately as `[DECISION_NEEDED priority="1" category="blocker"]` with options for how to proceed. Claude pauses until the user responds.
 
-| Type | Description | Example |
-|------|-------------|---------|
-| **Blocker** | Cannot proceed without resolution | "Need database schema for user preferences" |
-| **Unknown** | Discovered complexity | "Edge case for concurrent updates not in plan" |
-| **Dependency** | Missing prerequisite | "Auth middleware needs to be created first" |
-
-All collected items are presented as `[DECISION_NEEDED]` questions during Plan Review re-entry.
+**Non-critical items** are collected and presented at the next checkpoint, triggering a return to Plan Review. This allows:
+- Batching related decisions together
+- Reassessing the full plan with new information
+- Proper sizing of discovered work (may be larger than original feature)
 
 ### TODO Discovery (Initial Scan)
 
@@ -420,10 +423,11 @@ Comprehensive logging for debugging and audit:
 
 ### Git Commit Strategy
 
-Commits are created **only when all TODOs are resolved**:
+Commits are created **only when implementation completes without re-planning**:
 
 - No intermediate commits during implementation
-- Single atomic commit when "All TODOs resolved?" gate passes
+- Single atomic commit when Stage 3 completes successfully
+- If re-planning triggered, no commit until implementation resumes and completes
 - Ensures clean git history without WIP commits
 
 ### Rollback Mechanism
@@ -602,11 +606,9 @@ flowchart LR
     end
 
     subgraph TodoEvents["TODOs"]
-        T2["todo.created"]
-        T3["todo.updated"]
-        T4["todo.resolved"]
-        T5["todo.gate_blocked"]
-        T6["todo.gate_passed"]
+        T2["todo.collected"]
+        T3["todo.blocker_encountered"]
+        T4["todo.replanning_triggered"]
     end
 
     subgraph PREvents["Pull Request"]
@@ -630,10 +632,9 @@ flowchart LR
 | `review.findings` | `{ planId, iteration, issues[], shortcuts[] }` |
 | `review.signoff_required` | `{ planId, reviewCount, recommendedMin: 10 }` |
 | `execution.paused_blocker` | `{ sessionId, stepId, blocker, needsInput: true }` |
-| `todo.created` | `{ sessionId, todoId, title, filePath, lineNumber, type }` |
-| `todo.resolved` | `{ sessionId, todoId, resolution }` |
-| `todo.gate_blocked` | `{ sessionId, pendingCount, todos[] }` |
-| `todo.gate_passed` | `{ sessionId, resolvedCount }` |
+| `todo.collected` | `{ sessionId, stepId, item: { type, description, file?, line? } }` |
+| `todo.blocker_encountered` | `{ sessionId, stepId, blocker, needsInput: true }` |
+| `todo.replanning_triggered` | `{ sessionId, collectedItems[], returnToStage: 2 }` |
 | `pr.created` | `{ sessionId, prNumber, prUrl, title }` |
 | `pr.issue_found` | `{ prId, issue, severity, suggestion }` |
 
@@ -960,7 +961,18 @@ You are implementing an approved plan. Execute each step carefully.
 Summary of what was done.
 [/STEP_COMPLETE]
 
-2. Collect blockers and unknowns during implementation. At each checkpoint (after completing a plan step or group of related steps), batch them into prioritized decisions:
+2. If you encounter a critical blocker that prevents ANY progress, present it immediately:
+[DECISION_NEEDED priority="1" category="blocker" immediate="true"]
+Issue: Description of what's blocking progress.
+Context: What you've tried and why it didn't work.
+
+How should we proceed?
+- Option A: Recommended approach (recommended)
+- Option B: Alternative approach
+- Option C: Provide more context
+[/DECISION_NEEDED]
+
+3. For non-critical unknowns, collect them and present at checkpoints (after completing a plan step or group of related steps):
 
 [CHECKPOINT step="{{stepId}}"]
 ## Decisions Needed
@@ -986,14 +998,14 @@ How should we handle this?
 [/DECISION_NEEDED]
 [/CHECKPOINT]
 
-3. Present decisions progressively:
+4. Present decisions progressively:
    - Priority 1: Blockers that prevent continuation
    - Priority 2: Important TODOs that affect quality
    - Priority 3: Minor improvements or cleanup items
 
-4. Run tests after implementation. If tests fail, attempt to fix (max 3 attempts).
+5. Run tests after implementation. If tests fail, attempt to fix (max 3 attempts).
 
-5. When all steps complete:
+6. When all steps complete:
 [IMPLEMENTATION_COMPLETE]
 Summary of all changes made.
 [/IMPLEMENTATION_COMPLETE]
@@ -1188,7 +1200,7 @@ flowchart TB
 - Search by title or project path
 - Sort by last activity, created date, or stage
 - Quick actions (resume, archive, view PR)
-- Shows deferred TODOs count per session
+- Shows re-planning count per session (times returned to Stage 2)
 
 ### Session View
 
@@ -1337,7 +1349,13 @@ Subagent failures are logged but don't block workflow progression.
 
 ### Authentication
 
-**Web Interface**: Single-user, no authentication (v1). Runs on localhost only.
+**Web Interface**: Single-user, no authentication (v1).
+
+**Network Access:**
+- Server binds to `0.0.0.0` (all interfaces) by default
+- Accessible from any device on your local network (phone, tablet, etc.)
+- Access via `http://<your-machine-ip>:3333`
+- **Security note:** Only use on trusted private networks
 
 **GitHub**: Uses local `gh` CLI authentication. User must have `gh auth login` configured on the machine where the server runs.
 
@@ -1444,6 +1462,19 @@ Can be overridden per session when starting a new feature.
 - Expired sessions: uncommitted changes preserved in working directory
 - Open PRs remain open but session context is lost
 
+### Session Actions
+
+| Action | Behavior |
+|--------|----------|
+| **Resume** | Reopen session view, continue from current stage |
+| **Pause** | Mark as paused, preserve state, stop Claude process |
+| **Archive** | Hide from default list view (can be shown via filter) |
+| **Delete** | Hide permanently (data preserved in DB, never hard deleted) |
+| **Rollback** | Reset to `base_commit_sha`, mark session as rolled back |
+| **View PR** | Open PR URL in browser |
+
+**Note:** Neither Archive nor Delete actually removes data from the database. Sessions are soft-deleted for audit purposes.
+
 ### Plan Editing
 
 Plans can **only be modified through Claude**, not directly by user:
@@ -1462,6 +1493,18 @@ Plans can **only be modified through Claude**, not directly by user:
 | GitHub CLI (`gh`) | v2.0+ | For PR creation |
 
 Version checked at startup; warning shown if incompatible.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | 3333 | Server port |
+| `HOST` | 0.0.0.0 | Server host (all interfaces for network access) |
+| `DATABASE_PATH` | ./data/sessions.db | SQLite database path |
+| `LOG_DIR` | ./logs | Log files directory |
+| `DEBUG` | false | Enable verbose debug logging |
+| `MAX_CALLS_PER_HOUR` | 100 | Rate limit for Claude spawns |
+| `CLAUDE_TIMEOUT_MINUTES` | 15 | Timeout for single Claude execution |
 
 ## Tech Stack
 
