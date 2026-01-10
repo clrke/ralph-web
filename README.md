@@ -222,22 +222,20 @@ To modify the plan, users select a step and describe the change. Claude validate
 
 ### Structured Question Forms
 
+All questions use `[DECISION_NEEDED]` format with these presentation types:
+
 ```mermaid
 flowchart LR
     subgraph QuestionTypes["Question Types"]
         SingleChoice["Single Choice<br/>(radio buttons)"]
         MultiChoice["Multi Choice<br/>(checkboxes)"]
         TextInput["Text Input<br/>(short/long)"]
-        FileSelect["File Selector<br/>(from codebase)"]
-        CodeSnippet["Code Snippet<br/>(with syntax highlight)"]
         Confirmation["Yes/No<br/>(with context)"]
     end
 
     subgraph Presentation["Presentation"]
-        Grouped["Grouped by topic"]
-        Priority["Ordered by priority"]
-        Required["Required vs optional"]
-        Defaults["Smart defaults"]
+        Priority["Ordered by priority<br/>(P1 → P2 → P3)"]
+        Defaults["Recommended option<br/>marked in each"]
     end
 ```
 
@@ -371,6 +369,13 @@ flowchart LR
 | `gh pr create` failure | Retry once, then pause with error details |
 | Subagent failure/timeout | Log error, continue with main Claude (degraded mode) |
 | WebSocket disconnect | Auto-reconnect with exponential backoff (max 5 attempts) |
+| User cancellation | Kill Claude process, update status, preserve state for resume |
+
+**User Cancellation:**
+- User clicks "Cancel" button during any stage
+- Server sends SIGTERM to Claude process, waits 5s, then SIGKILL if needed
+- Session marked as "paused", can be resumed later
+- Uncommitted changes preserved in working directory
 
 **Circuit Breaker Pattern:**
 - Opens after 3 consecutive failures without progress
@@ -389,6 +394,46 @@ flowchart LR
 
 Token usage is tracked per session but not strictly budgeted in v1.
 
+### Rate Limiting
+
+Prevents runaway API costs with hourly limits:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `MAX_CALLS_PER_HOUR` | 100 | Maximum Claude spawns per hour |
+| `CLAUDE_TIMEOUT_MINUTES` | 15 | Timeout for single Claude execution |
+
+**Hourly Reset Logic:**
+- Counter stored in memory, resets each hour (on the hour)
+- When limit reached, UI shows countdown until next hour
+- User can override limit for current session (with warning)
+
+**API 5-Hour Limit Detection:**
+- If Claude returns "usage limit reached", pause session
+- Notify user with estimated wait time
+- Option to wait or close session
+
+### Logging & Debugging
+
+Comprehensive logging for debugging and audit:
+
+| Log Type | Location | Content |
+|----------|----------|---------|
+| Server logs | `logs/server.log` | API requests, WebSocket events, errors |
+| Claude outputs | `logs/claude_{sessionId}_{timestamp}.log` | Raw Claude CLI output per spawn |
+| Session events | Database `session_events` table | Stage transitions, user actions, decisions |
+
+**Log Levels:**
+- `INFO` - Normal operations (stage transitions, questions asked)
+- `WARN` - Recoverable issues (retry attempts, rate limit approaching)
+- `ERROR` - Failures requiring attention (Claude timeout, parse failure)
+- `DEBUG` - Verbose output (enabled via `DEBUG=true` env var)
+
+**Debug Mode:**
+- Set `DEBUG=true` to enable verbose logging
+- Shows Claude command arguments, raw output, parse results
+- Useful for troubleshooting prompt/output issues
+
 ### Git Commit Strategy
 
 Commits are created **only when all TODOs are resolved**:
@@ -396,7 +441,24 @@ Commits are created **only when all TODOs are resolved**:
 - No intermediate commits during implementation
 - Single atomic commit when "All TODOs resolved?" gate passes
 - Ensures clean git history without WIP commits
-- Rollback = discard all uncommitted changes
+
+### Rollback Mechanism
+
+Uses `git reset --hard` to undo all changes:
+
+| Trigger | Action |
+|---------|--------|
+| User clicks "Rollback" button | Reset to commit before session started |
+| Session abandoned | Uncommitted changes remain (user's responsibility) |
+| Implementation failed after 3 retries | Prompt user: continue, rollback, or pause |
+
+**How it works:**
+1. Session stores `base_commit_sha` at start (the HEAD before any changes)
+2. Rollback executes: `git reset --hard {base_commit_sha} && git clean -fd`
+3. Session marked as "rolled_back", cannot be resumed
+4. User must start new session to retry
+
+**Warning:** Rollback is destructive - all uncommitted changes are lost.
 
 ## Database Schema
 
@@ -650,11 +712,13 @@ sequenceDiagram
 
 | Flag | Purpose |
 |------|---------|
-| `--plan` | Enter plan mode for exploration |
 | `--continue` | Resume session context across spawns |
 | `--output-format json` | Structured output parsing |
-| `--allowed-tools` | Control available tools per stage |
+| `--allowedTools` | Control available tools per stage (comma-separated) |
+| `--append-system-prompt` | Inject loop context into Claude's system prompt |
 | `-p` | Pass prompts programmatically |
+
+**Note:** Plan mode is handled via the `EnterPlanMode` tool in prompts, not a CLI flag. Claude enters plan mode programmatically based on prompt instructions.
 
 ### Session Continuity
 
@@ -664,6 +728,23 @@ Session context is maintained across Claude Code spawns (like Ralph):
 2. **Session ID persistence** - Extracted from Claude's JSON output, stored in database
 3. **24-hour expiration** - Sessions expire after 24 hours of inactivity
 4. **Loop context** - Previous actions/state appended to help Claude understand where it left off
+
+**Session ID Extraction:**
+```javascript
+// Claude CLI returns session ID in JSON output
+const sessionId = output.sessionId || output.metadata?.session_id;
+
+// Stored with timestamp for expiration tracking
+db.sessions.update(sessionId, {
+  claude_session_id: sessionId,
+  session_updated_at: new Date().toISOString()
+});
+```
+
+**Progressive Questioning Flow:**
+- User answers are sent to running Claude process via stdin
+- Claude receives answers and outputs next priority level questions
+- Process continues until all priorities answered or user approves plan
 
 This allows:
 - 10 review iterations without losing context
@@ -743,6 +824,10 @@ When batching decisions at checkpoints:
 [DECISION_NEEDED ...]...[/DECISION_NEEDED]
 [DECISION_NEEDED ...]...[/DECISION_NEEDED]
 [/CHECKPOINT]
+
+Plan mode state changes:
+[PLAN_MODE_ENTERED]
+[PLAN_MODE_EXITED]
 ```
 
 **2. LLM Fallback** - When markers aren't present, use Haiku to parse:
@@ -780,7 +865,8 @@ Project Path: {{projectPath}}
 {{acceptanceCriteria}}
 
 ## Instructions
-1. Enter plan mode using the EnterPlanMode tool.
+1. Enter plan mode using the EnterPlanMode tool. Output:
+[PLAN_MODE_ENTERED]
 
 2. Within plan mode, spawn domain-specific subagents for parallel codebase exploration:
    - Frontend Agent: UI components, React patterns, styling
@@ -812,7 +898,8 @@ Step title here
 Description of what this step accomplishes.
 [/PLAN_STEP]
 
-7. Exit plan mode with ExitPlanMode when ready for user approval.
+7. Exit plan mode with ExitPlanMode when ready for user approval. Output:
+[PLAN_MODE_EXITED]
 ```
 
 #### Stage 2: Plan Review
@@ -1202,6 +1289,20 @@ The web app reads CLAUDE.md files and appends to prompts:
 - Project-level takes precedence over global
 - Content appended to stage prompts as system context
 
+### Project Path Validation
+
+Before starting a session, the server validates the project path:
+
+| Check | Validation | Error Message |
+|-------|------------|---------------|
+| Path exists | `fs.existsSync(projectPath)` | "Project path does not exist" |
+| Is directory | `fs.statSync(projectPath).isDirectory()` | "Project path is not a directory" |
+| Is git repo | `.git` folder exists | "Project path is not a git repository" |
+| Has read access | `fs.accessSync(projectPath, fs.constants.R_OK)` | "Cannot read project directory" |
+| Has write access | `fs.accessSync(projectPath, fs.constants.W_OK)` | "Cannot write to project directory" |
+
+All checks must pass before session creation. Errors shown in UI with remediation steps.
+
 ### Branch Strategy
 
 | Setting | Description | Default |
@@ -1290,11 +1391,11 @@ claude-code-web/
 │   │   │   │   ├── StepCard.tsx
 │   │   │   │   └── ChangeRequestForm.tsx
 │   │   │   ├── QuestionForms/
-│   │   │   │   ├── QuestionForm.tsx
+│   │   │   │   ├── DecisionForm.tsx
 │   │   │   │   ├── SingleChoice.tsx
 │   │   │   │   ├── MultiChoice.tsx
 │   │   │   │   ├── TextInput.tsx
-│   │   │   │   └── FileSelector.tsx
+│   │   │   │   └── Confirmation.tsx
 │   │   │   ├── ReviewTracker/
 │   │   │   │   ├── IterationCounter.tsx
 │   │   │   │   ├── FindingsList.tsx
