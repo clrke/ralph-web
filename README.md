@@ -136,7 +136,7 @@ flowchart TB
             Chat["Conversation View"]
             Forms["Structured Question Forms"]
             PlanEditor["Visual Plan Editor"]
-            TodoKanban["TODO Kanban Board"]
+            CollectedItems["Collected Items Panel"]
             Terminal["Live Terminal Output"]
             PRView["PR Review Panel"]
         end
@@ -255,11 +255,13 @@ flowchart TB
 
 **Review Flow:**
 1. User answers questions from current review iteration
-2. Claude updates plan based on answers
+2. Claude immediately updates plan based on answers (no separate apply step)
 3. Next review iteration starts automatically
 4. Continues until user clicks "Approve & Implement" or reaches 10x
 
 Reviews are automatic after each user response - no manual "Run Review" button.
+
+**Important:** Plan updates happen immediately when users answer `[DECISION_NEEDED]` questions. There's no separate "Apply Changes" step - Claude applies the chosen option and shows the updated plan.
 
 ### Review Issue Categories
 
@@ -370,6 +372,39 @@ flowchart LR
 - Requires user intervention to reset when OPEN
 - Prevents runaway token consumption
 
+### Implementation Status Protocol
+
+During Stage 3, Claude outputs structured status updates for real-time tracking:
+
+```
+[IMPLEMENTATION_STATUS]
+step_id: {{stepId}}
+status: IN_PROGRESS | COMPLETE | BLOCKED
+files_modified: 3
+tests_status: PASSING | FAILING | NOT_RUN
+work_type: IMPLEMENTATION | TESTING | REFACTORING
+progress: 60
+message: Completed auth middleware, moving to endpoint
+[/IMPLEMENTATION_STATUS]
+```
+
+| Field | Description |
+|-------|-------------|
+| `step_id` | Current plan step being executed |
+| `status` | Current execution state |
+| `files_modified` | Count of files changed this step |
+| `tests_status` | Latest test run result |
+| `work_type` | Type of work being performed |
+| `progress` | Percentage complete (0-100) |
+| `message` | Human-readable summary |
+
+Status updates are emitted at:
+- Step start (`status: IN_PROGRESS`)
+- After each file modification
+- After test runs
+- Step completion (`status: COMPLETE`)
+- On blockers (`status: BLOCKED`)
+
 ### Token & Context Management
 
 | Trigger | Action |
@@ -471,6 +506,7 @@ erDiagram
         string base_commit_sha
         string status
         int current_stage
+        int replanning_count
         string claude_session_id
         datetime session_expires_at
         datetime created_at
@@ -603,6 +639,7 @@ flowchart LR
         U["execution.step_completed"]
         V["execution.paused_blocker"]
         W["execution.resumed"]
+        X2["execution.status"]
     end
 
     subgraph TodoEvents["TODOs"]
@@ -632,6 +669,7 @@ flowchart LR
 | `review.findings` | `{ planId, iteration, issues[], shortcuts[] }` |
 | `review.signoff_required` | `{ planId, reviewCount, recommendedMin: 10 }` |
 | `execution.paused_blocker` | `{ sessionId, stepId, blocker, needsInput: true }` |
+| `execution.status` | `{ sessionId, stepId, status, filesModified, testsStatus, workType, progress, message }` |
 | `todo.collected` | `{ sessionId, stepId, item: { type, description, file?, line? } }` |
 | `todo.blocker_encountered` | `{ sessionId, stepId, blocker, needsInput: true }` |
 | `todo.replanning_triggered` | `{ sessionId, collectedItems[], returnToStage: 2 }` |
@@ -839,6 +877,17 @@ Plan mode state changes:
 - Incomplete markers (missing close tag) trigger Haiku fallback
 - Priority attribute determines question ordering (1 = ask first, 3 = ask last)
 
+**Two-Stage Error Filtering:**
+
+Error detection uses a two-stage filter to prevent false positives:
+
+| Stage | Purpose | Examples |
+|-------|---------|----------|
+| **Stage 1: Filter false positives** | Ignore error-like strings in non-error contexts | `"is_error": false`, `error_count: 0`, `no error` |
+| **Stage 2: Detect real errors** | Match actual error patterns | `Error:`, `Exception`, `Fatal:`, `failed with` |
+
+This prevents false negatives when Claude outputs JSON with error-related field names that don't indicate actual errors.
+
 This ensures reliable parsing while gracefully handling edge cases.
 
 ### Prompt Building by Stage
@@ -977,14 +1026,14 @@ How should we proceed?
 [CHECKPOINT step="{{stepId}}"]
 ## Decisions Needed
 
-[DECISION_NEEDED priority="1" category="blocker"]
-Issue: Description of what's blocking progress.
-Context: What you've tried and why it didn't work.
+[DECISION_NEEDED priority="2" category="dependency"]
+Issue: Discovered dependency not in original plan.
+Context: Need auth middleware before this API endpoint works.
 
 How should we proceed?
-- Option A: Recommended approach (recommended)
-- Option B: Alternative approach
-- Option C: Skip this step and continue
+- Option A: Add to plan and implement now (recommended)
+- Option B: Create separate task for later
+- Option C: Work around without this dependency
 [/DECISION_NEEDED]
 
 [DECISION_NEEDED priority="2" category="todo"]
@@ -1194,6 +1243,7 @@ flowchart TB
 - ✅ Completed - PR merged or closed
 - ⚪ Expired - Session timed out
 - 🔴 Error - Requires attention
+- 🔙 Rolled Back - Changes reverted
 
 **Dashboard Features:**
 - Filter by status
@@ -1541,11 +1591,10 @@ claude-code-web/
 │   │   │   │   ├── IterationCounter.tsx
 │   │   │   │   ├── FindingsList.tsx
 │   │   │   │   └── SignOffGate.tsx
-│   │   │   ├── TodoKanban/
-│   │   │   │   ├── KanbanBoard.tsx
-│   │   │   │   ├── TodoCard.tsx
-│   │   │   │   ├── TodoColumn.tsx
-│   │   │   │   └── PRGate.tsx
+│   │   │   ├── CollectedItems/
+│   │   │   │   ├── ItemsList.tsx
+│   │   │   │   ├── ItemCard.tsx
+│   │   │   │   └── ReplanningBanner.tsx
 │   │   │   ├── Terminal/
 │   │   │   │   └── LiveOutput.tsx
 │   │   │   └── PRView/
@@ -1560,16 +1609,16 @@ claude-code-web/
 │   │   │   ├── usePlan.ts
 │   │   │   ├── useQuestions.ts
 │   │   │   ├── useReviewCycle.ts
-│   │   │   └── useTodos.ts
+│   │   │   └── useCollectedItems.ts
 │   │   ├── store/
 │   │   │   ├── sessionStore.ts
 │   │   │   ├── planStore.ts
-│   │   │   └── todoStore.ts
+│   │   │   └── collectedItemsStore.ts
 │   │   └── types/
 │   │       ├── session.ts
 │   │       ├── plan.ts
 │   │       ├── questions.ts
-│   │       └── todo.ts
+│   │       └── collectedItems.ts
 │   └── public/
 ├── server/
 │   ├── src/
