@@ -89,25 +89,15 @@ flowchart TB
 
     subgraph Stage3["Stage 3: Implementation"]
         O --> Q["Execute plan step"]
-        Q --> R{"Unknown encountered?"}
-        R -->|Yes| R2{"Blocker?"}
-        R2 -->|Yes, blocker| S["Pause execution"]
-        S --> T["Enter plan mode"]
-        T --> U["Present questions"]
-        U --> V["User answers"]
-        V --> W["Update plan"]
-        W --> Q
-        R2 -->|No, non-blocker| TODO["Add TODO comment in code"]
-        TODO --> TODO2["Add to TODO Kanban"]
-        TODO2 --> X
+        Q --> R{"Checkpoint reached?"}
+        R -->|Yes| R2{"TODOs or blockers?"}
+        R2 -->|Yes| TODO["Collect TODOs/blockers"]
+        TODO --> TODO2["Return to Stage 2"]
+        TODO2 --> G
+        R2 -->|No| X
         R -->|No| X{"More steps?"}
         X -->|Yes| Q
-        X -->|No| Y{"All TODOs resolved?"}
-        Y -->|No| TODO3["Show TODO Kanban"]
-        TODO3 --> TODO4["User addresses TODO"]
-        TODO4 --> TODO5["Execute TODO fix"]
-        TODO5 --> Y
-        Y -->|Yes| Z2["Implementation complete"]
+        X -->|No| Z2["Implementation complete"]
     end
 
     subgraph Stage4["Stage 4: PR Creation"]
@@ -284,62 +274,56 @@ Each review iteration checks for:
 | **Security** | SQL injection, XSS vulnerabilities, exposed secrets, missing auth checks |
 | **Performance** | N+1 queries, missing indexes, unnecessary re-renders, large bundle size |
 
-### TODO Kanban Board
+### TODO Handling (Re-planning Flow)
+
+When Claude encounters unknowns during implementation, they're collected and trigger a return to Plan Review:
 
 ```mermaid
 flowchart TB
-    subgraph TodoKanban["TODO Kanban Board"]
-        subgraph Columns["Columns"]
-            Pending["📋 Pending"]
-            InProgress["🔄 In Progress"]
-            Resolved["✅ Resolved"]
-        end
+    subgraph Implementation["Stage 3: Implementation"]
+        A["Execute plan step"] --> B{"Checkpoint"}
+        B --> C["Collect TODOs/unknowns"]
+        C --> D{"Any items?"}
+        D -->|Yes| E["Return to Plan Review"]
+        D -->|No| F["Continue to next step"]
+    end
 
-        subgraph TodoCard["TODO Card"]
-            Title["Title: Handle edge case for empty input"]
-            Location["📍 src/utils/validate.ts:42"]
-            Type["Type: Non-blocker"]
-            Context["Context from Claude's analysis"]
-            Actions["[Address] [Defer] [Mark Resolved]"]
-        end
-
-        subgraph Gate["PR Gate"]
-            Check{"All TODOs resolved?"}
-            Block["🚫 Cannot create PR"]
-            Proceed["✅ Proceed to PR"]
-        end
-
-        Pending --> InProgress
-        InProgress --> Resolved
-        Columns --> Gate
-        Check -->|No pending TODOs| Proceed
-        Check -->|Has pending TODOs| Block
+    subgraph PlanReview["Stage 2: Plan Review (Re-entry)"]
+        E --> G["Present collected TODOs"]
+        G --> H["Full plan re-review"]
+        H --> I["Update plan with new steps"]
+        I --> J["Resume implementation"]
     end
 ```
 
-### TODO Types
+**Why this approach:**
+- TODOs discovered during implementation may be larger than the original feature
+- Full re-review ensures the plan accounts for new complexity
+- Prevents accumulating technical debt in TODO comments
 
-| Type | Description | Behavior |
-|------|-------------|----------|
-| **Blocker** | Cannot proceed without resolution | Pauses execution, enters plan mode |
-| **Non-blocker** | Can continue, but needs addressing | Adds TODO comment + kanban card |
-| **Deferred** | User explicitly defers | Doesn't block PR, stays as TODO in code |
+### TODO Collection
 
-### TODO Discovery
+At each checkpoint during implementation, Claude collects:
 
-TODOs are discovered from two sources:
+| Type | Description | Example |
+|------|-------------|---------|
+| **Blocker** | Cannot proceed without resolution | "Need database schema for user preferences" |
+| **Unknown** | Discovered complexity | "Edge case for concurrent updates not in plan" |
+| **Dependency** | Missing prerequisite | "Auth middleware needs to be created first" |
 
-1. **Runtime detection** - Claude adds TODO comments during implementation
-2. **Codebase scanning** - Scan for existing `// TODO:` comments at session start
+All collected items are presented as `[DECISION_NEEDED]` questions during Plan Review re-entry.
+
+### TODO Discovery (Initial Scan)
+
+Existing TODOs are scanned at session start:
 
 **Scanning Rules:**
 - Ignores: `node_modules/`, `.git/`, `dist/`, `build/`, `vendor/`
 - File types: `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.go`, `.rs`, `.java`
 - Patterns: `// TODO:`, `# TODO:`, `/* TODO:`, `// FIXME:`
 - Deduplication: Same file+line = same TODO (updated, not duplicated)
-- New TODOs found during implementation are added to kanban automatically
 
-The kanban board syncs with TODO comments in code, ensuring nothing is missed.
+Existing TODOs are shown in the session dashboard but don't block the workflow unless they're in affected files.
 
 ### Build/Test Failure Handling
 
@@ -468,6 +452,7 @@ erDiagram
     sessions ||--o{ questions : contains
     sessions ||--o{ review_iterations : tracks
     sessions ||--o{ todos : contains
+    sessions ||--o{ session_events : logs
     plans ||--o{ plan_steps : contains
     plans ||--o{ pull_requests : generates
     pull_requests ||--o{ pr_reviews : undergoes
@@ -479,6 +464,7 @@ erDiagram
         string project_path
         string base_branch
         string feature_branch
+        string base_commit_sha
         string status
         int current_stage
         string claude_session_id
@@ -559,6 +545,15 @@ erDiagram
         string context
         datetime created_at
         datetime resolved_at
+    }
+
+    session_events {
+        int id PK
+        int session_id FK
+        string event_type
+        string stage
+        json payload
+        datetime created_at
     }
 ```
 
@@ -668,7 +663,7 @@ sequenceDiagram
 
     UI->>Server: Start session with feature
     Server->>Orch: createSession(feature)
-    Orch->>CC: spawn claude-code --plan
+    Orch->>CC: spawn claude-code -p "prompt"
     CC-->>Orch: Streaming output
     Orch-->>Server: Parse questions/plan
     Server-->>UI: WebSocket: question.asked
@@ -1151,6 +1146,50 @@ Use the Task tool with these agents:
 
 ## UI Components
 
+### Session Dashboard
+
+The main landing page shows all sessions:
+
+```mermaid
+flowchart TB
+    subgraph Dashboard["Session Dashboard"]
+        subgraph Header["Header"]
+            Title["Sessions"]
+            NewBtn["+ New Session"]
+            Filter["Filter: All | Active | Completed | Expired"]
+            Search["🔍 Search sessions..."]
+        end
+
+        subgraph SessionList["Session List"]
+            S1["🟢 Add user authentication<br/>Stage 3: Implementation | 2 hours ago"]
+            S2["🟡 Refactor API endpoints<br/>Stage 2: Plan Review (8/10) | Yesterday"]
+            S3["✅ Fix login bug<br/>Completed | PR #42 merged | 3 days ago"]
+            S4["⚪ Dark mode feature<br/>Expired | Has open PR #38 | 1 week ago"]
+        end
+
+        subgraph Actions["Session Actions"]
+            Resume["Resume"]
+            Archive["Archive"]
+            Delete["Delete"]
+            ViewPR["View PR"]
+        end
+    end
+```
+
+**Session Status Indicators:**
+- 🟢 Active - In progress
+- 🟡 Paused - Waiting for user
+- ✅ Completed - PR merged or closed
+- ⚪ Expired - Session timed out
+- 🔴 Error - Requires attention
+
+**Dashboard Features:**
+- Filter by status
+- Search by title or project path
+- Sort by last activity, created date, or stage
+- Quick actions (resume, archive, view PR)
+- Shows deferred TODOs count per session
+
 ### Session View
 
 ```mermaid
@@ -1186,7 +1225,7 @@ flowchart TB
 flowchart TB
     subgraph QuestionForm["Question Form"]
         Q1["Q1: Which authentication method?"]
-        Q1Opts["○ JWT tokens (recommended)<br/>○ Session cookies<br/>○ OAuth 2.0<br/>○ Other: ___"]
+        Q1Opts["○ JWT tokens (recommended)<br/>○ Session cookies<br/>○ OAuth 2.0"]
 
         Q2["Q2: Where should auth middleware go?"]
         Q2Opts["☑ src/middleware/auth.ts<br/>☐ src/lib/auth.ts<br/>☐ Create new directory"]
@@ -1197,6 +1236,45 @@ flowchart TB
         Submit["Submit Answers"]
     end
 ```
+
+### Terminal/Live Output Component
+
+The terminal shows Claude's activity with two view modes:
+
+```mermaid
+flowchart LR
+    subgraph TerminalView["Terminal Component"]
+        Toggle["[Filtered] [Raw]"]
+
+        subgraph Filtered["Filtered View (default)"]
+            F1["✅ Stage 1: Feature Discovery started"]
+            F2["❓ 3 questions asked"]
+            F3["📝 Plan created (5 steps)"]
+            F4["🔄 Review iteration 1/10"]
+            F5["⚠️ 2 issues found"]
+        end
+
+        subgraph Raw["Raw View"]
+            R1["Claude CLI output stream"]
+            R2["Full markdown/text"]
+            R3["Useful for debugging"]
+        end
+    end
+```
+
+**Filtered View Events:**
+- Stage transitions with status
+- Questions asked/answered counts
+- Plan step completions
+- Review findings summaries
+- Errors and warnings
+- Progress indicators (spinner during long operations)
+
+**Raw View:**
+- Full Claude CLI output in real-time
+- Scrollable with auto-scroll toggle
+- Syntax highlighting for code blocks
+- Copy button for output
 
 ## Subagent Skills (Prompt Guidance)
 
@@ -1262,6 +1340,26 @@ Subagent failures are logged but don't block workflow progression.
 **Web Interface**: Single-user, no authentication (v1). Runs on localhost only.
 
 **GitHub**: Uses local `gh` CLI authentication. User must have `gh auth login` configured on the machine where the server runs.
+
+### Command Auto-Detection
+
+The server auto-detects test, build, and lint commands from project configuration files:
+
+| Config File | Commands Detected |
+|-------------|-------------------|
+| `package.json` | `npm test`, `npm run build`, `npm run lint` (from scripts) |
+| `Cargo.toml` | `cargo test`, `cargo build`, `cargo clippy` |
+| `pyproject.toml` | `pytest`, `python -m build`, `ruff` or `flake8` |
+| `go.mod` | `go test ./...`, `go build`, `golangci-lint` |
+| `Makefile` | `make test`, `make build`, `make lint` (if targets exist) |
+
+**Detection Logic:**
+1. Scan project root for config files at session start
+2. Parse scripts/targets to find test/build/lint commands
+3. Store detected commands in session metadata
+4. Claude uses these commands during implementation
+
+**Fallback:** If no config file found, Claude infers commands from codebase patterns.
 
 ### Notifications
 
