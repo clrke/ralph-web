@@ -22,8 +22,8 @@ When starting a new session, users fill out a structured template:
 | **Project Path** | Yes | Absolute path to the project/codebase |
 | **Description** | Yes | Detailed explanation of what the feature should do |
 | **Acceptance Criteria** | Yes | Bullet list of conditions that must be met |
-| **Affected Files** | No | Known files that will likely need changes (helps subagent exploration) |
-| **Technical Notes** | No | Implementation hints, constraints, or preferences (appended to prompts) |
+| **Affected Files** | No | Known files that will likely need changes (injected into Stage 1 prompt) |
+| **Technical Notes** | No | Implementation hints, constraints, or preferences (injected into Stage 1 prompt) |
 
 ### Default Acceptance Criteria
 
@@ -501,6 +501,9 @@ erDiagram
         string title
         string feature_description
         string project_path
+        json acceptance_criteria
+        string affected_files
+        string technical_notes
         string base_branch
         string feature_branch
         string base_commit_sha
@@ -832,6 +835,14 @@ After compaction, subagents re-explore only what's relevant for the next stage:
 
 This ensures we never lose critical context - we just refresh it with targeted exploration.
 
+**How Compaction Works:**
+
+1. Server sends `/compact` command to running Claude CLI process via stdin
+2. Claude CLI summarizes conversation and clears old context
+3. Server detects compaction complete via output markers
+4. Recontextualization prompt sent immediately after
+5. Subagents re-explore relevant files for fresh context
+
 ### Output Parsing (Hybrid Approach)
 
 Claude Code outputs unstructured markdown/text. We use a hybrid parsing strategy:
@@ -908,6 +919,17 @@ Project Path: {{projectPath}}
 
 ## Acceptance Criteria
 {{acceptanceCriteria}}
+
+{{#if affectedFiles}}
+## Affected Files (User Hints)
+These files are likely to need changes:
+{{affectedFiles}}
+{{/if}}
+
+{{#if technicalNotes}}
+## Technical Notes
+{{technicalNotes}}
+{{/if}}
 
 ## Instructions
 1. Enter plan mode using the EnterPlanMode tool. Output:
@@ -1283,7 +1305,7 @@ flowchart TB
         end
 
         subgraph Footer["Footer Actions"]
-            ReviewBtn["🔄 Run Review (7/10)"]
+            ProgressBar["Review Progress: 7/10"]
             ApproveBtn["✅ Approve & Implement"]
             PauseBtn["⏸️ Pause"]
         end
@@ -1461,8 +1483,9 @@ The web app reads CLAUDE.md files and appends to prompts:
 | `~/.claude/CLAUDE.md` | User's global preferences |
 
 - Files are optional; silently skipped if missing
-- Project-level takes precedence over global
+- **Both files appended, project last** (project instructions override global when conflicting)
 - Content appended to stage prompts as system context
+- Order: global first → project second (last instruction wins)
 
 ### Project Path Validation
 
@@ -1520,6 +1543,23 @@ Can be overridden per session when starting a new feature.
 - 2-hour warning notification before expiration
 - Expired sessions: uncommitted changes preserved in working directory
 - Open PRs remain open but session context is lost
+
+**Expired Session Recovery:**
+
+When user tries to resume an expired session, present options via `[DECISION_NEEDED]`:
+
+```
+[DECISION_NEEDED priority="1" category="session_recovery"]
+This session has expired. Claude's conversation context is lost, but your code changes are preserved.
+
+How would you like to proceed?
+- Option A: Start fresh session with current changes (recommended)
+- Option B: Stash changes and start clean session
+- Option C: View changes only (no new session)
+[/DECISION_NEEDED]
+```
+
+If user chooses Option A, the new session includes a summary of uncommitted changes in the initial prompt.
 
 ### Session Actions
 
@@ -1610,6 +1650,7 @@ claude-code-web/
 │   │   │       ├── PRDetails.tsx
 │   │   │       └── IssuesList.tsx
 │   │   ├── pages/
+│   │   │   ├── Dashboard.tsx
 │   │   │   ├── NewSession.tsx
 │   │   │   ├── SessionView.tsx
 │   │   │   └── PRReview.tsx
