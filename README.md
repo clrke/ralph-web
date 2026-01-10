@@ -1,384 +1,338 @@
-# Ralph Web Dashboard
+# Claude Code Web Interface
 
-A modern web interface for managing Ralph autonomous development loops. Monitor, control, and manage your AI-powered development sessions from the browser.
+A modern web interface for interactive Claude Code development workflows. Features human-in-the-loop plan review, structured clarifying questions, and visual plan editing.
 
-> **Note**: This document describes the planned architecture for the web dashboard. The current implementation is the bash-based [Ralph for Claude Code](./ralph-claude-code/) CLI tool.
+> **Note**: This document describes the planned architecture. The design supports interactive, quality-driven development workflows with human checkpoints.
 
 ## Overview
 
-Ralph Web Dashboard wraps around the existing Ralph CLI tool, providing a real-time web interface without modifying the core Ralph scripts. The server reads Ralph's state files and log outputs via file polling to provide live updates.
+This web app provides a guided interface for Claude Code that supports:
+- **Interactive workflows** with clarifying questions at each stage
+- **Visual plan editing** with tree/kanban views
+- **Iterative review cycles** (recommended 10x) with sign-off approval
+- **PR creation and review** integrated into the workflow
 
-## Architecture
+## Workflow Architecture
+
+```mermaid
+flowchart TB
+    subgraph Stage1["Stage 1: Feature Discovery"]
+        A["User describes feature"] --> B["Subagents study codebase"]
+        B --> C["Present clarifying questions<br/>(structured forms)"]
+        C --> D["User answers"]
+        D --> E{"More questions?"}
+        E -->|Yes| C
+        E -->|No| F["Generate initial plan"]
+    end
+
+    subgraph Stage2["Stage 2: Plan Review (10x recommended)"]
+        F --> G["Display plan in visual editor"]
+        G --> H["Subagents review for shortcuts"]
+        H --> I["Present findings as forms"]
+        I --> J["User reviews & answers"]
+        J --> K{"Approve iteration?"}
+        K -->|No, needs work| L["Refine plan"]
+        L --> G
+        K -->|Yes| M{"Review count"}
+        M -->|"< 10x"| N["Warning: Recommend more review"]
+        M -->|">= 10x"| O["Ready for implementation"]
+        N --> P{"User sign-off?"}
+        P -->|Continue reviewing| G
+        P -->|Proceed anyway| O
+    end
+
+    subgraph Stage3["Stage 3: Implementation"]
+        O --> Q["Execute plan step"]
+        Q --> R{"Unknowns encountered?"}
+        R -->|Yes| S["Pause execution"]
+        S --> T["Enter plan mode"]
+        T --> U["Present questions"]
+        U --> V["User answers"]
+        V --> W["Update plan"]
+        W --> Q
+        R -->|No| X{"More steps?"}
+        X -->|Yes| Q
+        X -->|No| Y["Implementation complete"]
+    end
+
+    subgraph Stage4["Stage 4: PR Creation"]
+        Y --> Z["Generate PR"]
+        Z --> AA["Display PR details"]
+        AA --> AB["Record PR number"]
+    end
+
+    subgraph Stage5["Stage 5: PR Review"]
+        AB --> AC["Subagents review PR"]
+        AC --> AD{"Issues found?"}
+        AD -->|Yes, even minor| AE["Enter plan mode"]
+        AE --> AF["Present issues as questions"]
+        AF --> AG["User decides action"]
+        AG --> AH["Apply fixes"]
+        AH --> AC
+        AD -->|No| AI["PR approved"]
+    end
+
+    style Stage1 fill:#e3f2fd
+    style Stage2 fill:#fff3e0
+    style Stage3 fill:#e8f5e9
+    style Stage4 fill:#f3e5f5
+    style Stage5 fill:#fce4ec
+```
+
+## System Architecture
 
 ```mermaid
 flowchart TB
     subgraph Browser["Browser"]
         subgraph Frontend["React + TypeScript Frontend"]
-            Dashboard["Dashboard View"]
-            Projects["Projects Manager"]
-            History["History Browser"]
-            Settings["Settings Panel"]
-            WSClient["WebSocket Client"]
+            Chat["Conversation View"]
+            Forms["Structured Question Forms"]
+            PlanEditor["Visual Plan Editor"]
+            Terminal["Live Terminal Output"]
+            PRView["PR Review Panel"]
         end
     end
 
     subgraph Server["Node.js + Express Server"]
         subgraph API["API Layer"]
-            LoopsAPI["/api/loops"]
-            ProjectsAPI["/api/projects"]
-            HistoryAPI["/api/history"]
-            GithubAPI["/api/github"]
+            SessionAPI["/api/sessions"]
+            PlanAPI["/api/plans"]
+            QuestionsAPI["/api/questions"]
+            PRAPI["/api/pull-requests"]
         end
         subgraph Services["Service Layer"]
-            LoopMgr["Loop Manager"]
-            ProjectSvc["Project Service"]
-            NotifierSvc["Notifier Service"]
-            GithubSvc["GitHub Service"]
+            SessionMgr["Session Manager"]
+            PlanService["Plan Service"]
+            QuestionService["Question Service"]
+            PRService["PR Service"]
+            ReviewService["Review Counter"]
         end
-        subgraph Infra["Infrastructure"]
+        subgraph Core["Core"]
+            ClaudeOrchestrator["Claude Code Orchestrator"]
             WSServer["WebSocket Server"]
-            ProcessMgr["Process Manager"]
-            FileWatcher["File Watcher"]
             SQLite["SQLite DB"]
         end
     end
 
-    subgraph Filesystem["Local Filesystem"]
-        subgraph Scripts["Ralph Scripts"]
-            RalphLoop["ralph_loop.sh"]
-            RalphMonitor["ralph_monitor.sh"]
-            RalphImport["ralph_import.sh"]
-        end
-        subgraph StateFiles["State Files"]
-            StatusJSON["status.json"]
-            ProgressJSON["progress.json"]
-            ExitSignals[".exit_signals"]
-            CircuitState[".circuit_breaker_state"]
-        end
-        subgraph Logs["Log Files"]
-            RalphLog["logs/ralph.log"]
-            ClaudeOutput["logs/claude_output_*.log"]
-        end
+    subgraph ClaudeCode["Claude Code CLI"]
+        CC["claude-code process"]
+        PlanMode["--plan mode"]
+        Subagents["Subagent execution"]
     end
 
     Frontend <-->|HTTP/WebSocket| Server
-    WSClient <-->|Real-time| WSServer
-    Services --> ProcessMgr
-    ProcessMgr -->|spawn| Scripts
-    FileWatcher -->|poll/watch| StateFiles
-    FileWatcher -->|tail| Logs
-    Services --> SQLite
+    ClaudeOrchestrator -->|"spawn with flags"| ClaudeCode
+    ClaudeOrchestrator -->|"parse output"| CC
 ```
 
-## Ralph Components
+## Component Details
 
-```mermaid
-flowchart LR
-    subgraph Scripts["Main Scripts"]
-        A["ralph_loop.sh<br/><i>Main loop engine</i>"]
-        B["ralph_monitor.sh<br/><i>Terminal dashboard</i>"]
-        C["ralph_import.sh<br/><i>PRD converter</i>"]
-        D["setup.sh<br/><i>Project init</i>"]
-    end
-
-    subgraph Lib["Library Modules (lib/)"]
-        E["circuit_breaker.sh<br/><i>CLOSED/HALF_OPEN/OPEN</i>"]
-        F["response_analyzer.sh<br/><i>JSON parsing</i>"]
-        G["date_utils.sh<br/><i>Cross-platform dates</i>"]
-    end
-
-    subgraph State["State Files"]
-        H["status.json"]
-        I["progress.json"]
-        J[".exit_signals"]
-        K[".circuit_breaker_state"]
-        L[".claude_session_id"]
-        M[".call_count"]
-    end
-
-    A --> E
-    A --> F
-    A --> G
-    A --> State
-    B --> H
-    B --> I
-```
-
-## Data Flow
-
-### Important: File-Based Architecture
-
-Ralph writes all output to files, not stdout. The web server must use **file polling** to capture updates.
-
-```mermaid
-flowchart LR
-    subgraph Ralph["Ralph Process"]
-        Loop["ralph_loop.sh"]
-        Claude["Claude Code CLI"]
-    end
-
-    subgraph Output["File Output"]
-        LogFile["logs/claude_output_N.log"]
-        Status["status.json"]
-        Progress["progress.json"]
-    end
-
-    Loop -->|"spawn"| Claude
-    Claude -->|"stdout/stderr > file"| LogFile
-    Loop -->|"write"| Status
-    Loop -->|"write every 10s"| Progress
-
-    Note["Ralph redirects ALL output to files.<br/>No stdout streaming available."]
-```
-
-### Starting a Loop
-
-```mermaid
-sequenceDiagram
-    participant User as User Browser
-    participant React as React Client
-    participant Express as Express Server
-    participant Ralph as Ralph CLI
-
-    User->>React: Click Start
-    React->>Express: POST /api/loops/start
-    Express->>Ralph: spawn ralph_loop.sh
-    Note over Ralph: Single long-running process
-    Express-->>React: { loopId, pid, status }
-    React-->>User: UI Update
-    Express->>Express: Start file watchers
-    Express-->>React: WebSocket: loop.started
-    React-->>User: Live Status
-```
-
-### Real-time Updates via File Polling
-
-```mermaid
-sequenceDiagram
-    participant Ralph as Ralph Process
-    participant FS as File System
-    participant Server as Express Server
-    participant Browser as Browser
-
-    Ralph->>FS: Write status.json
-    loop Every 1-2 seconds
-        Server->>FS: Poll for changes
-        FS-->>Server: File modified
-    end
-    Server->>Server: Parse JSON
-    Server->>Browser: WebSocket: status.update
-
-    Ralph->>FS: Write progress.json (every 10s)
-    Server->>FS: Detect change
-    Server->>Browser: WebSocket: loop.progress
-
-    Ralph->>FS: Append to claude_output.log
-    Server->>FS: Tail new lines
-    Server->>Browser: WebSocket: log.chunk
-```
-
-## Component Architecture
+### Visual Plan Editor
 
 ```mermaid
 flowchart TB
-    subgraph AppShell["App Shell"]
-        subgraph Sidebar["Sidebar"]
-            NavDash["Dashboard"]
-            NavProj["Projects"]
-            NavHist["History"]
-            NavSet["Settings"]
+    subgraph PlanEditor["Visual Plan Editor"]
+        subgraph Views["View Modes"]
+            Tree["Tree View<br/>(hierarchical steps)"]
+            Kanban["Kanban View<br/>(by status)"]
+            Timeline["Timeline View<br/>(sequence)"]
         end
 
-        subgraph Main["Main Content"]
-            subgraph DashPage["Dashboard Page"]
-                ActiveLoop["Active Loop Card"]
-                Metrics["System Metrics Card"]
-                Terminal["Live Terminal View<br/><i>(File-polled log stream)</i>"]
-                CircuitStatus["Circuit Breaker Status"]
-                RateStatus["Rate Limiter Status"]
-            end
+        subgraph Actions["Plan Actions"]
+            Drag["Drag to reorder"]
+            Edit["Inline editing"]
+            Add["Add step"]
+            Delete["Remove step"]
+            Expand["Expand/collapse"]
+        end
+
+        subgraph Status["Step Status"]
+            Pending["⏳ Pending"]
+            InProgress["🔄 In Progress"]
+            NeedsReview["⚠️ Needs Review"]
+            Approved["✅ Approved"]
+            Blocked["🚫 Blocked"]
+        end
+    end
+```
+
+### Structured Question Forms
+
+```mermaid
+flowchart LR
+    subgraph QuestionTypes["Question Types"]
+        SingleChoice["Single Choice<br/>(radio buttons)"]
+        MultiChoice["Multi Choice<br/>(checkboxes)"]
+        TextInput["Text Input<br/>(short/long)"]
+        FileSelect["File Selector<br/>(from codebase)"]
+        CodeSnippet["Code Snippet<br/>(with syntax highlight)"]
+        Confirmation["Yes/No<br/>(with context)"]
+    end
+
+    subgraph Presentation["Presentation"]
+        Grouped["Grouped by topic"]
+        Priority["Ordered by priority"]
+        Required["Required vs optional"]
+        Defaults["Smart defaults"]
+    end
+```
+
+### Review Iteration Tracker
+
+```mermaid
+flowchart TB
+    subgraph ReviewTracker["Review Iteration Tracker"]
+        Counter["Current: 3/10 reviews"]
+        Progress["Progress bar"]
+
+        subgraph Findings["Findings per iteration"]
+            I1["Iteration 1: 5 issues"]
+            I2["Iteration 2: 3 issues"]
+            I3["Iteration 3: 1 issue"]
+        end
+
+        subgraph SignOff["Sign-off Gate"]
+            Warning["⚠️ Only 3 reviews completed<br/>Recommend at least 10"]
+            Checkbox["☐ I understand the risks<br/>and approve with fewer reviews"]
+            Proceed["Proceed to Implementation"]
         end
     end
 
-    Sidebar --> Main
-```
-
-## Backend Services
-
-```mermaid
-classDiagram
-    class LoopManager {
-        +start(projectId)
-        +stop(loopId)
-        +getStatus(loopId)
-        +getLogs(loopId)
-        +listActive()
-    }
-
-    class ProjectService {
-        +create(config)
-        +list()
-        +get(id)
-        +update(id, data)
-        +delete(id)
-        +importPRD(file)
-    }
-
-    class ProcessManager {
-        +spawn(command, args)
-        +kill(pid)
-        +isAlive(pid)
-        +onExit(pid, callback)
-    }
-
-    class FileWatcher {
-        +watch(path)
-        +poll(interval)
-        +tailLog(path, callback)
-        +unwatch(path)
-    }
-
-    class NotifierService {
-        +send(title, body)
-        +onLoopComplete()
-        +onCircuitOpen()
-        +onError()
-    }
-
-    class GitHubService {
-        +linkRepo(url)
-        +getCommits()
-        +getPRs()
-        +getStatus()
-    }
-
-    class HistoryService {
-        +record(loopData)
-        +query(filters)
-        +getStats()
-        +export(format)
-    }
-
-    LoopManager --> ProcessManager
-    ProjectService --> ProcessManager
-    FileWatcher --> NotifierService
-    LoopManager --> FileWatcher
+    Counter --> Progress
+    Progress --> Findings
+    Findings --> SignOff
 ```
 
 ## Database Schema
 
 ```mermaid
 erDiagram
-    projects ||--o{ loops : has
-    loops ||--o{ loop_events : contains
-    loops ||--o{ circuit_breaker_snapshots : tracks
-    loops ||--o{ notifications : generates
+    sessions ||--o{ plans : has
+    sessions ||--o{ questions : contains
+    sessions ||--o{ review_iterations : tracks
+    plans ||--o{ plan_steps : contains
+    plans ||--o{ pull_requests : generates
+    pull_requests ||--o{ pr_reviews : undergoes
 
-    projects {
+    sessions {
         int id PK
-        string name
-        string path
-        string description
-        string github_repo
-        string github_token_enc
-        int max_calls_per_hour
-        datetime created_at
-        datetime updated_at
-        json config
-    }
-
-    loops {
-        int id PK
-        int project_id FK
-        int pid
+        string feature_description
         string status
-        datetime started_at
-        datetime ended_at
-        string exit_reason
-        int loop_count
-        int api_calls
-        int files_changed
-        int error_count
-        string logs_path
-    }
-
-    loop_events {
-        int id PK
-        int loop_id FK
-        string event_type
-        json payload
-        datetime timestamp
-    }
-
-    settings {
-        string key PK
-        string value
+        int current_stage
+        datetime created_at
         datetime updated_at
     }
 
-    notifications {
+    plans {
         int id PK
-        int loop_id FK
-        string type
-        string title
-        string message
-        boolean read
+        int session_id FK
+        int version
+        json plan_data
+        boolean is_approved
+        int review_count
         datetime created_at
     }
 
-    circuit_breaker_snapshots {
+    plan_steps {
         int id PK
-        int loop_id FK
-        string state
-        int consecutive_no_prog
-        string reason
-        datetime timestamp
+        int plan_id FK
+        int parent_id FK
+        int order_index
+        string title
+        string description
+        string status
+        json metadata
+    }
+
+    questions {
+        int id PK
+        int session_id FK
+        string stage
+        string question_type
+        string question_text
+        json options
+        json answer
+        boolean is_required
+        datetime asked_at
+        datetime answered_at
+    }
+
+    review_iterations {
+        int id PK
+        int plan_id FK
+        int iteration_number
+        json findings
+        boolean user_approved
+        datetime completed_at
+    }
+
+    pull_requests {
+        int id PK
+        int plan_id FK
+        string pr_number
+        string pr_url
+        string status
+        datetime created_at
+    }
+
+    pr_reviews {
+        int id PK
+        int pr_id FK
+        json issues_found
+        boolean all_resolved
+        datetime reviewed_at
     }
 ```
 
 ## WebSocket Events
 
-### Server to Client Events
+### Workflow Events
 
 ```mermaid
 flowchart LR
-    subgraph Lifecycle["Loop Lifecycle"]
-        A["loop.started"]
-        B["loop.progress"]
-        C["loop.log"]
-        D["loop.completed"]
-        E["loop.error"]
-        F["loop.timeout"]
-        G["loop.retrying"]
+    subgraph StageEvents["Stage Transitions"]
+        A["stage.discovery"]
+        B["stage.planning"]
+        C["stage.review"]
+        D["stage.implementation"]
+        E["stage.pr_creation"]
+        F["stage.pr_review"]
     end
 
-    subgraph Circuit["Circuit Breaker"]
-        H["circuit.closed"]
-        I["circuit.half"]
-        J["circuit.open"]
+    subgraph QuestionEvents["Questions"]
+        G["question.asked"]
+        H["question.answered"]
+        I["questions.batch"]
     end
 
-    subgraph Exit["Exit Conditions"]
-        K["exit.detected"]
-        L["exit.imminent"]
+    subgraph PlanEvents["Plan Updates"]
+        J["plan.created"]
+        K["plan.step_added"]
+        L["plan.step_updated"]
+        M["plan.step_reordered"]
+        N["plan.approved"]
     end
 
-    subgraph Rate["Rate Limiting"]
-        M["rate.update"]
-        N["rate.warning"]
-        O["rate.limited"]
-        P["rate.reset"]
-        Q["rate.api_limit"]
+    subgraph ReviewEvents["Review Cycle"]
+        O["review.started"]
+        P["review.findings"]
+        Q["review.iteration_complete"]
+        R["review.signoff_required"]
+        S["review.approved"]
     end
 
-    subgraph Session["Session & Files"]
-        R["session.started"]
-        S["session.saved"]
-        T["files.changed"]
+    subgraph ExecutionEvents["Execution"]
+        T["execution.step_started"]
+        U["execution.step_completed"]
+        V["execution.paused_unknown"]
+        W["execution.resumed"]
     end
 
-    subgraph Notify["Notifications"]
-        U["notification"]
+    subgraph PREvents["Pull Request"]
+        X["pr.created"]
+        Y["pr.review_started"]
+        Z["pr.issue_found"]
+        AA["pr.approved"]
     end
 ```
 
@@ -386,136 +340,127 @@ flowchart LR
 
 | Event | Payload |
 |-------|---------|
-| `loop.started` | `{ loopId, projectId, pid, timestamp }` |
-| `loop.progress` | `{ loopId, iteration, apiCalls, elapsed, status }` |
-| `loop.log` | `{ loopId, chunk, timestamp }` |
-| `loop.completed` | `{ loopId, exitReason, duration, stats }` |
-| `loop.error` | `{ loopId, error, code, recoverable }` |
-| `circuit.closed` | `{ loopId, recoveredFrom }` |
-| `circuit.half` | `{ loopId, consecutiveNoProgress, monitoring }` |
-| `circuit.open` | `{ loopId, reason, loopsSinceProgress }` |
-| `exit.detected` | `{ loopId, type, confidence, loopsUntilExit }` |
-| `rate.update` | `{ loopId, callsUsed, callsRemaining, resetAt }` |
-| `rate.limited` | `{ loopId, minutesUntilReset }` |
-| `session.started` | `{ loopId, sessionId, mode: 'new'\|'resume' }` |
-| `files.changed` | `{ loopId, count, files: [...] }` |
+| `stage.discovery` | `{ sessionId, featureDescription }` |
+| `question.asked` | `{ sessionId, questionId, type, text, options, required }` |
+| `question.answered` | `{ sessionId, questionId, answer }` |
+| `plan.created` | `{ sessionId, planId, steps[], version }` |
+| `plan.step_updated` | `{ planId, stepId, changes, updatedBy }` |
+| `review.started` | `{ planId, iterationNumber }` |
+| `review.findings` | `{ planId, iteration, issues[], shortcuts[] }` |
+| `review.signoff_required` | `{ planId, reviewCount, recommendedMin: 10 }` |
+| `execution.paused_unknown` | `{ sessionId, stepId, unknowns[], needsInput: true }` |
+| `pr.created` | `{ sessionId, prNumber, prUrl, title }` |
+| `pr.issue_found` | `{ prId, issue, severity, suggestion }` |
 
-### Client to Server Events
+## Claude Code Integration
 
-| Event | Payload | Description |
-|-------|---------|-------------|
-| `subscribe` | `{ loopId }` | Subscribe to loop updates |
-| `unsubscribe` | `{ loopId }` | Unsubscribe from loop |
-| `ping` | `{ }` | Keep-alive |
-
-## Ralph State File Formats
-
-### status.json
-```json
-{
-  "timestamp": "2026-01-10T12:34:56Z",
-  "loop_count": 5,
-  "calls_made_this_hour": 25,
-  "max_calls_per_hour": 100,
-  "last_action": "executing claude code",
-  "status": "running",
-  "exit_reason": null,
-  "next_reset": "2026-01-10T13:00:00Z"
-}
-```
-
-### progress.json
-```json
-{
-  "status": "executing",
-  "indicator": "⠋",
-  "elapsed_seconds": 45,
-  "last_output": "Working on feature...",
-  "timestamp": "2026-01-10T12:35:41Z"
-}
-```
-
-### .exit_signals
-```json
-{
-  "test_only_loops": [1, 2],
-  "done_signals": [5],
-  "completion_indicators": [3, 5]
-}
-```
-
-### .circuit_breaker_state
-```json
-{
-  "state": "CLOSED",
-  "last_change": "2026-01-10T12:00:00Z",
-  "consecutive_no_progress": 0,
-  "consecutive_same_error": 0,
-  "last_progress_loop": 5,
-  "total_opens": 1,
-  "reason": null,
-  "current_loop": 6
-}
-```
-
-### .claude_session_id
-```json
-{
-  "session_id": "claude-session-abc123",
-  "timestamp": 1704902400,
-  "expires_at": 1705075200
-}
-```
-
-## Circuit Breaker State Machine
+### Direct Process Control
 
 ```mermaid
-stateDiagram-v2
-    [*] --> CLOSED
+sequenceDiagram
+    participant UI as Web UI
+    participant Server as Express Server
+    participant Orch as Claude Orchestrator
+    participant CC as Claude Code CLI
 
-    CLOSED --> HALF_OPEN: 2 consecutive\nno-progress loops
-    HALF_OPEN --> OPEN: 3+ consecutive\nno-progress loops
-    HALF_OPEN --> CLOSED: Progress detected
-    OPEN --> [*]: Loop halted
+    UI->>Server: Start session with feature
+    Server->>Orch: createSession(feature)
+    Orch->>CC: spawn claude-code --plan
+    CC-->>Orch: Streaming output
+    Orch-->>Server: Parse questions/plan
+    Server-->>UI: WebSocket: question.asked
 
-    note right of CLOSED: Normal operation
-    note right of HALF_OPEN: Monitoring for recovery
-    note right of OPEN: Circuit tripped,\nloop stops
+    UI->>Server: Answer question
+    Server->>Orch: sendInput(answer)
+    Orch->>CC: stdin write
+    CC-->>Orch: Next output
+    Orch-->>Server: Parse response
+    Server-->>UI: WebSocket: plan.created
+
+    Note over UI,CC: Review iterations
+    loop 10x Review
+        UI->>Server: Request review
+        Server->>Orch: runReview()
+        Orch->>CC: spawn with review prompt
+        CC-->>Orch: Findings
+        Orch-->>Server: Parse findings
+        Server-->>UI: WebSocket: review.findings
+    end
+
+    UI->>Server: Approve plan (with signoff)
+    Server->>Orch: startImplementation()
+    Orch->>CC: spawn implementation
+
+    alt Unknown encountered
+        CC-->>Orch: Pause signal
+        Orch-->>Server: Parse unknowns
+        Server-->>UI: WebSocket: execution.paused_unknown
+        UI->>Server: Provide input
+        Server->>Orch: resumeWithInput()
+    end
+
+    CC-->>Orch: Implementation complete
+    Orch->>CC: spawn gh pr create
+    CC-->>Orch: PR URL
+    Server-->>UI: WebSocket: pr.created
 ```
 
-## Security Considerations
+### CLI Flags Used
+
+| Flag | Purpose |
+|------|---------|
+| `--plan` | Enter plan mode for exploration |
+| `--continue` | Resume session context |
+| `--output-format json` | Structured output parsing |
+| `--allowed-tools` | Control available tools per stage |
+| `-p` | Pass prompts programmatically |
+
+## UI Components
+
+### Session View
 
 ```mermaid
 flowchart TB
-    subgraph Local["Local-Only Deployment"]
-        A["Server binds to 127.0.0.1"]
-        B["No auth required locally"]
-        C["CORS: localhost only"]
-    end
+    subgraph SessionView["Main Session View"]
+        subgraph Header["Header"]
+            Feature["Feature: Add user authentication"]
+            Stage["Stage: Plan Review (7/10)"]
+            Status["Status: Awaiting input"]
+        end
 
-    subgraph Data["Data Protection"]
-        D["GitHub tokens encrypted"]
-        E["Logs filtered before API"]
-        F["Session IDs protected"]
-    end
+        subgraph MainPanel["Main Panel (split)"]
+            subgraph Left["Left: Plan Editor"]
+                PlanTree["📁 Authentication System<br/>├── 📄 Design JWT schema<br/>├── 📄 Create auth middleware<br/>├── 📄 Add login endpoint<br/>└── 📄 Add logout endpoint"]
+            end
+            subgraph Right["Right: Interaction"]
+                Questions["Current Questions"]
+                Terminal["Claude Output"]
+            end
+        end
 
-    subgraph Input["Input Validation"]
-        G["All inputs validated"]
-        H["Path traversal prevention"]
-        I["No shell interpolation"]
+        subgraph Footer["Footer Actions"]
+            ReviewBtn["🔄 Run Review (7/10)"]
+            ApproveBtn["✅ Approve & Implement"]
+            PauseBtn["⏸️ Pause"]
+        end
     end
+```
 
-    subgraph Process["Process Isolation"]
-        J["Ralph runs in project dir"]
-        K["No arbitrary commands"]
-        L["Only predefined scripts"]
-    end
+### Question Form Component
 
-    subgraph Future["Future: Multi-User"]
-        M["JWT authentication"]
-        N["RBAC for projects"]
-        O["Audit logging"]
-        P["HTTPS certificates"]
+```mermaid
+flowchart TB
+    subgraph QuestionForm["Question Form"]
+        Q1["Q1: Which authentication method?"]
+        Q1Opts["○ JWT tokens (recommended)<br/>○ Session cookies<br/>○ OAuth 2.0<br/>○ Other: ___"]
+
+        Q2["Q2: Where should auth middleware go?"]
+        Q2Opts["☑ src/middleware/auth.ts<br/>☐ src/lib/auth.ts<br/>☐ Create new directory"]
+
+        Q3["Q3: Additional requirements?"]
+        Q3Text["[Text area for details]"]
+
+        Submit["Submit Answers"]
     end
 ```
 
@@ -525,45 +470,79 @@ flowchart TB
 |-------|------------|
 | Frontend | React 18, TypeScript, Tailwind CSS |
 | State | Zustand |
+| Plan Editor | React DnD, React Flow (optional) |
 | Backend | Node.js, Express |
-| Real-time | Socket.IO (WebSocket) |
+| Real-time | Socket.IO |
 | Database | SQLite (better-sqlite3) |
-| File Watching | chokidar |
-| Process | Node child_process |
+| CLI Control | Node child_process, pty.js |
 | Notifications | node-notifier |
 
-## Features
+## Project Structure
 
-### Dashboard
-- Real-time loop status and metrics
-- Live terminal output with ANSI color support
-- Circuit breaker state visualization (CLOSED/HALF_OPEN/OPEN)
-- Rate limit countdown timer
-- Exit condition detection display
-
-### Project Management
-- Create new Ralph projects
-- Import PRDs and specifications
-- Configure loop settings per project
-- Link GitHub repositories
-
-### History
-- Browse past loop executions
-- Filter by project, status, date
-- View detailed loop statistics
-- Export history data
-
-### Notifications
-- Desktop notifications on loop completion
-- Browser notifications (with permission)
-- Circuit breaker alerts
-- Configurable notification preferences
-
-### GitHub Integration
-- Link projects to repositories
-- View recent commits
-- Monitor PR status
-- Quick links to repo
+```
+claude-code-web/
+├── client/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── PlanEditor/
+│   │   │   │   ├── TreeView.tsx
+│   │   │   │   ├── KanbanView.tsx
+│   │   │   │   ├── StepCard.tsx
+│   │   │   │   └── DragHandle.tsx
+│   │   │   ├── QuestionForms/
+│   │   │   │   ├── QuestionForm.tsx
+│   │   │   │   ├── SingleChoice.tsx
+│   │   │   │   ├── MultiChoice.tsx
+│   │   │   │   ├── TextInput.tsx
+│   │   │   │   └── FileSelector.tsx
+│   │   │   ├── ReviewTracker/
+│   │   │   │   ├── IterationCounter.tsx
+│   │   │   │   ├── FindingsList.tsx
+│   │   │   │   └── SignOffGate.tsx
+│   │   │   ├── Terminal/
+│   │   │   │   └── LiveOutput.tsx
+│   │   │   └── PRView/
+│   │   │       ├── PRDetails.tsx
+│   │   │       └── IssuesList.tsx
+│   │   ├── pages/
+│   │   │   ├── NewSession.tsx
+│   │   │   ├── SessionView.tsx
+│   │   │   └── PRReview.tsx
+│   │   ├── hooks/
+│   │   │   ├── useSession.ts
+│   │   │   ├── usePlan.ts
+│   │   │   ├── useQuestions.ts
+│   │   │   └── useReviewCycle.ts
+│   │   ├── store/
+│   │   │   ├── sessionStore.ts
+│   │   │   └── planStore.ts
+│   │   └── types/
+│   │       ├── session.ts
+│   │       ├── plan.ts
+│   │       └── questions.ts
+│   └── public/
+├── server/
+│   ├── src/
+│   │   ├── routes/
+│   │   │   ├── sessions.ts
+│   │   │   ├── plans.ts
+│   │   │   ├── questions.ts
+│   │   │   └── pull-requests.ts
+│   │   ├── services/
+│   │   │   ├── ClaudeOrchestrator.ts
+│   │   │   ├── SessionManager.ts
+│   │   │   ├── PlanService.ts
+│   │   │   ├── QuestionParser.ts
+│   │   │   └── ReviewService.ts
+│   │   ├── websocket/
+│   │   │   └── handlers.ts
+│   │   └── utils/
+│   │       └── outputParser.ts
+│   └── db/
+├── shared/
+│   └── types/
+└── package.json
+```
 
 ## Getting Started
 
@@ -571,7 +550,7 @@ flowchart TB
 # Install dependencies
 npm install
 
-# Start development server (runs both client and server)
+# Start development server
 npm run dev
 
 # Build for production
@@ -581,79 +560,17 @@ npm run build
 npm start
 ```
 
-## Project Structure
+## Key Differences from Original Ralph Design
 
-```
-ralph-web/
-├── client/                 # React frontend
-│   ├── src/
-│   │   ├── components/     # UI components
-│   │   ├── pages/          # Page components
-│   │   ├── hooks/          # Custom React hooks
-│   │   │   ├── useWebSocket.ts
-│   │   │   ├── useLoopStatus.ts
-│   │   │   └── useFilePolling.ts
-│   │   ├── services/       # API clients
-│   │   ├── store/          # Zustand stores
-│   │   └── types/          # TypeScript types
-│   └── public/
-├── server/                 # Express backend
-│   ├── src/
-│   │   ├── routes/         # API routes
-│   │   ├── services/       # Business logic
-│   │   │   ├── LoopManager.ts
-│   │   │   ├── FileWatcher.ts
-│   │   │   └── ProcessManager.ts
-│   │   ├── models/         # Database models
-│   │   ├── websocket/      # WebSocket handlers
-│   │   └── utils/          # Utilities
-│   └── db/                 # SQLite database
-├── shared/                 # Shared types
-│   └── types/
-│       ├── events.ts       # WebSocket event types
-│       └── models.ts       # Shared data models
-├── ralph-claude-code/      # Ralph CLI (upstream)
-└── package.json
-```
-
-## Implementation Notes
-
-### File Polling Strategy
-
-Ralph writes to files, not stdout. The server uses this approach:
-
-1. **State Files** (status.json, progress.json, etc.)
-   - Poll every 1-2 seconds
-   - Compare timestamps to detect changes
-   - Parse and broadcast via WebSocket
-
-2. **Log Files** (logs/claude_output_*.log)
-   - Track file position (bytes read)
-   - Tail new content on each poll
-   - Stream chunks to subscribed clients
-
-3. **Performance**
-   - Use chokidar for efficient file watching where supported
-   - Fall back to polling on unsupported filesystems
-   - Debounce rapid file changes
-
-### Process Lifecycle
-
-```mermaid
-sequenceDiagram
-    participant Server
-    participant Ralph as Ralph Process
-
-    Server->>Ralph: spawn("ralph_loop.sh")
-    Note over Ralph: Process runs indefinitely<br/>executing Claude in loops
-
-    alt User stops loop
-        Server->>Ralph: kill(pid, SIGTERM)
-        Ralph-->>Server: Graceful shutdown
-    else Loop completes naturally
-        Ralph-->>Server: Exit with reason
-    end
-```
+| Aspect | Original Ralph | New Design |
+|--------|---------------|------------|
+| Execution model | Autonomous loops | Human-in-the-loop |
+| User interaction | Monitor only | Active participation |
+| Plan management | Implicit in PROMPT.md | Visual editor |
+| Questions | None (autonomous) | Structured forms |
+| Quality gates | Circuit breaker | 10x review + sign-off |
+| PR workflow | Not included | Full PR creation + review |
+| Backend | Ralph bash scripts | Direct Claude Code control |
 
 ## License
 
