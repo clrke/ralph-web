@@ -983,7 +983,54 @@ Error detection uses a two-stage filter to prevent false positives:
 
 This prevents false negatives when Claude outputs JSON with error-related field names that don't indicate actual errors.
 
-This ensures reliable parsing while gracefully handling edge cases.
+**Decision Validation (LLM Post-Processing):**
+
+Before presenting any `[DECISION_NEEDED]` to the user, the server spawns validation subagents to investigate and confirm the concern is valid:
+
+```mermaid
+flowchart LR
+    A["Claude outputs<br/>[DECISION_NEEDED]"] --> B["Server parses marker"]
+    B --> C["Spawn validation subagent"]
+    C --> D["Subagent investigates<br/>codebase"]
+    D --> E{"Concern valid?"}
+    E -->|Yes| F["Present to user"]
+    E -->|No| G["Filter out silently"]
+    G --> H["Log as false positive"]
+```
+
+**Validation Flow:**
+1. Claude outputs `[DECISION_NEEDED]` marker during any stage
+2. Server parses the marker and extracts the concern
+3. Server spawns a Claude subagent (via Task tool) to investigate
+4. Subagent reads relevant code to verify the concern
+5. If valid, decision is presented to user; if false positive, filtered silently
+
+| Validation Type | Subagent Task | Example False Positive |
+|-----------------|---------------|------------------------|
+| **Missing dependency** | Check if dependency actually exists in codebase | "Need auth middleware" but it exists in `src/middleware/auth.ts` |
+| **Security concern** | Verify vulnerability is exploitable in context | "SQL injection risk" but query uses parameterized statements |
+| **Performance issue** | Confirm bottleneck exists via code analysis | "N+1 query" but ORM has eager loading configured |
+| **Missing test** | Check if test coverage already exists | "No tests for auth" but tests exist in `__tests__/auth.spec.ts` |
+
+**Validation Prompt Template:**
+```
+Investigate this concern and determine if it's valid:
+
+Concern: {{concernText}}
+Category: {{category}}
+File: {{file}} (if applicable)
+
+Instructions:
+1. Read the relevant code files
+2. Check if the concern is actually valid
+3. Look for existing solutions that may have been missed
+4. Return: { "valid": true/false, "reason": "explanation" }
+
+Only mark as invalid if you can confirm the concern is a false positive.
+When in doubt, mark as valid to surface for user review.
+```
+
+This prevents unnecessary user interruptions from false positives while ensuring real concerns are surfaced.
 
 ### Prompt Building by Stage
 
