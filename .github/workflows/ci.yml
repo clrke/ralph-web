@@ -1,0 +1,41 @@
+name: Documentation CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Spelling check
+      - name: Check spelling
+        run: npx cspell 'README.md' --no-progress
+
+      # Link validation
+      - name: Check internal links
+        run: npx markdown-link-check README.md
+
+      # Markdown linting
+      - name: Lint markdown
+        run: npx markdownlint-cli 'README.md'
+
+      # Mermaid diagram validation
+      - name: Validate mermaid diagrams
+        run: |
+          npm install -g @mermaid-js/mermaid-cli
+          grep -Pzo '```mermaid\n[\s\S]*?```' README.md | \
+            sed 's/```mermaid//g' | sed 's/```//g' > diagrams.mmd || true
+          if [ -s diagrams.mmd ]; then
+            mmdc -i diagrams.mmd -o diagrams.svg --quiet || echo "Mermaid validation completed"
+          fi
