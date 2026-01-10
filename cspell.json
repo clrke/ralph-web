@@ -1,0 +1,27 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "words": [
+    "ASKUSER",
+    "CIFIX",
+    "PRAPI",
+    "clrke",
+    "recontextualization",
+    "recontextualized",
+    "slugified",
+    "clippy",
+    "pyproject",
+    "pytest",
+    "golangci",
+    "metacharacter",
+    "subagent",
+    "subagents",
+    "mermaid",
+    "websocket",
+    "memfs"
+  ],
+  "ignorePaths": [
+    "node_modules",
+    ".git"
+  ]
+}
