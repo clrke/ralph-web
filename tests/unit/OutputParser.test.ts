@@ -223,4 +223,127 @@ Branch: feature/auth → main
       expect(() => parser.parse(input)).not.toThrow();
     });
   });
+
+  describe('multiple STEP_COMPLETE handling', () => {
+    it('should capture all STEP_COMPLETE markers', () => {
+      const input = `
+[STEP_COMPLETE id="step-1"]
+First step done
+[/STEP_COMPLETE]
+
+[STEP_COMPLETE id="step-2"]
+Second step done
+[/STEP_COMPLETE]
+
+[STEP_COMPLETE id="step-3"]
+Third step done
+[/STEP_COMPLETE]
+`;
+      const result = parser.parse(input);
+
+      // Should return all completed steps, not just the first
+      expect(result.stepsCompleted).toHaveLength(3);
+      expect(result.stepsCompleted[0].id).toBe('step-1');
+      expect(result.stepsCompleted[1].id).toBe('step-2');
+      expect(result.stepsCompleted[2].id).toBe('step-3');
+    });
+
+    it('should still return stepCompleted for backwards compatibility (last one)', () => {
+      const input = `
+[STEP_COMPLETE id="step-1"]
+First step done
+[/STEP_COMPLETE]
+
+[STEP_COMPLETE id="step-2"]
+Last step done
+[/STEP_COMPLETE]
+`;
+      const result = parser.parse(input);
+
+      // stepCompleted should be the last one for backwards compatibility
+      expect(result.stepCompleted).toMatchObject({
+        id: 'step-2',
+        summary: 'Last step done',
+      });
+    });
+  });
+
+  describe('escaped quotes in attributes', () => {
+    it('should handle escaped quotes in attribute values', () => {
+      const input = `
+[DECISION_NEEDED priority="1" category="blocker"]
+Should we use the "legacy" API?
+- Option A: Yes
+- Option B: No
+[/DECISION_NEEDED]
+`;
+      const result = parser.parse(input);
+
+      expect(result.decisions).toHaveLength(1);
+      expect(result.decisions[0].questionText).toContain('"legacy"');
+    });
+
+    it('should handle plan step with quotes in title', () => {
+      const input = `
+[PLAN_STEP id="1" parent="null" status="pending"]
+Implement "login" feature
+Add the new login endpoint.
+[/PLAN_STEP]
+`;
+      const result = parser.parse(input);
+
+      expect(result.planSteps).toHaveLength(1);
+      expect(result.planSteps[0].title).toContain('"login"');
+    });
+  });
+
+  describe('number parsing robustness', () => {
+    it('should default to 0 when progress is not a number', () => {
+      const input = `
+[IMPLEMENTATION_STATUS]
+step_id: step-1
+status: IN_PROGRESS
+files_modified: invalid
+tests_status: PASSING
+work_type: IMPLEMENTATION
+progress: not-a-number
+message: Working
+[/IMPLEMENTATION_STATUS]
+`;
+      const result = parser.parse(input);
+
+      expect(result.implementationStatus).not.toBeNull();
+      expect(result.implementationStatus!.filesModified).toBe(0);
+      expect(result.implementationStatus!.progress).toBe(0);
+      expect(Number.isNaN(result.implementationStatus!.filesModified)).toBe(false);
+      expect(Number.isNaN(result.implementationStatus!.progress)).toBe(false);
+    });
+
+    it('should default to valid priority when missing', () => {
+      const input = `
+[DECISION_NEEDED category="technical"]
+Question?
+- Option A
+[/DECISION_NEEDED]
+`;
+      const result = parser.parse(input);
+
+      expect(result.decisions).toHaveLength(1);
+      expect(Number.isNaN(result.decisions[0].priority)).toBe(false);
+      expect(result.decisions[0].priority).toBe(3); // default
+    });
+
+    it('should handle line attribute that is not a number', () => {
+      const input = `
+[DECISION_NEEDED priority="1" category="major" file="test.ts" line="abc"]
+Issue in file
+- Option A
+[/DECISION_NEEDED]
+`;
+      const result = parser.parse(input);
+
+      // line should be undefined or 0, not NaN
+      expect(Number.isNaN(result.decisions[0].line)).toBe(false);
+    });
+  });
 });

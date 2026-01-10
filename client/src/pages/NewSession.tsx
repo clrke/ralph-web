@@ -84,8 +84,9 @@ export default function NewSession() {
 
       <form onSubmit={handleSubmit} className="space-y-6">
         <div>
-          <label className="block text-sm font-medium mb-2">Project Path</label>
+          <label htmlFor="project-path" className="block text-sm font-medium mb-2">Project Path</label>
           <input
+            id="project-path"
             type="text"
             value={formData.projectPath}
             onChange={e => updateField('projectPath', e.target.value)}
@@ -96,8 +97,9 @@ export default function NewSession() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-2">Feature Title</label>
+          <label htmlFor="feature-title" className="block text-sm font-medium mb-2">Feature Title</label>
           <input
+            id="feature-title"
             type="text"
             value={formData.title}
             onChange={e => updateField('title', e.target.value)}
@@ -108,8 +110,9 @@ export default function NewSession() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-2">Feature Description</label>
+          <label htmlFor="feature-description" className="block text-sm font-medium mb-2">Feature Description</label>
           <textarea
+            id="feature-description"
             value={formData.featureDescription}
             onChange={e => updateField('featureDescription', e.target.value)}
             placeholder="Describe the feature you want to implement..."
@@ -136,8 +139,9 @@ export default function NewSession() {
                     type="button"
                     onClick={() => removeCriterion(index)}
                     className="px-3 py-2 text-gray-400 hover:text-red-400 transition-colors"
+                    aria-label={`Remove criterion ${index + 1}`}
                   >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </button>
@@ -155,8 +159,9 @@ export default function NewSession() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-2">Technical Notes (Optional)</label>
+          <label htmlFor="technical-notes" className="block text-sm font-medium mb-2">Technical Notes (Optional)</label>
           <textarea
+            id="technical-notes"
             value={formData.technicalNotes}
             onChange={e => updateField('technicalNotes', e.target.value)}
             placeholder="Any technical constraints or preferences..."
@@ -166,8 +171,9 @@ export default function NewSession() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-2">Base Branch</label>
+          <label htmlFor="base-branch" className="block text-sm font-medium mb-2">Base Branch</label>
           <input
+            id="base-branch"
             type="text"
             value={formData.baseBranch}
             onChange={e => updateField('baseBranch', e.target.value)}

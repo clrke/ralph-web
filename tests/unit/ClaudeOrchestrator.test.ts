@@ -248,4 +248,135 @@ Create authentication
       expect(orchestrator.shouldSkipPermissions(5)).toBe(false);
     });
   });
+
+  describe('error handling', () => {
+    it('should not settle twice when both error and close events fire', async () => {
+      const mockProcess = new EventEmitter() as any;
+      mockProcess.stdout = new EventEmitter();
+      mockProcess.stderr = new EventEmitter();
+
+      mockSpawn.mockReturnValue(mockProcess);
+
+      const spawnPromise = orchestrator.spawn({
+        prompt: 'Hello',
+        projectPath: '/test',
+      });
+
+      // Emit error first, then close (simulates process crash)
+      mockProcess.emit('error', new Error('Process crashed'));
+      mockProcess.emit('close', 1);
+
+      // Should reject with the error, not cause unhandled promise issues
+      await expect(spawnPromise).rejects.toThrow('Process crashed');
+    });
+
+    it('should reject when exit code is non-zero even with valid JSON', async () => {
+      const mockProcess = new EventEmitter() as any;
+      mockProcess.stdout = new EventEmitter();
+      mockProcess.stderr = new EventEmitter();
+
+      mockSpawn.mockReturnValue(mockProcess);
+
+      const spawnPromise = orchestrator.spawn({
+        prompt: 'Hello',
+        projectPath: '/test',
+      });
+
+      // Valid JSON output but non-zero exit code
+      const mockOutput = JSON.stringify({
+        result: 'Partial work done',
+        session_id: 'session-123',
+        is_error: false,
+      });
+
+      mockProcess.stdout.emit('data', Buffer.from(mockOutput));
+      mockProcess.stderr.emit('data', Buffer.from('Error: something went wrong'));
+      mockProcess.emit('close', 1);
+
+      const result = await spawnPromise;
+
+      // With non-zero exit, should mark as error even if JSON says is_error: false
+      expect(result.isError).toBe(true);
+    });
+
+    it('should include stderr content in error message', async () => {
+      const mockProcess = new EventEmitter() as any;
+      mockProcess.stdout = new EventEmitter();
+      mockProcess.stderr = new EventEmitter();
+
+      mockSpawn.mockReturnValue(mockProcess);
+
+      const spawnPromise = orchestrator.spawn({
+        prompt: 'Hello',
+        projectPath: '/test',
+      });
+
+      // No valid JSON, process crashes with stderr
+      mockProcess.stdout.emit('data', Buffer.from('invalid json'));
+      mockProcess.stderr.emit('data', Buffer.from('Fatal: API key expired'));
+      mockProcess.emit('close', 1);
+
+      const result = await spawnPromise;
+
+      expect(result.isError).toBe(true);
+      expect(result.error).toContain('API key expired');
+    });
+
+    it('should concatenate chunked stdout correctly', async () => {
+      const mockProcess = new EventEmitter() as any;
+      mockProcess.stdout = new EventEmitter();
+      mockProcess.stderr = new EventEmitter();
+
+      mockSpawn.mockReturnValue(mockProcess);
+
+      const spawnPromise = orchestrator.spawn({
+        prompt: 'Hello',
+        projectPath: '/test',
+      });
+
+      // Simulate chunked output (JSON split across multiple chunks)
+      const fullOutput = JSON.stringify({
+        result: 'This is a longer response that gets chunked',
+        session_id: 'session-789',
+        cost_usd: 0.05,
+        is_error: false,
+      });
+
+      // Split into multiple chunks
+      const chunk1 = fullOutput.substring(0, 20);
+      const chunk2 = fullOutput.substring(20, 50);
+      const chunk3 = fullOutput.substring(50);
+
+      mockProcess.stdout.emit('data', Buffer.from(chunk1));
+      mockProcess.stdout.emit('data', Buffer.from(chunk2));
+      mockProcess.stdout.emit('data', Buffer.from(chunk3));
+      mockProcess.emit('close', 0);
+
+      const result = await spawnPromise;
+
+      expect(result.output).toBe('This is a longer response that gets chunked');
+      expect(result.sessionId).toBe('session-789');
+      expect(result.isError).toBe(false);
+    });
+
+    it('should handle spawn error (command not found)', async () => {
+      const mockProcess = new EventEmitter() as any;
+      mockProcess.stdout = new EventEmitter();
+      mockProcess.stderr = new EventEmitter();
+
+      mockSpawn.mockReturnValue(mockProcess);
+
+      const spawnPromise = orchestrator.spawn({
+        prompt: 'Hello',
+        projectPath: '/test',
+      });
+
+      // Simulate ENOENT error (command not found)
+      const error = new Error('spawn claude ENOENT') as NodeJS.ErrnoException;
+      error.code = 'ENOENT';
+      mockProcess.emit('error', error);
+
+      await expect(spawnPromise).rejects.toThrow('ENOENT');
+    });
+  });
 });

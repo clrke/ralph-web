@@ -1,4 +1,4 @@
-import { FileStorageService } from '../../server/src/data/FileStorageService';
+import { FileStorageService, PathTraversalError } from '../../server/src/data/FileStorageService';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as os from 'os';
@@ -127,6 +127,57 @@ describe('FileStorageService', () => {
 
       const files = await service.list('empty');
       expect(files).toEqual([]);
+    });
+  });
+
+  describe('path traversal prevention', () => {
+    it('should throw PathTraversalError for ../ paths', async () => {
+      await expect(service.readJson('../../../etc/passwd')).rejects.toThrow(PathTraversalError);
+    });
+
+    it('should throw PathTraversalError for absolute paths outside baseDir', async () => {
+      await expect(service.readJson('/etc/passwd')).rejects.toThrow(PathTraversalError);
+    });
+
+    it('should throw PathTraversalError when writing to ../ paths', async () => {
+      await expect(service.writeJson('../outside.json', { hack: true })).rejects.toThrow(PathTraversalError);
+    });
+
+    it('should allow paths that resolve within baseDir', async () => {
+      await service.writeJson('subdir/../file.json', { test: true });
+      const result = await service.readJson('file.json');
+      expect(result).toEqual({ test: true });
+    });
+
+    it('should allow nested paths within baseDir', async () => {
+      await service.writeJson('a/b/c/data.json', { nested: true });
+      const result = await service.readJson('a/b/c/data.json');
+      expect(result).toEqual({ nested: true });
+    });
+  });
+
+  describe('atomic write reliability', () => {
+    it('should not leave temp files on successful write', async () => {
+      await service.writeJson('test.json', { data: 'value' });
+
+      const files = await fs.readdir(testDir);
+      const tempFiles = files.filter(f => f.includes('.tmp.'));
+      expect(tempFiles).toHaveLength(0);
+    });
+
+    it('should handle rapid successive writes without collision', async () => {
+      // Write same file multiple times rapidly in parallel
+      const writes = Array.from({ length: 10 }, (_, i) =>
+        service.writeJson('rapid.json', { version: i })
+      );
+
+      // Should all complete without error (last write wins)
+      await expect(Promise.all(writes)).resolves.toBeDefined();
+
+      // File should exist with valid JSON
+      const result = await service.readJson<{ version: number }>('rapid.json');
+      expect(result).toBeDefined();
+      expect(typeof result?.version).toBe('number');
     });
   });
 });

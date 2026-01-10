@@ -1,4 +1,4 @@
-export type PlanStepStatus = 'pending' | 'in_progress' | 'completed' | 'blocked' | 'skipped';
+export type PlanStepStatus = 'pending' | 'in_progress' | 'completed' | 'blocked' | 'skipped' | 'needs_review';
 
 export interface PlanStep {
   id: string;

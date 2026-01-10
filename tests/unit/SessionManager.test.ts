@@ -66,6 +66,27 @@ describe('SessionManager', () => {
 
       expect(featureId).toBe('uppercase-title');
     });
+
+    it('should throw for empty title', () => {
+      expect(() => manager.getFeatureId('')).toThrow(/alphanumeric/i);
+    });
+
+    it('should throw for title with only special characters', () => {
+      expect(() => manager.getFeatureId('!@#$%^&*()')).toThrow(/alphanumeric/i);
+    });
+
+    it('should truncate very long titles to 64 chars', () => {
+      const longTitle = 'a'.repeat(100);
+      expect(manager.getFeatureId(longTitle).length).toBeLessThanOrEqual(64);
+    });
+
+    it('should remove leading and trailing dashes', () => {
+      expect(manager.getFeatureId('--test--')).toBe('test');
+    });
+
+    it('should handle whitespace-only title', () => {
+      expect(() => manager.getFeatureId('   ')).toThrow(/alphanumeric/i);
+    });
   });
 
   describe('createSession', () => {
@@ -129,6 +150,36 @@ describe('SessionManager', () => {
       expect(session.technicalNotes).toBe('Use JWT');
       expect(session.baseBranch).toBe('develop');
     });
+
+    it('should throw for empty title', async () => {
+      await expect(
+        manager.createSession({ ...validInput, title: '' })
+      ).rejects.toThrow(/title is required/i);
+    });
+
+    it('should throw for empty projectPath', async () => {
+      await expect(
+        manager.createSession({ ...validInput, projectPath: '' })
+      ).rejects.toThrow(/project path is required/i);
+    });
+
+    it('should throw for whitespace-only title', async () => {
+      await expect(
+        manager.createSession({ ...validInput, title: '   ' })
+      ).rejects.toThrow(/title is required/i);
+    });
+
+    it('should throw when creating duplicate session', async () => {
+      await manager.createSession(validInput);
+      await expect(manager.createSession(validInput)).rejects.toThrow(/already exists/i);
+    });
+
+    it('should throw when titles normalize to same featureId', async () => {
+      await manager.createSession(validInput);
+      await expect(
+        manager.createSession({ ...validInput, title: 'ADD USER AUTHENTICATION!' })
+      ).rejects.toThrow(/already exists/i);
+    });
   });
 
   describe('getSession', () => {
@@ -177,6 +228,30 @@ describe('SessionManager', () => {
       await expect(
         manager.updateSession('nonexistent', 'session', { status: 'planning' })
       ).rejects.toThrow();
+    });
+
+    it('should not allow updating protected fields', async () => {
+      const input: CreateSessionInput = {
+        title: 'Test Feature',
+        featureDescription: 'Test description',
+        projectPath: '/test/path',
+      };
+
+      const session = await manager.createSession(input);
+      const updated = await manager.updateSession(session.projectId, session.featureId, {
+        id: 'hacked-id',
+        projectId: 'hacked-project',
+        featureId: 'hacked-feature',
+        createdAt: '1970-01-01T00:00:00.000Z',
+        version: '9.9',
+      } as Partial<Session>);
+
+      // Protected fields should remain unchanged
+      expect(updated.id).toBe(session.id);
+      expect(updated.projectId).toBe(session.projectId);
+      expect(updated.featureId).toBe(session.featureId);
+      expect(updated.createdAt).toBe(session.createdAt);
+      expect(updated.version).toBe(session.version);
     });
   });
 

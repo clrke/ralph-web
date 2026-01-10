@@ -13,6 +13,8 @@
     "dev:client": "npm run dev -w client",
     "build": "npm run build -w shared && npm run build -w server && npm run build -w client",
     "test": "jest",
+    "test:client": "npm test -w client",
+    "test:all": "npm test && npm test -w client",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "lint": "eslint . --ext .ts,.tsx"

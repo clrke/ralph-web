@@ -25,14 +25,23 @@ jobs:
       - name: Build shared types
         run: npm run build --workspace=@claude-code-web/shared
 
+      - name: Lint
+        run: npm run lint
+
       - name: Type check server
         run: npx tsc --noEmit --project server/tsconfig.json
 
       - name: Type check client
         run: npx tsc --noEmit --project client/tsconfig.json
 
-      - name: Run tests
+      - name: Run server tests
         run: npm test
+
+      - name: Run client tests
+        run: npm test --workspace=@claude-code-web/client
+
+      - name: Security audit
+        run: npm audit --audit-level=high || true
 
       - name: Build client
         run: npm run build --workspace=@claude-code-web/client

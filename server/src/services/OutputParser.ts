@@ -46,6 +46,7 @@ export interface ParsedMarker {
   decisions: ParsedDecision[];
   planSteps: ParsedPlanStep[];
   stepCompleted: ParsedStepComplete | null;
+  stepsCompleted: ParsedStepComplete[];
   planModeEntered: boolean;
   planModeExited: boolean;
   planFilePath: string | null;
@@ -57,10 +58,12 @@ export interface ParsedMarker {
 
 export class OutputParser {
   parse(input: string): ParsedMarker {
+    const stepsCompleted = this.parseAllStepsComplete(input);
     return {
       decisions: this.parseDecisions(input),
       planSteps: this.parsePlanSteps(input),
-      stepCompleted: this.parseStepComplete(input),
+      stepCompleted: stepsCompleted.length > 0 ? stepsCompleted[stepsCompleted.length - 1] : null,
+      stepsCompleted,
       planModeEntered: input.includes('[PLAN_MODE_ENTERED]'),
       planModeExited: input.includes('[PLAN_MODE_EXITED]'),
       planFilePath: this.parsePlanFile(input),
@@ -96,12 +99,12 @@ export class OutputParser {
       }
 
       decisions.push({
-        priority: parseInt(attrs.priority || '3', 10),
+        priority: this.safeParseInt(attrs.priority, 3),
         category: attrs.category || 'general',
         questionText: questionLines.join('\n').trim(),
         options,
         file: attrs.file,
-        line: attrs.line ? parseInt(attrs.line, 10) : undefined,
+        line: attrs.line ? this.safeParseInt(attrs.line, undefined) : undefined,
       });
     }
 
@@ -130,16 +133,19 @@ export class OutputParser {
     return steps;
   }
 
-  private parseStepComplete(input: string): ParsedStepComplete | null {
-    const regex = /\[STEP_COMPLETE\s+id="([^"]+)"\]([\s\S]*?)\[\/STEP_COMPLETE\]/;
-    const match = input.match(regex);
+  private parseAllStepsComplete(input: string): ParsedStepComplete[] {
+    const steps: ParsedStepComplete[] = [];
+    const regex = /\[STEP_COMPLETE\s+id="([^"]+)"\]([\s\S]*?)\[\/STEP_COMPLETE\]/g;
 
-    if (!match) return null;
+    let match;
+    while ((match = regex.exec(input)) !== null) {
+      steps.push({
+        id: match[1],
+        summary: match[2].trim(),
+      });
+    }
 
-    return {
-      id: match[1],
-      summary: match[2].trim(),
-    };
+    return steps;
   }
 
   private parsePlanFile(input: string): string | null {
@@ -169,10 +175,10 @@ export class OutputParser {
     return {
       stepId: getValue('step_id'),
       status: getValue('status'),
-      filesModified: parseInt(getValue('files_modified') || '0', 10),
+      filesModified: this.safeParseInt(getValue('files_modified'), 0),
       testsStatus: getValue('tests_status'),
       workType: getValue('work_type'),
-      progress: parseInt(getValue('progress') || '0', 10),
+      progress: this.safeParseInt(getValue('progress'), 0),
       message: getValue('message'),
     };
   }
@@ -204,5 +210,13 @@ export class OutputParser {
     }
 
     return attrs;
+  }
+
+  private safeParseInt(value: string | undefined, defaultValue: number): number;
+  private safeParseInt(value: string | undefined, defaultValue: undefined): number | undefined;
+  private safeParseInt(value: string | undefined, defaultValue: number | undefined): number | undefined {
+    if (!value) return defaultValue;
+    const parsed = parseInt(value, 10);
+    return Number.isNaN(parsed) ? defaultValue : parsed;
   }
 }

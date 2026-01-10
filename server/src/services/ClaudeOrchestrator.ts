@@ -98,7 +98,7 @@ export class ClaudeOrchestrator {
         stderr += data.toString();
       });
 
-      childProcess.on('close', (code: number) => {
+      childProcess.on('close', (code: number | null) => {
         if (timeoutId) {
           clearTimeout(timeoutId);
         }
@@ -107,22 +107,29 @@ export class ClaudeOrchestrator {
           const jsonOutput: ClaudeJsonOutput = JSON.parse(stdout);
           const parsed = this.outputParser.parse(jsonOutput.result || '');
 
+          // Check both JSON is_error flag AND exit code
+          const hasError = jsonOutput.is_error || (code !== null && code !== 0);
+
           resolve({
             output: jsonOutput.result || '',
             sessionId: jsonOutput.session_id || null,
             costUsd: jsonOutput.cost_usd || 0,
-            isError: jsonOutput.is_error,
-            error: jsonOutput.error,
+            isError: hasError,
+            error: jsonOutput.error || (hasError && stderr ? stderr.trim() : undefined),
             parsed,
           });
         } catch (parseError) {
-          // If JSON parsing fails, return raw output
+          // If JSON parsing fails, include stderr for better debugging
+          const errorMessage = stderr.trim()
+            ? `${stderr.trim()}`
+            : `Failed to parse Claude output: ${parseError}`;
+
           resolve({
             output: stdout,
             sessionId: null,
             costUsd: 0,
             isError: true,
-            error: `Failed to parse Claude output: ${parseError}`,
+            error: errorMessage,
             parsed: this.outputParser.parse(stdout),
           });
         }

@@ -1,11 +1,31 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import * as crypto from 'crypto';
+
+export class PathTraversalError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PathTraversalError';
+  }
+}
 
 export class FileStorageService {
-  constructor(private readonly baseDir: string) {}
+  private readonly normalizedBaseDir: string;
+
+  constructor(private readonly baseDir: string) {
+    this.normalizedBaseDir = path.resolve(baseDir);
+  }
 
   private resolvePath(relativePath: string): string {
-    return path.join(this.baseDir, relativePath);
+    // Resolve the full path
+    const fullPath = path.resolve(this.normalizedBaseDir, relativePath);
+
+    // Security: Ensure resolved path is within baseDir (prevent path traversal)
+    if (!fullPath.startsWith(this.normalizedBaseDir + path.sep) && fullPath !== this.normalizedBaseDir) {
+      throw new PathTraversalError(`Path traversal detected: ${relativePath} resolves outside base directory`);
+    }
+
+    return fullPath;
   }
 
   async readJson<T>(relativePath: string): Promise<T | null> {
@@ -31,9 +51,22 @@ export class FileStorageService {
     }
 
     // Atomic write: write to temp file, then rename
-    const tempPath = `${fullPath}.tmp.${Date.now()}`;
-    await fs.writeJson(tempPath, data, { spaces: 2 });
-    await fs.rename(tempPath, fullPath);
+    // Use random suffix to avoid collisions in rapid succession
+    const randomSuffix = crypto.randomBytes(8).toString('hex');
+    const tempPath = `${fullPath}.tmp.${Date.now()}.${randomSuffix}`;
+
+    try {
+      await fs.writeJson(tempPath, data, { spaces: 2 });
+      await fs.rename(tempPath, fullPath);
+    } catch (error) {
+      // Clean up temp file on failure
+      try {
+        await fs.remove(tempPath);
+      } catch {
+        // Ignore cleanup errors
+      }
+      throw error;
+    }
   }
 
   async ensureDir(relativePath: string): Promise<void> {

@@ -25,7 +25,6 @@ export interface QuestionOption {
 
 export interface QuestionAnswer {
   value: string | string[];
-  answeredAt: string;
 }
 
 export interface Question {
