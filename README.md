@@ -489,7 +489,7 @@ History is useful for:
 - Tuning circuit breaker thresholds
 - Identifying patterns in Claude behavior
 
-**Exit Detection & Rolling Window:**
+### Exit Detection & Rolling Window
 
 The server tracks exit signals in `status.json` across a rolling window of the last 5 spawns:
 
