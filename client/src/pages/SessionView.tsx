@@ -192,7 +192,7 @@ function QuestionCard({
   onAnswer: (answer: Question['answer']) => void;
 }) {
   const handleOptionSelect = (value: string) => {
-    onAnswer({ value, answeredAt: new Date().toISOString() });
+    onAnswer({ value });
   };
 
   return (

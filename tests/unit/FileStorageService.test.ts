@@ -180,4 +180,66 @@ describe('FileStorageService', () => {
       expect(typeof result?.version).toBe('number');
     });
   });
+
+  describe('file locking (withLock)', () => {
+    it('should execute operation with lock', async () => {
+      const result = await service.withLock('locktest.json', async () => {
+        await service.writeJson('locktest.json', { locked: true });
+        return 'done';
+      });
+
+      expect(result).toBe('done');
+      const data = await service.readJson<{ locked: boolean }>('locktest.json');
+      expect(data?.locked).toBe(true);
+    });
+
+    it('should release lock after operation completes', async () => {
+      await service.withLock('release-test.json', async () => {
+        await service.writeJson('release-test.json', { first: true });
+      });
+
+      // Should be able to acquire lock again
+      await service.withLock('release-test.json', async () => {
+        await service.writeJson('release-test.json', { second: true });
+      });
+
+      const data = await service.readJson<{ second: boolean }>('release-test.json');
+      expect(data?.second).toBe(true);
+    });
+
+    it('should release lock even if operation throws', async () => {
+      await expect(
+        service.withLock('error-test.json', async () => {
+          throw new Error('Operation failed');
+        })
+      ).rejects.toThrow('Operation failed');
+
+      // Should be able to acquire lock again after error
+      await service.withLock('error-test.json', async () => {
+        await service.writeJson('error-test.json', { recovered: true });
+      });
+
+      const data = await service.readJson<{ recovered: boolean }>('error-test.json');
+      expect(data?.recovered).toBe(true);
+    });
+
+    it('should serialize concurrent operations on same file', async () => {
+      const results: number[] = [];
+
+      // Start multiple concurrent operations
+      const operations = Array.from({ length: 5 }, (_, i) =>
+        service.withLock('concurrent.json', async () => {
+          // Simulate some async work
+          await new Promise(resolve => setTimeout(resolve, 10));
+          results.push(i);
+          return i;
+        })
+      );
+
+      await Promise.all(operations);
+
+      // All operations should complete
+      expect(results).toHaveLength(5);
+    });
+  });
 });

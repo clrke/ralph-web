@@ -311,4 +311,204 @@ describe('SessionManager', () => {
       ).rejects.toThrow();
     });
   });
+
+  describe('validateProjectPath', () => {
+    let validProjectDir: string;
+
+    beforeEach(async () => {
+      // Create a valid project directory with .git folder
+      validProjectDir = path.join(os.tmpdir(), `test-project-${Date.now()}`);
+      await fs.ensureDir(validProjectDir);
+      await fs.ensureDir(path.join(validProjectDir, '.git'));
+    });
+
+    afterEach(async () => {
+      await fs.remove(validProjectDir);
+    });
+
+    it('should validate a valid project path', async () => {
+      await expect(manager.validateProjectPath(validProjectDir)).resolves.not.toThrow();
+    });
+
+    it('should throw for non-existent path', async () => {
+      await expect(
+        manager.validateProjectPath('/nonexistent/path/that/does/not/exist')
+      ).rejects.toThrow(/does not exist/i);
+    });
+
+    it('should throw for path that is a file, not directory', async () => {
+      const filePath = path.join(validProjectDir, 'somefile.txt');
+      await fs.writeFile(filePath, 'content');
+
+      await expect(manager.validateProjectPath(filePath)).rejects.toThrow(/not a directory/i);
+    });
+
+    it('should throw for path that is not a git repository', async () => {
+      const nonGitDir = path.join(os.tmpdir(), `non-git-${Date.now()}`);
+      await fs.ensureDir(nonGitDir);
+
+      try {
+        await expect(manager.validateProjectPath(nonGitDir)).rejects.toThrow(/not a git repository/i);
+      } finally {
+        await fs.remove(nonGitDir);
+      }
+    });
+
+    it('should throw for path without read access', async () => {
+      // Skip on Windows where chmod doesn't work the same way
+      if (process.platform === 'win32') {
+        return;
+      }
+
+      const noReadDir = path.join(os.tmpdir(), `no-read-${Date.now()}`);
+      await fs.ensureDir(noReadDir);
+      await fs.ensureDir(path.join(noReadDir, '.git'));
+      await fs.chmod(noReadDir, 0o000);
+
+      try {
+        await expect(manager.validateProjectPath(noReadDir)).rejects.toThrow(/cannot read/i);
+      } finally {
+        await fs.chmod(noReadDir, 0o755);
+        await fs.remove(noReadDir);
+      }
+    });
+
+    it('should throw for path without write access', async () => {
+      // Skip on Windows where chmod doesn't work the same way
+      if (process.platform === 'win32') {
+        return;
+      }
+
+      const noWriteDir = path.join(os.tmpdir(), `no-write-${Date.now()}`);
+      await fs.ensureDir(noWriteDir);
+      await fs.ensureDir(path.join(noWriteDir, '.git'));
+      await fs.chmod(noWriteDir, 0o444);
+
+      try {
+        await expect(manager.validateProjectPath(noWriteDir)).rejects.toThrow(/cannot write/i);
+      } finally {
+        await fs.chmod(noWriteDir, 0o755);
+        await fs.remove(noWriteDir);
+      }
+    });
+  });
+
+  describe('createSession with path validation', () => {
+    let validProjectDir: string;
+    let validatingManager: SessionManager;
+
+    beforeEach(async () => {
+      // Create a valid project directory with .git folder
+      validProjectDir = path.join(os.tmpdir(), `test-validated-project-${Date.now()}`);
+      await fs.ensureDir(validProjectDir);
+      await fs.ensureDir(path.join(validProjectDir, '.git'));
+
+      // Create a manager with validation enabled
+      validatingManager = new SessionManager(storage, { validateProjectPath: true });
+    });
+
+    afterEach(async () => {
+      await fs.remove(validProjectDir);
+    });
+
+    it('should create session for valid project path when validation enabled', async () => {
+      const session = await validatingManager.createSession({
+        title: 'Valid Project Feature',
+        featureDescription: 'Test',
+        projectPath: validProjectDir,
+      });
+
+      expect(session.projectPath).toBe(validProjectDir);
+    });
+
+    it('should throw for invalid project path when validation enabled', async () => {
+      await expect(
+        validatingManager.createSession({
+          title: 'Invalid Path Feature',
+          featureDescription: 'Test',
+          projectPath: '/nonexistent/path',
+        })
+      ).rejects.toThrow(/does not exist/i);
+    });
+
+    it('should throw for non-git directory when validation enabled', async () => {
+      const nonGitDir = path.join(os.tmpdir(), `non-git-create-${Date.now()}`);
+      await fs.ensureDir(nonGitDir);
+
+      try {
+        await expect(
+          validatingManager.createSession({
+            title: 'Non Git Feature',
+            featureDescription: 'Test',
+            projectPath: nonGitDir,
+          })
+        ).rejects.toThrow(/not a git repository/i);
+      } finally {
+        await fs.remove(nonGitDir);
+      }
+    });
+  });
+
+  describe('getGitInfo', () => {
+    it('should return null for non-git directory', async () => {
+      const nonGitDir = path.join(os.tmpdir(), `non-git-info-${Date.now()}`);
+      await fs.ensureDir(nonGitDir);
+
+      try {
+        const info = await manager.getGitInfo(nonGitDir);
+        expect(info).toBeNull();
+      } finally {
+        await fs.remove(nonGitDir);
+      }
+    });
+
+    it('should return git info for a valid git repository', async () => {
+      // Use the actual project directory which is a git repo
+      const projectDir = path.resolve(__dirname, '../..');
+      const info = await manager.getGitInfo(projectDir);
+
+      expect(info).not.toBeNull();
+      expect(info?.currentBranch).toBeDefined();
+      expect(info?.headCommitSha).toBeDefined();
+      // SHA should be 40 hex characters
+      expect(info?.headCommitSha).toMatch(/^[a-f0-9]{40}$/);
+    });
+  });
+
+  describe('createSession with git info', () => {
+    it('should populate baseCommitSha from git HEAD when path validation enabled', async () => {
+      // Use the actual project directory
+      const projectDir = path.resolve(__dirname, '../..');
+      const gitManager = new SessionManager(storage, { validateProjectPath: true });
+
+      const session = await gitManager.createSession({
+        title: 'Git Info Test Feature',
+        featureDescription: 'Testing git info population',
+        projectPath: projectDir,
+      });
+
+      // baseCommitSha should be a valid git SHA
+      expect(session.baseCommitSha).toMatch(/^[a-f0-9]{40}$/);
+    });
+
+    it('should create featureBranch with feature/ prefix', async () => {
+      const session = await manager.createSession({
+        title: 'My Cool Feature',
+        featureDescription: 'Test',
+        projectPath: '/test/path',
+      });
+
+      expect(session.featureBranch).toBe('feature/my-cool-feature');
+    });
+
+    it('should handle special characters in feature branch name', async () => {
+      const session = await manager.createSession({
+        title: "Fix Bug #123: Can't Login!",
+        featureDescription: 'Test',
+        projectPath: '/test/path',
+      });
+
+      expect(session.featureBranch).toBe('feature/fix-bug-123-cant-login');
+    });
+  });
 });

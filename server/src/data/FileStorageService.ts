@@ -1,6 +1,7 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import * as lockfile from 'proper-lockfile';
 
 export class PathTraversalError extends Error {
   constructor(message: string) {
@@ -103,5 +104,40 @@ export class FileStorageService {
     }
 
     return files;
+  }
+
+  /**
+   * Execute an operation with a file lock (README lines 1004-1011)
+   * Prevents concurrent write conflicts using proper-lockfile
+   */
+  async withLock<T>(relativePath: string, operation: () => Promise<T>): Promise<T> {
+    const fullPath = this.resolvePath(relativePath);
+    const dir = path.dirname(fullPath);
+
+    // Ensure directory exists for lock file
+    await fs.ensureDir(dir);
+
+    // Create an empty file if it doesn't exist (lockfile needs a file to lock)
+    if (!(await fs.pathExists(fullPath))) {
+      await fs.writeJson(fullPath, {});
+    }
+
+    // Acquire lock with retry options
+    const release = await lockfile.lock(fullPath, {
+      retries: {
+        retries: 5,
+        minTimeout: 100,
+        maxTimeout: 1000,
+        factor: 2,
+      },
+      stale: 10000, // Consider lock stale after 10 seconds
+    });
+
+    try {
+      return await operation();
+    } finally {
+      // Always release the lock
+      await release();
+    }
   }
 }

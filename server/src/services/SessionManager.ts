@@ -1,6 +1,12 @@
 import * as crypto from 'crypto';
+import * as fs from 'fs-extra';
+import * as path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { v4 as uuidv4 } from 'uuid';
 import { FileStorageService } from '../data/FileStorageService';
+
+const execFileAsync = promisify(execFile);
 import {
   Session,
   SessionStatus,
@@ -27,8 +33,27 @@ const VALID_TRANSITIONS: Record<number, number[]> = {
 // Fields that cannot be modified via updateSession
 const PROTECTED_FIELDS = ['id', 'projectId', 'featureId', 'version', 'createdAt'] as const;
 
+export interface SessionManagerOptions {
+  validateProjectPath?: boolean;
+}
+
+export interface GitInfo {
+  currentBranch: string;
+  headCommitSha: string;
+}
+
 export class SessionManager {
-  constructor(private readonly storage: FileStorageService) {}
+  private readonly options: SessionManagerOptions;
+
+  constructor(
+    private readonly storage: FileStorageService,
+    options: SessionManagerOptions = {}
+  ) {
+    this.options = {
+      validateProjectPath: false,
+      ...options,
+    };
+  }
 
   getProjectId(projectPath: string): string {
     // Use SHA256 for better collision resistance (truncated to 32 chars)
@@ -53,6 +78,78 @@ export class SessionManager {
     return slug.substring(0, 64);
   }
 
+  /**
+   * Validates a project path according to README requirements (lines 2133-2144)
+   * Checks: exists, is directory, has read access, has write access, is git repo
+   * Note: Access checks come before git check since we need read access to check for .git
+   */
+  async validateProjectPath(projectPath: string): Promise<void> {
+    // Check path exists
+    const exists = await fs.pathExists(projectPath);
+    if (!exists) {
+      throw new Error('Project path does not exist');
+    }
+
+    // Check is directory
+    const stat = await fs.stat(projectPath);
+    if (!stat.isDirectory()) {
+      throw new Error('Project path is not a directory');
+    }
+
+    // Check read access (must come before git check since we need to read dir contents)
+    try {
+      await fs.access(projectPath, fs.constants.R_OK);
+    } catch {
+      throw new Error('Cannot read project directory');
+    }
+
+    // Check write access
+    try {
+      await fs.access(projectPath, fs.constants.W_OK);
+    } catch {
+      throw new Error('Cannot write to project directory');
+    }
+
+    // Check is git repository (comes after access checks)
+    const gitPath = path.join(projectPath, '.git');
+    const hasGit = await fs.pathExists(gitPath);
+    if (!hasGit) {
+      throw new Error('Project path is not a git repository');
+    }
+  }
+
+  /**
+   * Get git information from a project directory
+   * Returns null if not a git repository or git commands fail
+   */
+  async getGitInfo(projectPath: string): Promise<GitInfo | null> {
+    try {
+      // Check if .git exists
+      const gitPath = path.join(projectPath, '.git');
+      const hasGit = await fs.pathExists(gitPath);
+      if (!hasGit) {
+        return null;
+      }
+
+      // Get current branch name
+      const { stdout: branchOutput } = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+        cwd: projectPath,
+      });
+
+      // Get HEAD commit SHA
+      const { stdout: shaOutput } = await execFileAsync('git', ['rev-parse', 'HEAD'], {
+        cwd: projectPath,
+      });
+
+      return {
+        currentBranch: branchOutput.trim(),
+        headCommitSha: shaOutput.trim(),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   private getSessionPath(projectId: string, featureId: string): string {
     return `${projectId}/${featureId}`;
   }
@@ -66,11 +163,25 @@ export class SessionManager {
       throw new Error('Project path is required');
     }
 
+    // Validate project path if enabled (README lines 2133-2144)
+    if (this.options.validateProjectPath) {
+      await this.validateProjectPath(input.projectPath);
+    }
+
     const projectId = this.getProjectId(input.projectPath);
     const featureId = this.getFeatureId(input.title);
     const sessionPath = this.getSessionPath(projectId, featureId);
     const now = new Date().toISOString();
     const sessionId = uuidv4();
+
+    // Get git info if path validation is enabled (we know it's a valid git repo)
+    let baseCommitSha = '';
+    if (this.options.validateProjectPath) {
+      const gitInfo = await this.getGitInfo(input.projectPath);
+      if (gitInfo) {
+        baseCommitSha = gitInfo.headCommitSha;
+      }
+    }
 
     // Check for existing session to prevent collision
     const existingSession = await this.storage.exists(`${sessionPath}/session.json`);
@@ -96,7 +207,7 @@ export class SessionManager {
       technicalNotes: input.technicalNotes || '',
       baseBranch: input.baseBranch || 'main',
       featureBranch: `feature/${featureId}`,
-      baseCommitSha: '',
+      baseCommitSha,
       status: 'discovery',
       currentStage: 1,
       replanningCount: 0,
