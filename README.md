@@ -723,31 +723,40 @@ Claude Code outputs unstructured markdown/text. We use a hybrid parsing strategy
 
 **1. Prompt Engineering** - Instruct Claude to use markers:
 ```
-When asking questions, format as:
-[QUESTION type="single_choice" required="true"]
-Which authentication method should we use?
-- JWT tokens (recommended)
-- Session cookies
-- OAuth 2.0
-[/QUESTION]
+When a decision is needed from the user, format as:
+[DECISION_NEEDED priority="1|2|3" category="scope|blocker|todo|critical"]
+Issue or question description.
+
+How should we proceed?
+- Option A: Description (recommended)
+- Option B: Description
+- Option C: Description
+[/DECISION_NEEDED]
 
 When outputting plan steps, format as:
 [PLAN_STEP id="1" status="pending"]
 Create user authentication middleware
 [/PLAN_STEP]
+
+When batching decisions at checkpoints:
+[CHECKPOINT step="{{stepId}}"]
+[DECISION_NEEDED ...]...[/DECISION_NEEDED]
+[DECISION_NEEDED ...]...[/DECISION_NEEDED]
+[/CHECKPOINT]
 ```
 
 **2. LLM Fallback** - When markers aren't present, use Haiku to parse:
-- Detect if Claude is asking a question
+- Detect if Claude is asking a question or needs a decision
 - Extract plan steps from freeform output
-- Classify blockers vs. non-blockers
+- Classify priority level of decisions
 
 **Marker Parsing Rules:**
 - Markers must be on their own line (not inline with other content)
 - Markers in code blocks (```) are ignored
-- Markers are case-sensitive: `[QUESTION]` not `[question]`
-- Nested markers allowed: `[BLOCKER]` can contain `[QUESTION]`
+- Markers are case-sensitive: `[DECISION_NEEDED]` not `[decision_needed]`
+- Nested markers allowed: `[CHECKPOINT]` can contain `[DECISION_NEEDED]`
 - Incomplete markers (missing close tag) trigger Haiku fallback
+- Priority attribute determines question ordering (1 = ask first, 3 = ask last)
 
 This ensures reliable parsing while gracefully handling edge cases.
 
@@ -757,8 +766,10 @@ Each stage uses a tailored prompt with output format instructions, subagent guid
 
 #### Stage 1: Feature Discovery
 
+Uses Claude Code's native plan mode for structured exploration and planning.
+
 ```
-You are helping implement a new feature. Study the codebase and ask clarifying questions.
+You are helping implement a new feature. Enter plan mode and study the codebase.
 
 ## Feature
 Title: {{title}}
@@ -769,36 +780,45 @@ Project Path: {{projectPath}}
 {{acceptanceCriteria}}
 
 ## Instructions
-1. Use the Task tool to spawn domain-specific subagents for parallel codebase exploration:
+1. Enter plan mode using the EnterPlanMode tool.
+
+2. Within plan mode, spawn domain-specific subagents for parallel codebase exploration:
    - Frontend Agent: UI components, React patterns, styling
    - Backend Agent: API endpoints, business logic, middleware
    - Database Agent: Schema design, queries, data modeling
    - DevOps Agent: CI/CD pipelines, deployment configs, infrastructure
    - Test Agent: Test coverage, testing strategies
 
-2. Based on exploration, ask clarifying questions to understand requirements.
+3. Based on exploration, ask clarifying questions using progressive disclosure:
+   - Start with the most fundamental questions (scope, approach, constraints)
+   - After user answers, ask increasingly detailed questions based on their choices
+   - Each question must include options with a recommended choice
 
-3. Format questions as:
-[QUESTION type="single_choice|multi_choice|text" required="true|false"]
-Your question here?
-- Option 1 (recommended)
-- Option 2
-- Option 3
-[/QUESTION]
+4. Format questions as:
+[DECISION_NEEDED priority="1|2|3" category="scope|approach|technical|design"]
+Question here?
+- Option A: Description (recommended)
+- Option B: Description
+- Option C: Description
+[/DECISION_NEEDED]
 
-4. After all questions are answered, generate an implementation plan.
+   Priority 1 = fundamental (ask first), Priority 2 = detailed, Priority 3 = refinement
 
-5. Format plan steps as:
+5. After all questions are answered, generate an implementation plan within plan mode.
+
+6. Format plan steps as:
 [PLAN_STEP id="1" parent="null" status="pending"]
 Step title here
 Description of what this step accomplishes.
 [/PLAN_STEP]
+
+7. Exit plan mode with ExitPlanMode when ready for user approval.
 ```
 
 #### Stage 2: Plan Review
 
 ```
-You are reviewing an implementation plan. Find issues and suggest improvements.
+You are reviewing an implementation plan. Find issues and present them as decisions for the user.
 
 ## Current Plan (v{{version}})
 {{planSteps}}
@@ -819,13 +839,25 @@ This is review {{currentIteration}} of {{targetIterations}} recommended.
    - Security: Injection risks, exposed secrets, missing auth checks
    - Performance: N+1 queries, missing indexes, large bundle size
 
-3. Format findings as:
-[FINDING category="code_quality|architecture|security|performance" severity="high|medium|low"]
-Issue description here.
-Suggestion: How to fix it.
-[/FINDING]
+3. Present issues as progressive decisions for the user:
+   - Priority 1: Fundamental issues (architecture, security) - ask first
+   - Priority 2: Important issues (code quality, performance) - ask after P1 resolved
+   - Priority 3: Refinements (style, optimization) - ask last
 
-4. If plan is ready, output:
+4. Format each issue as a decision with fix options:
+[DECISION_NEEDED priority="1|2|3" category="code_quality|architecture|security|performance"]
+Issue: Description of the problem found.
+Impact: What could go wrong if not addressed.
+
+How should we address this?
+- Option A: Recommended fix approach (recommended)
+- Option B: Alternative fix approach
+- Option C: Accept risk and proceed without fix
+[/DECISION_NEEDED]
+
+5. After user answers priority 1 questions, present priority 2 questions, and so on.
+
+6. If no issues found or all decisions resolved:
 [PLAN_APPROVED]
 ```
 
@@ -846,18 +878,36 @@ You are implementing an approved plan. Execute each step carefully.
 Summary of what was done.
 [/STEP_COMPLETE]
 
-2. If you encounter an unknown that BLOCKS progress:
-[BLOCKER]
-Description of what's blocking you.
-[QUESTION type="text" required="true"]
-What you need to know to proceed?
-[/QUESTION]
-[/BLOCKER]
+2. Collect blockers and unknowns during implementation. At each checkpoint (after completing a plan step or group of related steps), batch them into prioritized decisions:
 
-3. If you encounter a non-blocking unknown, add a TODO and continue:
-[TODO type="non_blocker" file="path/to/file.ts" line="42"]
-Description of what needs to be addressed later.
-[/TODO]
+[CHECKPOINT step="{{stepId}}"]
+## Decisions Needed
+
+[DECISION_NEEDED priority="1" category="blocker"]
+Issue: Description of what's blocking progress.
+Context: What you've tried and why it didn't work.
+
+How should we proceed?
+- Option A: Recommended approach (recommended)
+- Option B: Alternative approach
+- Option C: Skip this step and continue
+[/DECISION_NEEDED]
+
+[DECISION_NEEDED priority="2" category="todo"]
+Issue: Non-blocking unknown discovered during implementation.
+File: path/to/file.ts:42
+
+How should we handle this?
+- Option A: Address now before continuing (recommended)
+- Option B: Add TODO comment and address later
+- Option C: Out of scope, ignore
+[/DECISION_NEEDED]
+[/CHECKPOINT]
+
+3. Present decisions progressively:
+   - Priority 1: Blockers that prevent continuation
+   - Priority 2: Important TODOs that affect quality
+   - Priority 3: Minor improvements or cleanup items
 
 4. Run tests after implementation. If tests fail, attempt to fix (max 3 attempts).
 
@@ -945,15 +995,47 @@ Description: {{prDescription}}
    - Performance: Any obvious bottlenecks?
    - Tests: Is coverage adequate?
 
-3. Format issues as:
-[PR_ISSUE severity="critical|major|minor|suggestion" file="path/to/file.ts" line="42"]
-Issue description.
-Suggestion: How to fix.
-[/PR_ISSUE]
+3. Batch all findings and present as prioritized decisions:
 
-4. If no issues found:
+[REVIEW_CHECKPOINT]
+## Review Findings
+
+[DECISION_NEEDED priority="1" category="critical" file="path/to/file.ts" line="42"]
+Issue: Critical problem that must be fixed before merge.
+Impact: What could go wrong in production.
+
+How should we fix this?
+- Option A: Recommended fix approach (recommended)
+- Option B: Alternative fix approach
+[/DECISION_NEEDED]
+
+[DECISION_NEEDED priority="2" category="major" file="path/to/file.ts" line="88"]
+Issue: Important issue that should be addressed.
+Impact: Affects code quality or maintainability.
+
+How should we handle this?
+- Option A: Fix now before merge (recommended)
+- Option B: Create follow-up ticket
+- Option C: Accept as-is with justification
+[/DECISION_NEEDED]
+
+[DECISION_NEEDED priority="3" category="suggestion" file="path/to/file.ts" line="120"]
+Issue: Minor improvement opportunity.
+
+Would you like to address this?
+- Option A: Apply suggestion
+- Option B: Skip for now (recommended)
+[/DECISION_NEEDED]
+[/REVIEW_CHECKPOINT]
+
+4. Present decisions progressively:
+   - Priority 1: Critical/security issues - must be resolved
+   - Priority 2: Major issues - should be resolved or justified
+   - Priority 3: Suggestions - optional improvements
+
+5. After user resolves all priority 1 and 2 decisions:
 [PR_APPROVED]
-The PR looks good. Ready to merge.
+The PR is ready to merge.
 [/PR_APPROVED]
 ```
 
