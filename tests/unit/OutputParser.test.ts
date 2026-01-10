@@ -297,6 +297,26 @@ Add the new login endpoint.
     });
   });
 
+  describe('parsePlanApproved', () => {
+    it('should detect PLAN_APPROVED marker', () => {
+      const input = `
+Review complete. No issues found.
+[PLAN_APPROVED]
+The plan is ready for implementation.
+`;
+      const result = parser.parse(input);
+
+      expect(result.planApproved).toBe(true);
+    });
+
+    it('should return false when PLAN_APPROVED not present', () => {
+      const input = `Still reviewing the plan...`;
+      const result = parser.parse(input);
+
+      expect(result.planApproved).toBe(false);
+    });
+  });
+
   describe('number parsing robustness', () => {
     it('should default to 0 when progress is not a number', () => {
       const input = `

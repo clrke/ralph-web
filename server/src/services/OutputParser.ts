@@ -54,6 +54,7 @@ export interface ParsedMarker {
   implementationSummary: string | null;
   implementationStatus: ParsedImplementationStatus | null;
   prCreated: ParsedPRCreated | null;
+  planApproved: boolean;
 }
 
 export class OutputParser {
@@ -71,6 +72,7 @@ export class OutputParser {
       implementationSummary: this.parseImplementationSummary(input),
       implementationStatus: this.parseImplementationStatus(input),
       prCreated: this.parsePRCreated(input),
+      planApproved: input.includes('[PLAN_APPROVED]'),
     };
   }
 

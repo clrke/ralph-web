@@ -1,0 +1,263 @@
+import { v4 as uuidv4 } from 'uuid';
+import { FileStorageService } from '../data/FileStorageService';
+import { SessionManager } from './SessionManager';
+import { ClaudeResult } from './ClaudeOrchestrator';
+import { Session, Plan, Question, QuestionStage, QuestionCategory } from '@claude-code-web/shared';
+
+const STAGE_TO_QUESTION_STAGE: Record<number, QuestionStage> = {
+  1: 'discovery',
+  2: 'planning',
+  3: 'implementation',
+  4: 'review',
+  5: 'review',
+};
+
+const VALID_CATEGORIES: QuestionCategory[] = [
+  'scope', 'approach', 'technical', 'design', 'blocker', 'critical', 'major', 'suggestion'
+];
+
+interface ConversationEntry {
+  stage: number;
+  timestamp: string;
+  prompt: string;
+  output: string;
+  sessionId: string | null;
+  costUsd: number;
+  isError: boolean;
+  error?: string;
+  parsed: ClaudeResult['parsed'];
+}
+
+interface ConversationsFile {
+  entries: ConversationEntry[];
+}
+
+interface QuestionsFile {
+  version: string;
+  sessionId: string;
+  questions: Question[];
+}
+
+interface StatusFile {
+  version: string;
+  sessionId: string;
+  timestamp: string;
+  currentStage: number;
+  currentStepId: string | null;
+  status: string;
+  claudeSpawnCount: number;
+  callsThisHour: number;
+  maxCallsPerHour: number;
+  nextHourReset: string;
+  circuitBreakerState: string;
+  lastOutputLength: number;
+  lastAction: string;
+  lastActionAt: string;
+}
+
+export class ClaudeResultHandler {
+  constructor(
+    private readonly storage: FileStorageService,
+    private readonly sessionManager: SessionManager
+  ) {}
+
+  /**
+   * Handle Stage 1 (Discovery) result from Claude.
+   * Saves conversation, extracts questions/plan steps, updates session.
+   */
+  async handleStage1Result(
+    session: Session,
+    result: ClaudeResult,
+    prompt: string
+  ): Promise<void> {
+    const sessionDir = `${session.projectId}/${session.featureId}`;
+    const now = new Date().toISOString();
+
+    // Save conversation entry
+    await this.saveConversation(sessionDir, {
+      stage: 1,
+      timestamp: now,
+      prompt,
+      output: result.output,
+      sessionId: result.sessionId,
+      costUsd: result.costUsd,
+      isError: result.isError,
+      error: result.error,
+      parsed: result.parsed,
+    });
+
+    // Save parsed questions to questions.json
+    if (result.parsed.decisions.length > 0) {
+      await this.saveQuestions(sessionDir, session, result.parsed.decisions);
+    }
+
+    // Save parsed plan steps to plan.json
+    if (result.parsed.planSteps.length > 0) {
+      await this.savePlanSteps(sessionDir, result.parsed.planSteps);
+    }
+
+    // Update session with Claude session ID and plan file path
+    const sessionUpdates: Partial<Session> = {};
+
+    if (result.sessionId) {
+      sessionUpdates.claudeSessionId = result.sessionId;
+    }
+
+    if (result.parsed.planFilePath) {
+      sessionUpdates.claudePlanFilePath = result.parsed.planFilePath;
+    }
+
+    if (Object.keys(sessionUpdates).length > 0) {
+      await this.sessionManager.updateSession(
+        session.projectId,
+        session.featureId,
+        sessionUpdates
+      );
+    }
+
+    // Update status.json
+    await this.updateStatus(sessionDir, result, 1);
+  }
+
+  /**
+   * Handle Stage 2 (Plan Review) result from Claude.
+   */
+  async handleStage2Result(
+    session: Session,
+    result: ClaudeResult,
+    prompt: string
+  ): Promise<void> {
+    const sessionDir = `${session.projectId}/${session.featureId}`;
+    const now = new Date().toISOString();
+
+    // Save conversation entry
+    await this.saveConversation(sessionDir, {
+      stage: 2,
+      timestamp: now,
+      prompt,
+      output: result.output,
+      sessionId: result.sessionId,
+      costUsd: result.costUsd,
+      isError: result.isError,
+      error: result.error,
+      parsed: result.parsed,
+    });
+
+    // Save any new questions (review findings)
+    if (result.parsed.decisions.length > 0) {
+      await this.saveQuestions(sessionDir, session, result.parsed.decisions);
+    }
+
+    // Update status.json
+    await this.updateStatus(sessionDir, result, 2);
+  }
+
+  private async saveConversation(
+    sessionDir: string,
+    entry: ConversationEntry
+  ): Promise<void> {
+    const conversationPath = `${sessionDir}/conversations.json`;
+    const conversations = await this.storage.readJson<ConversationsFile>(conversationPath) || { entries: [] };
+    conversations.entries.push(entry);
+    await this.storage.writeJson(conversationPath, conversations);
+  }
+
+  private async saveQuestions(
+    sessionDir: string,
+    session: Session,
+    decisions: ClaudeResult['parsed']['decisions']
+  ): Promise<void> {
+    const questionsPath = `${sessionDir}/questions.json`;
+    const questionsFile = await this.storage.readJson<QuestionsFile>(questionsPath) || {
+      version: '1.0',
+      sessionId: session.id,
+      questions: [],
+    };
+
+    const now = new Date().toISOString();
+
+    for (const decision of decisions) {
+      // Map category to valid QuestionCategory, default to 'technical'
+      const category: QuestionCategory = VALID_CATEGORIES.includes(decision.category as QuestionCategory)
+        ? (decision.category as QuestionCategory)
+        : 'technical';
+
+      // Map priority to valid 1 | 2 | 3
+      const priority = Math.min(3, Math.max(1, decision.priority)) as 1 | 2 | 3;
+
+      const question: Question = {
+        id: uuidv4(),
+        stage: STAGE_TO_QUESTION_STAGE[session.currentStage] || 'discovery',
+        questionType: this.inferQuestionType(decision.options),
+        questionText: decision.questionText,
+        options: decision.options.map(opt => ({
+          value: opt.label.toLowerCase().replace(/\s+/g, '_'),
+          label: opt.label,
+          recommended: opt.recommended,
+        })),
+        answer: null,
+        isRequired: decision.priority <= 2,
+        priority,
+        category,
+        askedAt: now,
+        answeredAt: null,
+      };
+
+      questionsFile.questions.push(question);
+    }
+
+    await this.storage.writeJson(questionsPath, questionsFile);
+  }
+
+  private inferQuestionType(options: { label: string; recommended: boolean }[]): 'single_choice' | 'multi_choice' | 'text' {
+    if (options.length === 0) return 'text';
+    if (options.length <= 4) return 'single_choice';
+    return 'multi_choice';
+  }
+
+  private async savePlanSteps(
+    sessionDir: string,
+    planSteps: ClaudeResult['parsed']['planSteps']
+  ): Promise<void> {
+    const planPath = `${sessionDir}/plan.json`;
+    const plan = await this.storage.readJson<Plan>(planPath);
+
+    if (!plan) return;
+
+    plan.steps = planSteps.map((step, index) => ({
+      id: step.id,
+      parentId: step.parentId,
+      orderIndex: index,
+      title: step.title,
+      description: step.description,
+      status: step.status as 'pending' | 'in_progress' | 'completed' | 'blocked',
+      metadata: {},
+    }));
+
+    plan.planVersion = (plan.planVersion || 0) + 1;
+    plan.createdAt = new Date().toISOString();
+
+    await this.storage.writeJson(planPath, plan);
+  }
+
+  private async updateStatus(
+    sessionDir: string,
+    result: ClaudeResult,
+    stage: number
+  ): Promise<void> {
+    const statusPath = `${sessionDir}/status.json`;
+    const status = await this.storage.readJson<StatusFile>(statusPath);
+
+    if (!status) return;
+
+    const now = new Date().toISOString();
+
+    status.status = result.isError ? 'error' : 'idle';
+    status.claudeSpawnCount = (status.claudeSpawnCount || 0) + 1;
+    status.lastAction = result.isError ? `stage${stage}_error` : `stage${stage}_complete`;
+    status.lastActionAt = now;
+    status.lastOutputLength = result.output.length;
+
+    await this.storage.writeJson(statusPath, status);
+  }
+}

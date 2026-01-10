@@ -5,6 +5,7 @@ import os from 'os';
 import { FileStorageService } from './data/FileStorageService';
 import { SessionManager } from './services/SessionManager';
 import { GracefulShutdown } from './services/GracefulShutdown';
+import { EventBroadcaster } from './services/EventBroadcaster';
 import { createApp } from './app';
 
 // Initialize services
@@ -12,16 +13,22 @@ const dataDir = process.env.DATA_DIR || path.join(os.homedir(), '.clrke');
 const storage = new FileStorageService(dataDir);
 const sessionManager = new SessionManager(storage);
 
-// Create Express app
-const app = createApp(storage, sessionManager);
-
-// Create HTTP server with Socket.IO
-const httpServer = createServer(app);
+// Create HTTP server first to get Socket.IO instance
+const httpServer = createServer();
 const io = new Server(httpServer, {
   cors: {
     origin: process.env.NODE_ENV === 'production' ? false : ['http://localhost:5173', 'http://localhost:5174'],
   },
 });
+
+// Create EventBroadcaster with Socket.IO
+const eventBroadcaster = new EventBroadcaster(io);
+
+// Create Express app with all dependencies
+const app = createApp(storage, sessionManager, eventBroadcaster);
+
+// Attach Express app to HTTP server
+httpServer.on('request', app);
 
 // Socket.IO for real-time updates
 io.on('connection', (socket) => {

@@ -41,7 +41,7 @@ const STAGE_TOOLS: Record<number, string[]> = {
   5: ['Read', 'Glob', 'Grep', 'Task', 'Bash(git:diff*)', 'Bash(gh:pr*)'],
 };
 
-const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 export class ClaudeOrchestrator {
   constructor(private readonly outputParser: OutputParser) {}
@@ -78,6 +78,7 @@ export class ClaudeOrchestrator {
       const childProcess = spawn(cmd.command, cmd.args, {
         cwd: cmd.cwd,
         env: { ...globalThis.process.env },
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
 
       let stdout = '';
