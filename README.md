@@ -161,7 +161,7 @@ flowchart TB
         subgraph Core["Core"]
             ClaudeOrchestrator["Claude Code Orchestrator"]
             WSServer["WebSocket Server"]
-            SQLite["SQLite DB"]
+            FileStorage["JSON File Storage<br/>~/.clrke/"]
         end
     end
 
@@ -483,122 +483,229 @@ Uses `git reset --hard` to undo all changes:
 
 **Warning:** Rollback is destructive - all uncommitted changes are lost.
 
-## Database Schema
+## Data Storage
 
-```mermaid
-erDiagram
-    sessions ||--o{ plans : has
-    sessions ||--o{ questions : contains
-    sessions ||--o{ review_iterations : tracks
-    sessions ||--o{ todos : contains
-    sessions ||--o{ session_events : logs
-    plans ||--o{ plan_steps : contains
-    plans ||--o{ pull_requests : generates
-    pull_requests ||--o{ pr_reviews : undergoes
+Session data is stored as JSON files in `~/.clrke/` directory, organized by project and feature. This allows Claude to inspect session state during implementation.
 
-    sessions {
-        int id PK
-        string title
-        string feature_description
-        string project_path
-        json acceptance_criteria
-        string affected_files
-        string technical_notes
-        string base_branch
-        string feature_branch
-        string base_commit_sha
-        string status
-        int current_stage
-        int replanning_count
-        string claude_session_id
-        datetime session_expires_at
-        datetime created_at
-        datetime updated_at
-    }
+### Directory Structure
 
-    plans {
-        int id PK
-        int session_id FK
-        int version
-        json plan_data
-        boolean is_approved
-        int review_count
-        datetime created_at
-    }
-
-    plan_steps {
-        int id PK
-        int plan_id FK
-        int parent_id FK
-        int order_index
-        string title
-        string description
-        string status
-        json metadata
-    }
-
-    questions {
-        int id PK
-        int session_id FK
-        string stage
-        string question_type
-        string question_text
-        json options
-        json answer
-        boolean is_required
-        datetime asked_at
-        datetime answered_at
-    }
-
-    review_iterations {
-        int id PK
-        int plan_id FK
-        int iteration_number
-        json findings
-        boolean user_approved
-        datetime completed_at
-    }
-
-    pull_requests {
-        int id PK
-        int plan_id FK
-        string pr_number
-        string pr_url
-        string status
-        datetime created_at
-    }
-
-    pr_reviews {
-        int id PK
-        int pr_id FK
-        json issues_found
-        boolean all_resolved
-        datetime reviewed_at
-    }
-
-    todos {
-        int id PK
-        int session_id FK
-        string title
-        string description
-        string file_path
-        int line_number
-        string todo_type
-        string status
-        string context
-        datetime created_at
-        datetime resolved_at
-    }
-
-    session_events {
-        int id PK
-        int session_id FK
-        string event_type
-        string stage
-        json payload
-        datetime created_at
-    }
 ```
+~/.clrke/
+├── projects.json                     # Global index: project_id -> project_path
+├── <project_id>/                     # MD5 hash of absolute project path
+│   ├── index.json                    # Lists all feature sessions for this project
+│   └── <feature_id>/                 # Slugified feature title
+│       ├── session.json              # Core session data
+│       ├── plan.json                 # Current plan with embedded steps
+│       ├── plan-history/             # Plan version snapshots
+│       │   ├── v1.json
+│       │   └── v2.json
+│       ├── questions.json            # All questions and answers
+│       ├── todos.json                # Discovered/collected TODOs
+│       ├── reviews.json              # Review iterations and findings
+│       ├── pr.json                   # Pull request info + reviews
+│       └── events.json               # Audit log (separate, can grow large)
+```
+
+### File Organization
+
+| File | Purpose |
+|------|---------|
+| `session.json` | Core session metadata, status, stage, Claude plan file path |
+| `plan.json` | Current approved plan with embedded steps |
+| `plan-history/` | Versioned plan snapshots (v1.json, v2.json, etc.) |
+| `questions.json` | All clarifying questions and user answers |
+| `todos.json` | Discovered TODOs and collected blockers |
+| `reviews.json` | Review iteration findings |
+| `pr.json` | Pull request info and review comments |
+| `events.json` | Audit log of all session events |
+
+### File Formats
+
+#### session.json
+```json
+{
+  "version": "1.0",
+  "id": "uuid-v4",
+  "projectId": "md5-hash",
+  "featureId": "slugified-title",
+  "title": "Add user authentication",
+  "featureDescription": "...",
+  "projectPath": "/absolute/path/to/project",
+  "acceptanceCriteria": [{"text": "All tests pass", "checked": true, "type": "automated"}],
+  "affectedFiles": ["src/auth.ts"],
+  "technicalNotes": "Use JWT",
+  "baseBranch": "main",
+  "featureBranch": "feature/add-user-auth",
+  "baseCommitSha": "abc123",
+  "status": "active",
+  "currentStage": 2,
+  "replanningCount": 0,
+  "claudeSessionId": "claude-session-uuid",
+  "claudePlanFilePath": "/path/to/claude/plan/file.md",
+  "currentPlanVersion": 3,
+  "sessionExpiresAt": "2026-01-11T13:15:00Z",
+  "createdAt": "2026-01-10T13:15:00Z",
+  "updatedAt": "2026-01-10T14:30:00Z"
+}
+```
+
+#### plan.json
+```json
+{
+  "version": "1.0",
+  "planVersion": 3,
+  "sessionId": "uuid-v4",
+  "isApproved": true,
+  "reviewCount": 10,
+  "createdAt": "2026-01-10T14:00:00Z",
+  "steps": [
+    {
+      "id": "step-uuid-1",
+      "parentId": null,
+      "orderIndex": 0,
+      "title": "Design JWT schema",
+      "description": "Create the JWT token structure",
+      "status": "completed",
+      "metadata": {}
+    }
+  ]
+}
+```
+
+#### questions.json
+```json
+{
+  "version": "1.0",
+  "sessionId": "uuid-v4",
+  "questions": [
+    {
+      "id": "question-uuid-1",
+      "stage": "discovery",
+      "questionType": "single_choice",
+      "questionText": "Which authentication method?",
+      "options": [{"value": "jwt", "label": "JWT tokens", "recommended": true}],
+      "answer": {"value": "jwt"},
+      "isRequired": true,
+      "priority": 1,
+      "askedAt": "2026-01-10T13:20:00Z",
+      "answeredAt": "2026-01-10T13:25:00Z"
+    }
+  ]
+}
+```
+
+#### todos.json
+```json
+{
+  "version": "1.0",
+  "sessionId": "uuid-v4",
+  "todos": [
+    {
+      "id": "todo-uuid-1",
+      "title": "Add rate limiting",
+      "description": "Prevent brute force attacks",
+      "filePath": "src/routes/auth.ts",
+      "lineNumber": 42,
+      "todoType": "discovered",
+      "status": "pending",
+      "context": "Found during implementation",
+      "createdAt": "2026-01-10T15:00:00Z",
+      "resolvedAt": null
+    }
+  ]
+}
+```
+
+#### reviews.json
+```json
+{
+  "version": "1.0",
+  "sessionId": "uuid-v4",
+  "iterations": [
+    {
+      "id": "review-uuid-1",
+      "planVersion": 2,
+      "iterationNumber": 1,
+      "findings": [{"category": "security", "priority": 1, "issue": "Missing validation", "resolved": true}],
+      "userApproved": true,
+      "completedAt": "2026-01-10T14:30:00Z"
+    }
+  ]
+}
+```
+
+#### pr.json
+```json
+{
+  "version": "1.0",
+  "sessionId": "uuid-v4",
+  "pullRequest": {
+    "id": "pr-uuid-1",
+    "prNumber": "42",
+    "prUrl": "https://github.com/user/repo/pull/42",
+    "status": "open",
+    "createdAt": "2026-01-10T16:00:00Z"
+  },
+  "reviews": [
+    {
+      "id": "pr-review-uuid-1",
+      "issuesFound": [{"file": "src/auth.ts", "line": 88, "issue": "Missing error handling", "resolved": true}],
+      "allResolved": true,
+      "reviewedAt": "2026-01-10T16:30:00Z"
+    }
+  ]
+}
+```
+
+#### events.json
+```json
+{
+  "version": "1.0",
+  "sessionId": "uuid-v4",
+  "events": [
+    {
+      "id": "event-uuid-1",
+      "eventType": "stage_transition",
+      "stage": "discovery",
+      "payload": {"from": 1, "to": 2, "reason": "plan_created"},
+      "createdAt": "2026-01-10T13:30:00Z"
+    }
+  ]
+}
+```
+
+### Index Files
+
+| File | Purpose |
+|------|---------|
+| `~/.clrke/projects.json` | Maps project_id (MD5) to project paths |
+| `~/.clrke/<project_id>/index.json` | Lists all feature sessions for a project |
+
+### Claude Plan File Tracking
+
+When Claude creates a plan file during Stage 1-2, the server extracts the file path and stores it in `session.json` under `claudePlanFilePath`. This allows:
+- Easy reference to Claude's original plan file
+- Correlation between web app state and Claude's working files
+
+### Claude Read Access
+
+During implementation (Stage 3), Claude can read these files to understand context:
+```bash
+cat ~/.clrke/<project_id>/<feature_id>/session.json
+cat ~/.clrke/<project_id>/<feature_id>/plan.json
+```
+
+Files are READ-ONLY for Claude. The server updates them based on Claude's structured output markers.
+
+### Atomic File Operations
+
+All file writes use the temp-file-then-rename pattern for atomicity:
+1. Write to `file.json.tmp.{timestamp}`
+2. Rename to `file.json` (atomic on POSIX)
+3. Keep `.bak` of previous version
+
+File locking (via `proper-lockfile`) prevents concurrent write conflicts.
 
 ## WebSocket Events
 
@@ -967,6 +1074,9 @@ Description of what this step accomplishes.
 
 7. Exit plan mode with ExitPlanMode when ready for user approval. Output:
 [PLAN_MODE_EXITED]
+
+8. When you create a plan file, output the file path so the server can track it:
+[PLAN_FILE path="/path/to/plan/file.md"]
 ```
 
 #### Stage 2: Plan Review
@@ -1599,7 +1709,7 @@ Version checked at startup; warning shown if incompatible.
 |----------|---------|-------------|
 | `PORT` | 3333 | Server port |
 | `HOST` | 0.0.0.0 | Server host (all interfaces for network access) |
-| `DATABASE_PATH` | ./data/sessions.db | SQLite database path |
+| `DATA_DIR` | ~/.clrke | JSON file storage directory |
 | `LOG_DIR` | ./logs | Log files directory |
 | `DEBUG` | false | Enable verbose debug logging |
 | `MAX_CALLS_PER_HOUR` | 100 | Rate limit for Claude spawns |
@@ -1614,7 +1724,7 @@ Version checked at startup; warning shown if incompatible.
 | Plan Editor | React DnD, React Flow (optional) |
 | Backend | Node.js, Express |
 | Real-time | Socket.IO |
-| Database | SQLite (better-sqlite3) |
+| Data Storage | JSON files (fs-extra) |
 | CLI Control | Node child_process, pty.js |
 | Notifications | node-notifier |
 
@@ -1693,7 +1803,15 @@ claude-code-web/
 │   │   │   └── handlers.ts
 │   │   └── utils/
 │   │       └── markers.ts
-│   └── db/
+│   └── data/
+│       ├── FileStorageService.ts
+│       ├── SessionStore.ts
+│       ├── PlanStore.ts
+│       ├── QuestionStore.ts
+│       ├── TodoStore.ts
+│       ├── ReviewStore.ts
+│       ├── PRStore.ts
+│       └── EventStore.ts
 ├── shared/
 │   └── types/
 └── package.json
