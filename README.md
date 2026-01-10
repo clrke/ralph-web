@@ -112,12 +112,16 @@ flowchart TB
     subgraph Stage5["Stage 5: PR Review"]
         AB --> AC["Subagents review PR"]
         AC --> AD{"Issues found?"}
-        AD -->|Yes, even minor| AE["Enter plan mode"]
-        AE --> AF["Present issues as questions"]
+        AD -->|Yes| AF["Present issues as<br/>[DECISION_NEEDED]"]
         AF --> AG["User decides action"]
         AG --> AH["Apply fixes"]
         AH --> AC
-        AD -->|No| AI["PR approved"]
+        AD -->|No| CI{"CI passing?"}
+        CI -->|Pending| CIPOLL["CI Agent polls<br/>(spawned by Claude)"]
+        CIPOLL --> CI
+        CI -->|Failing| CIFIX["Present CI failures<br/>as [DECISION_NEEDED]"]
+        CIFIX --> AH
+        CI -->|Passing| AI["PR approved"]
         AI --> AJ{"User chooses action"}
         AJ -->|Open in GitHub| AK["User merges via GitHub web"]
         AJ -->|Keep open| AL["PR stays open, session complete"]
@@ -1121,7 +1125,7 @@ flowchart LR
 | `plan.created` | `{ sessionId, planId, steps[], version }` |
 | `plan.step_updated` | `{ planId, stepId, changes, updatedBy }` |
 | `review.started` | `{ planId, iterationNumber }` |
-| `review.findings` | `{ planId, iteration, issues[], shortcuts[] }` |
+| `review.findings` | `{ planId, iteration, issues[] }` |
 | `review.signoff_required` | `{ planId, reviewCount, recommendedMin: 10 }` |
 | `execution.paused_blocker` | `{ sessionId, stepId, blocker, needsInput: true }` |
 | `execution.status` | `{ sessionId, stepId, status, filesModified, testsStatus, workType, progress, message }` |
@@ -1389,6 +1393,20 @@ Summary of all changes made.
 Plan mode state changes:
 [PLAN_MODE_ENTERED]
 [PLAN_MODE_EXITED]
+
+Plan file tracking (Stage 1):
+[PLAN_FILE path="/path/to/plan/file.md"]
+
+Implementation status updates (Stage 3):
+[IMPLEMENTATION_STATUS]
+step_id: {{stepId}}
+status: IN_PROGRESS | COMPLETE | BLOCKED
+files_modified: 3
+tests_status: PASSING | FAILING | NOT_RUN
+work_type: IMPLEMENTATION | TESTING | REFACTORING
+progress: 60
+message: Summary of current work
+[/IMPLEMENTATION_STATUS]
 
 PR creation (Stage 4):
 [PR_CREATED]
@@ -1669,24 +1687,24 @@ How should we proceed?
 
 3. For non-critical items discovered during implementation, add comprehensive comments:
 
-   ```typescript
+   Example (TypeScript):
    // TODO: Add rate limiting before production
    // Impact: Security - prevents brute force attacks
    // Options: (A) express-rate-limit [recommended] (B) Custom middleware (C) Defer
    // Priority: High
 
+   Example (discovered dependency):
    // DEPENDENCY: Need auth middleware for this endpoint
    // Impact: Feature incomplete - endpoint unprotected
    // Options: (A) Import from src/middleware/auth.ts [recommended] (B) Create inline
    // Priority: Medium
-   ```
 
    Include: description, impact, options with recommendation, and priority.
 
 4. After each `[STEP_COMPLETE]`, the server:
    - Collects new comment blocks from modified files
-   - Parses options and recommendations via Haiku
-   - Presents to user with pre-filled decision form
+   - Parses and validates via Haiku
+   - If validated items exist, triggers return to Plan Review (Stage 2)
 
 5. Run tests after implementation. If tests fail, attempt to fix (max 3 attempts).
 
@@ -1825,10 +1843,7 @@ Would you like to address this?
 5. After user resolves all priority 1 and 2 decisions, check CI status.
 
 6. Spawn CI Agent to poll GitHub Actions status:
-   ```bash
-   # CI Agent polls until checks complete
-   gh pr checks {{prNumber}} --watch
-   ```
+   Command: gh pr checks {{prNumber}} --watch
 
    CI Agent behavior:
    - Poll every 30 seconds until all checks complete
