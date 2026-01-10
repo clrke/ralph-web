@@ -43,6 +43,21 @@ These standard criteria are pre-checked by default. Users can uncheck any at the
 
 Users can add custom acceptance criteria specific to their feature.
 
+### Acceptance Criteria Verification
+
+| Criteria | Type | Timing | Blocks PR? |
+|----------|------|--------|------------|
+| All tests pass | Automated | Before PR creation | Yes |
+| No TypeScript errors | Automated | Before PR creation | Yes |
+| No linting errors | Automated | Before PR creation | Yes |
+| No console errors | Manual | User checklist in PR | No |
+| Responsive design | Manual | User checklist in PR | No |
+| Loading states | Manual | User checklist in PR | No |
+| Error handling | Claude review | PR review stage | No |
+| Accessibility basics | Manual | User checklist in PR | No |
+
+If automated checks fail, Claude attempts auto-fix (max 3 attempts) before pausing for user.
+
 ## Workflow Architecture
 
 ```mermaid
@@ -252,6 +267,14 @@ flowchart TB
     Findings --> SignOff
 ```
 
+**Review Flow:**
+1. User answers questions from current review iteration
+2. Claude updates plan based on answers
+3. Next review iteration starts automatically
+4. Continues until user clicks "Approve & Implement" or reaches 10x
+
+Reviews are automatic after each user response - no manual "Run Review" button.
+
 ### Review Issue Categories
 
 Each review iteration checks for:
@@ -308,8 +331,15 @@ flowchart TB
 
 TODOs are discovered from two sources:
 
-1. **Runtime detection** - Claude encounters unknowns during implementation and adds TODO comments
-2. **Codebase scanning** - Automatically scan for existing `// TODO:` comments in the codebase
+1. **Runtime detection** - Claude adds TODO comments during implementation
+2. **Codebase scanning** - Scan for existing `// TODO:` comments at session start
+
+**Scanning Rules:**
+- Ignores: `node_modules/`, `.git/`, `dist/`, `build/`, `vendor/`
+- File types: `.ts`, `.tsx`, `.js`, `.jsx`, `.py`, `.go`, `.rs`, `.java`
+- Patterns: `// TODO:`, `# TODO:`, `/* TODO:`, `// FIXME:`
+- Deduplication: Same file+line = same TODO (updated, not duplicated)
+- New TODOs found during implementation are added to kanban automatically
 
 The kanban board syncs with TODO comments in code, ensuring nothing is missed.
 
@@ -330,6 +360,34 @@ flowchart LR
 - Claude automatically attempts to fix build/test failures
 - After 3 failed attempts, pauses and presents error to user
 - User provides guidance, Claude retries
+
+### Error Recovery
+
+| Error Type | Handling |
+|------------|----------|
+| Claude Code timeout | Configurable timeout (default 15 min), notify user |
+| Output parsing failure | Haiku fallback; if both fail, show raw output to user |
+| GitHub auth failure | Pause session, prompt user to run `gh auth login` |
+| `gh pr create` failure | Retry once, then pause with error details |
+| Subagent failure/timeout | Log error, continue with main Claude (degraded mode) |
+| WebSocket disconnect | Auto-reconnect with exponential backoff (max 5 attempts) |
+
+**Circuit Breaker Pattern:**
+- Opens after 3 consecutive failures without progress
+- States: CLOSED (normal) → HALF_OPEN (monitoring) → OPEN (halted)
+- Requires user intervention to reset when OPEN
+- Prevents runaway token consumption
+
+### Token & Context Management
+
+| Trigger | Action |
+|---------|--------|
+| Context exceeds 80% of limit | Warning notification to user |
+| Context exceeds 95% of limit | Auto-compact with recontextualization |
+| Claude signals "context pressure" | Immediate compact |
+| Session token budget exceeded | Pause, notify user, option to continue or close |
+
+Token usage is tracked per session but not strictly budgeted in v1.
 
 ### Git Commit Strategy
 
@@ -522,6 +580,19 @@ flowchart LR
 | `pr.created` | `{ sessionId, prNumber, prUrl, title }` |
 | `pr.issue_found` | `{ prId, issue, severity, suggestion }` |
 
+### WebSocket Reliability
+
+**Connection Handling:**
+- Auto-reconnect with exponential backoff (1s, 2s, 4s, 8s, 16s, max 30s)
+- Max 5 reconnection attempts before showing "Connection Lost" UI
+- Missed events replayed from server on reconnect (last 100 events buffered)
+- Heartbeat every 30 seconds to detect stale connections
+
+**Offline Behavior:**
+- UI shows "Reconnecting..." banner
+- User actions queued locally, sent on reconnect
+- If reconnect fails, user prompted to refresh page
+
 ## Claude Code Integration
 
 ### Direct Process Control
@@ -671,6 +742,13 @@ Create user authentication middleware
 - Extract plan steps from freeform output
 - Classify blockers vs. non-blockers
 
+**Marker Parsing Rules:**
+- Markers must be on their own line (not inline with other content)
+- Markers in code blocks (```) are ignored
+- Markers are case-sensitive: `[QUESTION]` not `[question]`
+- Nested markers allowed: `[BLOCKER]` can contain `[QUESTION]`
+- Incomplete markers (missing close tag) trigger Haiku fallback
+
 This ensures reliable parsing while gracefully handling edge cases.
 
 ### Prompt Building by Stage
@@ -695,6 +773,7 @@ Project Path: {{projectPath}}
    - Frontend Agent: UI components, React patterns, styling
    - Backend Agent: API endpoints, business logic, middleware
    - Database Agent: Schema design, queries, data modeling
+   - DevOps Agent: CI/CD pipelines, deployment configs, infrastructure
    - Test Agent: Test coverage, testing strategies
 
 2. Based on exploration, ask clarifying questions to understand requirements.
@@ -993,6 +1072,16 @@ Subagents should focus on read-only exploration and analysis.
 Implementation is handled by the main Claude instance.
 ```
 
+### Subagent Failure Handling
+
+| Failure | Handling |
+|---------|----------|
+| Subagent timeout (5 min) | Cancel, log warning, continue without that agent's input |
+| Subagent crash | Log error, continue with other agents |
+| All subagents fail | Main Claude proceeds with degraded context |
+
+Subagent failures are logged but don't block workflow progression.
+
 ### Key Principle
 
 **Claude Code is the orchestrator.** The web app doesn't manage subagents - it just prompts Claude Code with guidance on when and how to use its built-in Task tool for spawning subagents.
@@ -1018,6 +1107,19 @@ Desktop notifications (via node-notifier) are sent for:
 | PR merged | "PR #42 merged to main" |
 | Review complete | "Review iteration 5/10 complete" |
 
+### CLAUDE.md Support
+
+The web app reads CLAUDE.md files and appends to prompts:
+
+| File | Purpose |
+|------|---------|
+| `{projectPath}/CLAUDE.md` | Project-specific instructions |
+| `~/.claude/CLAUDE.md` | User's global preferences |
+
+- Files are optional; silently skipped if missing
+- Project-level takes precedence over global
+- Content appended to stage prompts as system context
+
 ### Branch Strategy
 
 | Setting | Description | Default |
@@ -1028,27 +1130,38 @@ Desktop notifications (via node-notifier) are sent for:
 
 Can be overridden per session when starting a new feature.
 
-### Multi-Session Support
+### Branch Handling
 
-Users can work on multiple features simultaneously:
+| Scenario | Handling |
+|----------|----------|
+| Base branch diverged | Auto-rebase before PR; if conflicts, pause for user |
+| Feature branch exists | Error: user must delete existing branch first |
+| Uncommitted changes | Warning before starting; user can stash or abort |
 
-```mermaid
-flowchart LR
-    subgraph Sessions["Active Sessions"]
-        S1["Session 1: Auth feature<br/>Stage 3: Implementation"]
-        S2["Session 2: Dashboard<br/>Stage 2: Review (5/10)"]
-        S3["Session 3: API refactor<br/>Stage 5: PR Review"]
-    end
+**Branch Cleanup:**
+- Feature branch deleted after PR merge (configurable)
+- Orphaned branches (expired sessions) listed in UI for manual cleanup
 
-    User["User"] --> S1
-    User --> S2
-    User --> S3
-```
+### Session Constraints
 
-- Each session has independent state and progress
-- Switch between sessions freely
-- Each session uses its own feature branch
-- Sessions persist until explicitly closed
+**One active session per project** to prevent conflicts:
+- Starting new session on project with active session requires closing existing one
+- Prevents branch conflicts and file contention
+- Users can work on multiple different projects simultaneously
+
+**Session States:**
+
+| State | Description | Duration |
+|-------|-------------|----------|
+| Active | In progress, Claude context available | Until completed/abandoned |
+| Paused | User stepped away | Max 24 hours, then expires |
+| Completed | PR merged or session closed | Indefinite (archivable) |
+| Expired | Paused session timed out | Marked for cleanup |
+
+**Expiration Handling:**
+- 2-hour warning notification before expiration
+- Expired sessions: uncommitted changes preserved in working directory
+- Open PRs remain open but session context is lost
 
 ### Plan Editing
 
@@ -1058,6 +1171,16 @@ Plans can **only be modified through Claude**, not directly by user:
 - Claude validates and applies modifications
 - Prevents invalid plan states
 - Maintains consistency between plan and implementation
+
+### CLI Compatibility Requirements
+
+| Requirement | Minimum | Notes |
+|-------------|---------|-------|
+| Claude Code CLI | v1.0.0+ | Required for `--continue` flag |
+| Node.js | v18+ | For server |
+| GitHub CLI (`gh`) | v2.0+ | For PR creation |
+
+Version checked at startup; warning shown if incompatible.
 
 ## Tech Stack
 
