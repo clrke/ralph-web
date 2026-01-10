@@ -93,8 +93,7 @@ flowchart TB
         PAUSE --> ASKUSER["Present blocker to user"]
         ASKUSER --> GUIDANCE["User provides guidance"]
         GUIDANCE --> Q
-        BLOCK -->|No| SC["[STEP_COMPLETE]"]
-        SC --> COLLECT["Collect & validate<br/>TODO/FIXME comments"]
+        BLOCK -->|No| COLLECT["Server collects<br/>TODO/FIXME comments"]
         COLLECT --> R2{"Validated items?"}
         R2 -->|Yes| TODO["Return to Stage 2"]
         TODO --> G
@@ -110,18 +109,17 @@ flowchart TB
     end
 
     subgraph Stage5["Stage 5: PR Review"]
-        AB --> AC["Subagents review PR"]
-        AC --> AD{"Issues found?"}
-        AD -->|Yes| AF["Present issues as<br/>[DECISION_NEEDED]"]
+        AB --> AC["Spawn subagents in parallel<br/>(review + CI Agent)"]
+        AC --> WAIT{"All results ready?"}
+        WAIT -->|No| AC
+        WAIT -->|Yes| CHECK{"Issues or CI failures?"}
+        CHECK -->|Issues found| AF["Present issues as<br/>[DECISION_NEEDED]"]
         AF --> AG["User decides action"]
         AG --> AH["Apply fixes"]
         AH --> AC
-        AD -->|No| CI{"CI passing?"}
-        CI -->|Pending| CIPOLL["CI Agent polls<br/>(spawned by Claude)"]
-        CIPOLL --> CI
-        CI -->|Failing| CIFIX["Present CI failures<br/>as [DECISION_NEEDED]"]
+        CHECK -->|CI failing| CIFIX["Present CI failures<br/>as [DECISION_NEEDED]"]
         CIFIX --> AH
-        CI -->|Passing| AI["PR approved"]
+        CHECK -->|All clear| AI["PR approved"]
         AI --> AJ{"User chooses action"}
         AJ -->|Open in GitHub| AK["User merges via GitHub web"]
         AJ -->|Keep open| AL["PR stays open, session complete"]
@@ -1792,7 +1790,7 @@ Description: {{prDescription}}
    - Backend Agent: Review API changes
    - Database Agent: Review schema changes
    - Test Agent: Review test coverage
-   - CI Agent: Check CI status (see step 6)
+   - CI Agent: Poll CI status via `gh pr checks {{prNumber}} --watch`
 
 2. Review for:
    - Correctness: Does the code do what it's supposed to?
@@ -1840,16 +1838,9 @@ Would you like to address this?
    - Priority 2: Major issues - should be resolved or justified
    - Priority 3: Suggestions - optional improvements
 
-5. After user resolves all priority 1 and 2 decisions, check CI status.
+5. After user resolves all priority 1 and 2 decisions, wait for CI Agent results.
 
-6. Spawn CI Agent to poll GitHub Actions status:
-   Command: gh pr checks {{prNumber}} --watch
-
-   CI Agent behavior:
-   - Poll every 30 seconds until all checks complete
-   - If checks pass: proceed to PR_APPROVED
-   - If checks fail: present failures as [DECISION_NEEDED] with fix options
-
+6. If CI fails, present failures as [DECISION_NEEDED] with fix options:
    [CI_STATUS status="passing|failing|pending"]
    {{checkResults}}
    [/CI_STATUS]
