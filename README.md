@@ -25,6 +25,23 @@ When starting a new session, users fill out a structured template:
 | **Technical Notes** | No | Implementation hints, constraints, or preferences |
 | **Priority** | Yes | High / Medium / Low |
 
+### Default Acceptance Criteria
+
+These standard criteria are pre-checked by default. Users can uncheck any at their discretion:
+
+| Criteria | Description |
+|----------|-------------|
+| ☑ **All tests pass** | Existing tests continue to pass, new tests added for new functionality |
+| ☑ **No TypeScript errors** | Code compiles without type errors |
+| ☑ **No linting errors** | Code passes ESLint/Prettier checks |
+| ☑ **No console errors** | Browser console is free of errors during normal use |
+| ☑ **Responsive design** | UI works on mobile, tablet, and desktop |
+| ☑ **Loading states** | User sees feedback during async operations |
+| ☑ **Error handling** | Graceful error messages for failure cases |
+| ☑ **Accessibility basics** | Keyboard navigation, proper labels, color contrast |
+
+Users can add custom acceptance criteria specific to their feature.
+
 ## Workflow Architecture
 
 ```mermaid
@@ -601,6 +618,123 @@ flowchart TB
 
         Submit["Submit Answers"]
     end
+```
+
+## Subagent Skills
+
+The system uses specialized subagents organized by technical domain. The main Claude orchestrator decides which subagents to spawn for each task.
+
+### Agent Architecture
+
+```mermaid
+flowchart TB
+    subgraph Orchestrator["Main Orchestrator"]
+        O["Claude Orchestrator<br/>(task routing, coordination)"]
+    end
+
+    subgraph Agents["Domain Agents"]
+        FE["Frontend Agent"]
+        BE["Backend Agent"]
+        DB["Database Agent"]
+        DO["DevOps Agent"]
+        FET["Frontend Test Agent"]
+        BET["Backend Test Agent"]
+    end
+
+    O -->|"UI task"| FE
+    O -->|"API task"| BE
+    O -->|"Schema task"| DB
+    O -->|"Deploy task"| DO
+    O -->|"Frontend tests"| FET
+    O -->|"Backend tests"| BET
+
+    FE -->|"results"| O
+    BE -->|"results"| O
+    DB -->|"results"| O
+    DO -->|"results"| O
+    FET -->|"results"| O
+    BET -->|"results"| O
+```
+
+### Domain Agents
+
+| Agent | Expertise | Responsibilities |
+|-------|-----------|------------------|
+| **Frontend Agent** | React, TypeScript, CSS, UI/UX | Components, styling, browser APIs, state management |
+| **Backend Agent** | Node.js, Express, APIs | Endpoints, business logic, integrations, middleware |
+| **Database Agent** | SQL, ORMs, migrations | Schema design, queries, indexes, optimization |
+| **DevOps Agent** | CI/CD, Docker, infra | Pipelines, containers, deployment, monitoring |
+| **Frontend Test Agent** | Jest, RTL, Playwright | Unit tests, component tests, e2e tests for UI |
+| **Backend Test Agent** | Jest, Supertest | API tests, integration tests, unit tests for services |
+
+### Agent Capabilities
+
+Each domain agent has:
+
+- **Codebase exploration** - Can study relevant parts of codebase
+- **Full tool access** - Read, write, bash, search capabilities
+- **Domain knowledge** - Specialized system prompts for their area
+- **Test writing** - Each agent writes tests for their domain
+
+### Model Configuration
+
+Agents can use different models based on task complexity:
+
+```mermaid
+flowchart LR
+    subgraph Models["Model Assignment"]
+        Simple["Simple tasks<br/>(formatting, small fixes)"] --> Haiku["Haiku<br/>(fast, cheap)"]
+        Medium["Medium tasks<br/>(feature implementation)"] --> Sonnet["Sonnet<br/>(balanced)"]
+        Complex["Complex tasks<br/>(architecture, debugging)"] --> Opus["Opus<br/>(powerful)"]
+    end
+```
+
+| Task Complexity | Model | Use Cases |
+|-----------------|-------|-----------|
+| **Simple** | Haiku | Code formatting, simple refactors, doc updates |
+| **Medium** | Sonnet | Feature implementation, bug fixes, test writing |
+| **Complex** | Opus | Architecture decisions, complex debugging, security review |
+
+### Agent Communication
+
+Agents communicate **only through the orchestrator**:
+
+```mermaid
+sequenceDiagram
+    participant O as Orchestrator
+    participant FE as Frontend Agent
+    participant BE as Backend Agent
+
+    O->>FE: Implement login form
+    FE-->>O: Form complete, needs API endpoint
+    O->>BE: Create /auth/login endpoint
+    BE-->>O: Endpoint ready at /auth/login
+    O->>FE: Connect form to /auth/login
+    FE-->>O: Integration complete
+```
+
+- No direct agent-to-agent communication
+- Orchestrator maintains shared context
+- Orchestrator resolves dependencies between agents
+- Orchestrator aggregates results for user
+
+### Agent Spawning
+
+```mermaid
+flowchart TB
+    Task["Incoming Task"] --> Analyze["Orchestrator analyzes task"]
+    Analyze --> Decide{"Which domains?"}
+    Decide -->|"UI changes"| SpawnFE["Spawn Frontend Agent"]
+    Decide -->|"API changes"| SpawnBE["Spawn Backend Agent"]
+    Decide -->|"Schema changes"| SpawnDB["Spawn Database Agent"]
+    Decide -->|"Multiple domains"| SpawnMulti["Spawn multiple agents<br/>(sequential or parallel)"]
+
+    SpawnFE --> Execute["Execute with domain context"]
+    SpawnBE --> Execute
+    SpawnDB --> Execute
+    SpawnMulti --> Execute
+
+    Execute --> Return["Return results to orchestrator"]
 ```
 
 ## Configuration
