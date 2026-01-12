@@ -123,7 +123,7 @@ export class OutputParser {
     return decisions;
   }
 
-  private parsePlanSteps(input: string): ParsedPlanStep[] {
+  parsePlanSteps(input: string): ParsedPlanStep[] {
     const steps: ParsedPlanStep[] = [];
     const regex = /\[PLAN_STEP([^\]]*)\]([\s\S]*?)\[\/PLAN_STEP\]/g;
 

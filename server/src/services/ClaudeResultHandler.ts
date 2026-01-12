@@ -1,8 +1,10 @@
 import { v4 as uuidv4 } from 'uuid';
+import { readFile } from 'fs/promises';
 import { FileStorageService } from '../data/FileStorageService';
 import { SessionManager } from './SessionManager';
 import { ClaudeResult } from './ClaudeOrchestrator';
 import { DecisionValidator, ValidationLog } from './DecisionValidator';
+import { OutputParser, ParsedPlanStep } from './OutputParser';
 import { Session, Plan, Question, QuestionStage, QuestionCategory } from '@claude-code-web/shared';
 
 const STAGE_TO_QUESTION_STAGE: Record<number, QuestionStage> = {
@@ -96,8 +98,15 @@ export class ClaudeResultHandler {
     }
 
     // Save parsed plan steps to plan.json
-    if (result.parsed.planSteps.length > 0) {
-      await this.savePlanSteps(sessionDir, result.parsed.planSteps);
+    // If no plan steps in output but planFilePath exists, read steps from the plan file
+    let planSteps = result.parsed.planSteps;
+    if (planSteps.length === 0 && result.parsed.planFilePath) {
+      console.log(`No PLAN_STEP markers in output, reading from plan file: ${result.parsed.planFilePath}`);
+      planSteps = await this.parsePlanStepsFromFile(result.parsed.planFilePath);
+      console.log(`Found ${planSteps.length} plan steps in file`);
+    }
+    if (planSteps.length > 0) {
+      await this.savePlanSteps(sessionDir, planSteps);
     }
 
     // Update session with Claude session ID and plan file path
@@ -255,6 +264,21 @@ export class ClaudeResultHandler {
     };
     logs.entries.push(log);
     await this.storage.writeJson(logPath, logs);
+  }
+
+  /**
+   * Read plan file and parse PLAN_STEP markers from it.
+   * Used when Claude writes a plan file but doesn't output markers in the response.
+   */
+  private async parsePlanStepsFromFile(planFilePath: string): Promise<ParsedPlanStep[]> {
+    try {
+      const content = await readFile(planFilePath, 'utf-8');
+      const parser = new OutputParser();
+      return parser.parsePlanSteps(content);
+    } catch (error) {
+      console.error(`Failed to read plan file ${planFilePath}:`, error);
+      return [];
+    }
   }
 
   private async savePlanSteps(
