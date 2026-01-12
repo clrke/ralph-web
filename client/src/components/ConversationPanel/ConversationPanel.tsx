@@ -1,4 +1,5 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useSessionStore, ConversationEntry, ExecutionStatus } from '../../stores/sessionStore';
 
 interface ConversationPanelProps {
@@ -133,6 +134,7 @@ function StatusIndicator({ status }: { status: ExecutionStatus | null }) {
 
 function ConversationEntryCard({ entry, index }: { entry: ConversationEntry; index: number }) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [modalContent, setModalContent] = useState<{ title: string; content: string } | null>(null);
 
   const stageLabel = {
     1: 'Discovery',
@@ -177,7 +179,17 @@ function ConversationEntryCard({ entry, index }: { entry: ConversationEntry; ind
         <div className="px-4 pb-4 space-y-4">
           {/* Prompt */}
           <div>
-            <h4 className="text-sm font-medium text-gray-400 mb-2">Prompt</h4>
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-sm font-medium text-gray-400">Prompt</h4>
+              {entry.prompt.length > 2000 && (
+                <button
+                  onClick={() => setModalContent({ title: `Prompt #${index + 1}`, content: entry.prompt })}
+                  className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  View full ({entry.prompt.length.toLocaleString()} chars)
+                </button>
+              )}
+            </div>
             <div className="bg-gray-900/50 rounded p-3 font-mono text-sm text-gray-300 overflow-y-auto whitespace-pre-wrap">
               {truncateText(entry.prompt, 2000)}
             </div>
@@ -185,14 +197,17 @@ function ConversationEntryCard({ entry, index }: { entry: ConversationEntry; ind
 
           {/* Output */}
           <div>
-            <h4 className="text-sm font-medium text-gray-400 mb-2">
-              Output
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-sm font-medium text-gray-400">Output</h4>
               {entry.output.length > 2000 && (
-                <span className="text-gray-500 font-normal ml-2">
-                  (truncated, {entry.output.length.toLocaleString()} chars)
-                </span>
+                <button
+                  onClick={() => setModalContent({ title: `Output #${index + 1}`, content: entry.output })}
+                  className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  View full ({entry.output.length.toLocaleString()} chars)
+                </button>
               )}
-            </h4>
+            </div>
             <div className={`bg-gray-900/50 rounded p-3 font-mono text-sm overflow-y-auto whitespace-pre-wrap ${
               entry.isError ? 'text-red-300' : 'text-gray-300'
             }`}>
@@ -211,6 +226,14 @@ function ConversationEntryCard({ entry, index }: { entry: ConversationEntry; ind
           )}
         </div>
       )}
+
+      {/* Full Content Modal */}
+      <FullContentModal
+        isOpen={modalContent !== null}
+        onClose={() => setModalContent(null)}
+        title={modalContent?.title || ''}
+        content={modalContent?.content || ''}
+      />
     </div>
   );
 }
@@ -234,4 +257,84 @@ function formatTimestamp(timestamp: string): string {
 function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
   return text.substring(0, maxLength) + '...';
+}
+
+interface FullContentModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  content: string;
+}
+
+function FullContentModal({ isOpen, onClose, title, content }: FullContentModalProps) {
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.key === 'Escape') onClose();
+  }, [onClose]);
+
+  useEffect(() => {
+    if (isOpen) {
+      document.addEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = 'hidden';
+    }
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = '';
+    };
+  }, [isOpen, handleKeyDown]);
+
+  if (!isOpen) return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70"
+      onClick={onClose}
+    >
+      <div
+        className="bg-gray-800 rounded-lg w-full max-w-4xl max-h-[90vh] flex flex-col shadow-xl"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Modal Header */}
+        <div className="flex items-center justify-between p-4 border-b border-gray-700">
+          <h3 className="text-lg font-semibold text-gray-100">{title}</h3>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-400">
+              {content.length.toLocaleString()} chars
+            </span>
+            <button
+              onClick={onClose}
+              className="p-1 hover:bg-gray-700 rounded transition-colors"
+            >
+              <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Modal Content */}
+        <div className="flex-1 overflow-y-auto p-4">
+          <pre className="font-mono text-sm text-gray-300 whitespace-pre-wrap break-words">
+            {content}
+          </pre>
+        </div>
+
+        {/* Modal Footer */}
+        <div className="flex justify-end gap-2 p-4 border-t border-gray-700">
+          <button
+            onClick={() => navigator.clipboard.writeText(content)}
+            className="px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+          >
+            Copy to clipboard
+          </button>
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 rounded transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
 }
