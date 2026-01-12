@@ -231,4 +231,261 @@ describe('EventBroadcaster', () => {
       }));
     });
   });
+
+  describe('stepStarted', () => {
+    it('should emit step.started event to the correct room', () => {
+      broadcaster.stepStarted('project-abc', 'add-auth', 'step-1');
+
+      expect(mockIo.to).toHaveBeenCalledWith('project-abc/add-auth');
+      expect(mockRoom.emit).toHaveBeenCalledWith('step.started', expect.objectContaining({
+        stepId: 'step-1',
+      }));
+    });
+
+    it('should include timestamp in step.started event', () => {
+      broadcaster.stepStarted('project-abc', 'add-auth', 'step-2');
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('step.started', expect.objectContaining({
+        stepId: 'step-2',
+        timestamp: expect.any(String),
+      }));
+    });
+
+    it('should emit to different rooms for different sessions', () => {
+      broadcaster.stepStarted('project-1', 'feature-a', 'step-1');
+      broadcaster.stepStarted('project-2', 'feature-b', 'step-1');
+
+      expect(mockIo.to).toHaveBeenCalledWith('project-1/feature-a');
+      expect(mockIo.to).toHaveBeenCalledWith('project-2/feature-b');
+    });
+  });
+
+  describe('stepCompleted', () => {
+    const mockStep = {
+      id: 'step-1',
+      parentId: null,
+      orderIndex: 0,
+      title: 'Create auth middleware',
+      description: 'Set up JWT validation',
+      status: 'completed' as const,
+      metadata: { completedAt: '2026-01-11T01:00:00Z' },
+    };
+
+    it('should emit step.completed event to the correct room', () => {
+      broadcaster.stepCompleted(
+        'project-abc',
+        'add-auth',
+        mockStep,
+        'Implemented JWT validation middleware',
+        ['src/auth/middleware.ts', 'src/auth/types.ts']
+      );
+
+      expect(mockIo.to).toHaveBeenCalledWith('project-abc/add-auth');
+      expect(mockRoom.emit).toHaveBeenCalledWith('step.completed', expect.objectContaining({
+        stepId: 'step-1',
+        status: 'completed',
+        summary: 'Implemented JWT validation middleware',
+        filesModified: ['src/auth/middleware.ts', 'src/auth/types.ts'],
+      }));
+    });
+
+    it('should include timestamp in step.completed event', () => {
+      broadcaster.stepCompleted(
+        'project-abc',
+        'add-auth',
+        mockStep,
+        'Done',
+        []
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('step.completed', expect.objectContaining({
+        timestamp: expect.any(String),
+      }));
+    });
+
+    it('should handle empty filesModified array', () => {
+      broadcaster.stepCompleted(
+        'project-abc',
+        'add-auth',
+        mockStep,
+        'Documentation only change',
+        []
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('step.completed', expect.objectContaining({
+        filesModified: [],
+      }));
+    });
+
+    it('should handle blocked step status', () => {
+      const blockedStep = {
+        ...mockStep,
+        status: 'blocked' as const,
+        metadata: { blockedReason: 'Tests failing after 3 retries' },
+      };
+
+      broadcaster.stepCompleted(
+        'project-abc',
+        'add-auth',
+        blockedStep,
+        'Step blocked due to test failures',
+        ['src/auth/middleware.ts']
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('step.completed', expect.objectContaining({
+        stepId: 'step-1',
+        status: 'blocked',
+      }));
+    });
+
+    it('should handle large file lists', () => {
+      const manyFiles = Array.from({ length: 50 }, (_, i) => `src/file-${i}.ts`);
+
+      broadcaster.stepCompleted(
+        'project-abc',
+        'add-auth',
+        mockStep,
+        'Large refactoring',
+        manyFiles
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('step.completed', expect.objectContaining({
+        filesModified: expect.arrayContaining(['src/file-0.ts', 'src/file-49.ts']),
+      }));
+    });
+  });
+
+  describe('implementationProgress', () => {
+    it('should emit implementation.progress event to the correct room', () => {
+      broadcaster.implementationProgress('project-abc', 'add-auth', {
+        stepId: 'step-1',
+        status: 'in_progress',
+        filesModified: ['src/auth/middleware.ts'],
+        testsStatus: null,
+        retryCount: 0,
+        message: 'Writing authentication logic',
+      });
+
+      expect(mockIo.to).toHaveBeenCalledWith('project-abc/add-auth');
+      expect(mockRoom.emit).toHaveBeenCalledWith('implementation.progress', expect.objectContaining({
+        stepId: 'step-1',
+        status: 'in_progress',
+        filesModified: ['src/auth/middleware.ts'],
+        testsStatus: null,
+        retryCount: 0,
+        message: 'Writing authentication logic',
+      }));
+    });
+
+    it('should include timestamp in implementation.progress event', () => {
+      broadcaster.implementationProgress('project-abc', 'add-auth', {
+        stepId: 'step-1',
+        status: 'implementing',
+        filesModified: [],
+        testsStatus: null,
+        retryCount: 0,
+        message: 'Starting',
+      });
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('implementation.progress', expect.objectContaining({
+        timestamp: expect.any(String),
+      }));
+    });
+
+    it('should handle testing status with passing tests', () => {
+      broadcaster.implementationProgress('project-abc', 'add-auth', {
+        stepId: 'step-2',
+        status: 'testing',
+        filesModified: ['src/auth/middleware.ts', 'tests/auth.test.ts'],
+        testsStatus: 'passing',
+        retryCount: 0,
+        message: 'All tests passing',
+      });
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('implementation.progress', expect.objectContaining({
+        status: 'testing',
+        testsStatus: 'passing',
+        retryCount: 0,
+      }));
+    });
+
+    it('should handle testing status with failing tests and retry count', () => {
+      broadcaster.implementationProgress('project-abc', 'add-auth', {
+        stepId: 'step-2',
+        status: 'fixing',
+        filesModified: ['src/auth/middleware.ts'],
+        testsStatus: 'failing',
+        retryCount: 2,
+        message: 'Fixing test failures (attempt 2 of 3)',
+      });
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('implementation.progress', expect.objectContaining({
+        status: 'fixing',
+        testsStatus: 'failing',
+        retryCount: 2,
+        message: 'Fixing test failures (attempt 2 of 3)',
+      }));
+    });
+
+    it('should handle committing status', () => {
+      broadcaster.implementationProgress('project-abc', 'add-auth', {
+        stepId: 'step-1',
+        status: 'committing',
+        filesModified: ['src/auth/middleware.ts', 'tests/auth.test.ts'],
+        testsStatus: 'passing',
+        retryCount: 0,
+        message: 'Creating git commit',
+      });
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('implementation.progress', expect.objectContaining({
+        status: 'committing',
+        testsStatus: 'passing',
+      }));
+    });
+
+    it('should handle blocked status at max retries', () => {
+      broadcaster.implementationProgress('project-abc', 'add-auth', {
+        stepId: 'step-2',
+        status: 'blocked',
+        filesModified: ['src/auth/middleware.ts'],
+        testsStatus: 'failing',
+        retryCount: 3,
+        message: 'Max retries exceeded - raising blocker',
+      });
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('implementation.progress', expect.objectContaining({
+        status: 'blocked',
+        retryCount: 3,
+      }));
+    });
+
+    it('should emit progress for different steps independently', () => {
+      broadcaster.implementationProgress('project-abc', 'add-auth', {
+        stepId: 'step-1',
+        status: 'in_progress',
+        filesModified: ['file1.ts'],
+        testsStatus: null,
+        retryCount: 0,
+        message: 'Working on step 1',
+      });
+
+      broadcaster.implementationProgress('project-abc', 'add-auth', {
+        stepId: 'step-2',
+        status: 'in_progress',
+        filesModified: ['file2.ts'],
+        testsStatus: null,
+        retryCount: 0,
+        message: 'Working on step 2',
+      });
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('implementation.progress', expect.objectContaining({
+        stepId: 'step-1',
+        filesModified: ['file1.ts'],
+      }));
+      expect(mockRoom.emit).toHaveBeenCalledWith('implementation.progress', expect.objectContaining({
+        stepId: 'step-2',
+        filesModified: ['file2.ts'],
+      }));
+    });
+  });
 });
