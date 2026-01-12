@@ -739,7 +739,7 @@ async function executeStage3Steps(
 
   // Main execution loop - process steps one at a time
   let hasMoreSteps = true;
-  while (hasMoreSteps) {
+  while (hasMoreSteps && plan) {
     const nextStep = getNextReadyStep(plan);
 
     if (!nextStep) {
