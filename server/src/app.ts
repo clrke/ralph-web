@@ -669,7 +669,7 @@ async function executeSingleStep(
       );
 
       // Check if this step was completed
-      let stepCompleted = result.parsed.stepsCompleted.some(s => s.id === step.id);
+      const stepCompleted = result.parsed.stepsCompleted.some(s => s.id === step.id);
 
       // If step not completed and no blocker detected, try Haiku post-processing
       // to extract any implicit blockers from Claude's output
