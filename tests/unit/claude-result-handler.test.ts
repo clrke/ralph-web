@@ -640,4 +640,541 @@ describe('ClaudeResultHandler', () => {
       expect(conversations!.entries[1].status).toBe('interrupted');
     });
   });
+
+  describe('handleStage3Result', () => {
+    const stage3Session: Session = {
+      ...mockSession,
+      currentStage: 3,
+      status: 'implementation',
+    };
+
+    const baseResult = (): ClaudeResult => ({
+      output: 'Implementation output',
+      sessionId: 'claude-session-stage3',
+      costUsd: 0.15,
+      isError: false,
+      parsed: {
+        decisions: [],
+        planSteps: [],
+        stepCompleted: null,
+        stepsCompleted: [],
+        planModeEntered: false,
+        planModeExited: false,
+        planFilePath: null,
+        implementationComplete: false,
+        implementationSummary: null,
+        implementationStatus: null,
+        prCreated: null,
+        planApproved: false,
+        allTestsPassing: false,
+        testsAdded: [],
+        ciStatus: null,
+        ciFailed: false,
+        prApproved: false,
+        returnToStage2: null,
+      },
+    });
+
+    beforeEach(async () => {
+      const sessionDir = `${stage3Session.projectId}/${stage3Session.featureId}`;
+      // Set up plan with steps for Stage 3 testing
+      await storage.writeJson(`${sessionDir}/plan.json`, {
+        version: '1.0',
+        planVersion: 1,
+        sessionId: stage3Session.id,
+        isApproved: true,
+        reviewCount: 2,
+        steps: [
+          { id: 'step-1', parentId: null, orderIndex: 0, title: 'Create feature branch', description: 'git checkout -b feature/add-auth', status: 'pending', metadata: {} },
+          { id: 'step-2', parentId: 'step-1', orderIndex: 1, title: 'Create auth middleware', description: 'Set up JWT validation', status: 'pending', metadata: {} },
+          { id: 'step-3', parentId: 'step-2', orderIndex: 2, title: 'Add login endpoint', description: 'POST /api/login', status: 'pending', metadata: {} },
+        ],
+        createdAt: '2026-01-11T00:00:00Z',
+      });
+
+      // Set up status.json with Stage 3 fields
+      await storage.writeJson(`${sessionDir}/status.json`, {
+        version: '1.0',
+        sessionId: stage3Session.id,
+        timestamp: '2026-01-11T00:00:00Z',
+        currentStage: 3,
+        currentStepId: null,
+        blockedStepId: null,
+        status: 'running',
+        claudeSpawnCount: 0,
+        callsThisHour: 0,
+        maxCallsPerHour: 50,
+        nextHourReset: '2026-01-11T01:00:00Z',
+        circuitBreakerState: 'CLOSED',
+        lastOutputLength: 0,
+        lastAction: 'stage3_started',
+        lastActionAt: '2026-01-11T00:00:00Z',
+        stepRetries: {},
+      });
+    });
+
+    describe('conversation saving', () => {
+      it('should save conversation entry with stepId', async () => {
+        const result = baseResult();
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-1');
+
+        const conversations = await storage.readJson<{ entries: Array<{ stage: number; stepId: string; output: string }> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/conversations.json`
+        );
+
+        expect(conversations!.entries).toHaveLength(1);
+        expect(conversations!.entries[0]).toMatchObject({
+          stage: 3,
+          stepId: 'step-1',
+          output: 'Implementation output',
+        });
+      });
+
+      it('should save conversation without stepId when not provided', async () => {
+        const result = baseResult();
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        const conversations = await storage.readJson<{ entries: Array<{ stage: number; stepId?: string }> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/conversations.json`
+        );
+
+        expect(conversations!.entries).toHaveLength(1);
+        expect(conversations!.entries[0].stage).toBe(3);
+        expect(conversations!.entries[0].stepId).toBeUndefined();
+      });
+    });
+
+    describe('step status updates', () => {
+      it('should mark step as completed when stepsCompleted is populated', async () => {
+        const result = baseResult();
+        result.parsed.stepsCompleted = [
+          { id: 'step-1', summary: 'Created feature branch', testsAdded: [], testsPassing: true },
+        ];
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-1');
+
+        const plan = await storage.readJson<{ steps: Array<{ id: string; status: string; metadata: { completionSummary?: string; completedAt?: string } }> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/plan.json`
+        );
+
+        expect(plan!.steps[0].status).toBe('completed');
+        expect(plan!.steps[0].metadata.completionSummary).toBe('Created feature branch');
+        expect(plan!.steps[0].metadata.completedAt).toBeDefined();
+      });
+
+      it('should mark multiple steps as completed', async () => {
+        const result = baseResult();
+        result.parsed.stepsCompleted = [
+          { id: 'step-1', summary: 'Created branch', testsAdded: [], testsPassing: true },
+          { id: 'step-2', summary: 'Added middleware', testsAdded: ['auth.test.ts'], testsPassing: true },
+        ];
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        const plan = await storage.readJson<{ steps: Array<{ id: string; status: string }> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/plan.json`
+        );
+
+        expect(plan!.steps[0].status).toBe('completed');
+        expect(plan!.steps[1].status).toBe('completed');
+        expect(plan!.steps[2].status).toBe('pending'); // Unchanged
+      });
+
+      it('should not update steps that are not in stepsCompleted', async () => {
+        const result = baseResult();
+        result.parsed.stepsCompleted = [
+          { id: 'step-2', summary: 'Added middleware', testsAdded: [], testsPassing: true },
+        ];
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        const plan = await storage.readJson<{ steps: Array<{ id: string; status: string }> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/plan.json`
+        );
+
+        expect(plan!.steps[0].status).toBe('pending'); // step-1 unchanged
+        expect(plan!.steps[1].status).toBe('completed'); // step-2 completed
+      });
+    });
+
+    describe('blocker handling', () => {
+      it('should detect blocker decisions and save to questions.json', async () => {
+        const result = baseResult();
+        result.parsed.decisions = [
+          {
+            priority: 1,
+            category: 'blocker',
+            questionText: 'Cannot proceed: missing database credentials',
+            options: [
+              { label: 'Add credentials to .env', recommended: true },
+              { label: 'Skip database setup', recommended: false },
+            ],
+          },
+        ];
+
+        const { hasBlocker } = await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-2');
+
+        expect(hasBlocker).toBe(true);
+
+        const questions = await storage.readJson<{ questions: Array<{ category: string; questionText: string; stepId?: string }> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/questions.json`
+        );
+
+        expect(questions!.questions).toHaveLength(1);
+        expect(questions!.questions[0]).toMatchObject({
+          category: 'blocker',
+          questionText: 'Cannot proceed: missing database credentials',
+          stepId: 'step-2',
+        });
+      });
+
+      it('should return hasBlocker false when no blocker decisions', async () => {
+        const result = baseResult();
+        result.parsed.decisions = [
+          {
+            priority: 2,
+            category: 'technical',
+            questionText: 'Regular question',
+            options: [],
+          },
+        ];
+
+        const { hasBlocker } = await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        expect(hasBlocker).toBe(false);
+      });
+
+      it('should set blockedStepId in status.json when blocker detected', async () => {
+        const result = baseResult();
+        result.parsed.decisions = [
+          {
+            priority: 1,
+            category: 'blocker',
+            questionText: 'Blocker question',
+            options: [],
+          },
+        ];
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-2');
+
+        const status = await storage.readJson<{ blockedStepId: string | null }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/status.json`
+        );
+
+        expect(status!.blockedStepId).toBe('step-2');
+      });
+
+      it('should clear blockedStepId when step completes', async () => {
+        // First set a blocked state
+        const sessionDir = `${stage3Session.projectId}/${stage3Session.featureId}`;
+        await storage.writeJson(`${sessionDir}/status.json`, {
+          ...(await storage.readJson(`${sessionDir}/status.json`)),
+          blockedStepId: 'step-2',
+        });
+
+        const result = baseResult();
+        result.parsed.stepsCompleted = [
+          { id: 'step-2', summary: 'Completed after blocker resolved', testsAdded: [], testsPassing: true },
+        ];
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-2');
+
+        const status = await storage.readJson<{ blockedStepId: string | null }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/status.json`
+        );
+
+        expect(status!.blockedStepId).toBeNull();
+      });
+    });
+
+    describe('retry count tracking', () => {
+      it('should increment retry count when tests are failing', async () => {
+        const result = baseResult();
+        result.parsed.implementationStatus = {
+          stepId: 'step-2',
+          status: 'testing',
+          filesModified: ['src/auth.ts'],
+          testsStatus: 'failing',
+          retryCount: 1,
+          message: 'Tests failed, retrying',
+        };
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-2');
+
+        const status = await storage.readJson<{ stepRetries: Record<string, number> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/status.json`
+        );
+
+        expect(status!.stepRetries['step-2']).toBe(1);
+      });
+
+      it('should accumulate retry count across multiple calls', async () => {
+        const result = baseResult();
+        result.parsed.implementationStatus = {
+          stepId: 'step-2',
+          status: 'testing',
+          filesModified: ['src/auth.ts'],
+          testsStatus: 'failing',
+          retryCount: 1,
+          message: 'Tests failed',
+        };
+
+        // First failure
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-2');
+        // Second failure
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-2');
+        // Third failure
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-2');
+
+        const status = await storage.readJson<{ stepRetries: Record<string, number> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/status.json`
+        );
+
+        expect(status!.stepRetries['step-2']).toBe(3);
+      });
+
+      it('should clear retry count when step completes', async () => {
+        const sessionDir = `${stage3Session.projectId}/${stage3Session.featureId}`;
+        // Set up existing retry count
+        const existingStatus = await storage.readJson(`${sessionDir}/status.json`) as Record<string, unknown>;
+        await storage.writeJson(`${sessionDir}/status.json`, {
+          ...existingStatus,
+          stepRetries: { 'step-2': 2 },
+        });
+
+        const result = baseResult();
+        result.parsed.stepsCompleted = [
+          { id: 'step-2', summary: 'Completed', testsAdded: [], testsPassing: true },
+        ];
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-2');
+
+        const status = await storage.readJson<{ stepRetries: Record<string, number> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/status.json`
+        );
+
+        expect(status!.stepRetries['step-2']).toBeUndefined();
+      });
+    });
+
+    describe('markStepBlocked', () => {
+      it('should mark step as blocked in plan.json', async () => {
+        const sessionDir = `${stage3Session.projectId}/${stage3Session.featureId}`;
+        await handler.markStepBlocked(sessionDir, 'step-2');
+
+        const plan = await storage.readJson<{ steps: Array<{ id: string; status: string; metadata: { blockedAt?: string; blockedReason?: string } }> }>(
+          `${sessionDir}/plan.json`
+        );
+
+        const step2 = plan!.steps.find(s => s.id === 'step-2');
+        expect(step2!.status).toBe('blocked');
+        expect(step2!.metadata.blockedAt).toBeDefined();
+        expect(step2!.metadata.blockedReason).toBe('Max retry attempts exceeded');
+      });
+    });
+
+    describe('getStepRetryCount', () => {
+      it('should return current retry count for a step', async () => {
+        const sessionDir = `${stage3Session.projectId}/${stage3Session.featureId}`;
+        const existingStatus = await storage.readJson(`${sessionDir}/status.json`) as Record<string, unknown>;
+        await storage.writeJson(`${sessionDir}/status.json`, {
+          ...existingStatus,
+          stepRetries: { 'step-2': 2, 'step-3': 1 },
+        });
+
+        const count = await handler.getStepRetryCount(sessionDir, 'step-2');
+        expect(count).toBe(2);
+      });
+
+      it('should return 0 for steps with no retries', async () => {
+        const sessionDir = `${stage3Session.projectId}/${stage3Session.featureId}`;
+        const count = await handler.getStepRetryCount(sessionDir, 'step-1');
+        expect(count).toBe(0);
+      });
+    });
+
+    describe('implementation completion detection', () => {
+      it('should detect completion via implementationComplete marker', async () => {
+        const result = baseResult();
+        result.parsed.implementationComplete = true;
+        result.parsed.implementationSummary = 'All features implemented';
+
+        const { implementationComplete } = await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        expect(implementationComplete).toBe(true);
+      });
+
+      it('should detect completion via state (all steps completed)', async () => {
+        const sessionDir = `${stage3Session.projectId}/${stage3Session.featureId}`;
+        // Mark all steps as completed in plan
+        const plan = await storage.readJson(`${sessionDir}/plan.json`) as Record<string, unknown>;
+        await storage.writeJson(`${sessionDir}/plan.json`, {
+          ...plan,
+          steps: [
+            { id: 'step-1', parentId: null, orderIndex: 0, title: 'Step 1', status: 'completed', metadata: {} },
+            { id: 'step-2', parentId: 'step-1', orderIndex: 1, title: 'Step 2', status: 'completed', metadata: {} },
+            { id: 'step-3', parentId: 'step-2', orderIndex: 2, title: 'Step 3', status: 'completed', metadata: {} },
+          ],
+        });
+
+        const result = baseResult();
+        // Don't set implementationComplete marker - should detect via state
+
+        const { implementationComplete } = await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        expect(implementationComplete).toBe(true);
+      });
+
+      it('should not detect completion when steps are pending', async () => {
+        const result = baseResult();
+
+        const { implementationComplete } = await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        expect(implementationComplete).toBe(false);
+      });
+
+      it('should detect completion when skipped steps exist', async () => {
+        const sessionDir = `${stage3Session.projectId}/${stage3Session.featureId}`;
+        // Mark steps as completed or skipped
+        const plan = await storage.readJson(`${sessionDir}/plan.json`) as Record<string, unknown>;
+        await storage.writeJson(`${sessionDir}/plan.json`, {
+          ...plan,
+          steps: [
+            { id: 'step-1', parentId: null, orderIndex: 0, title: 'Step 1', status: 'completed', metadata: {} },
+            { id: 'step-2', parentId: 'step-1', orderIndex: 1, title: 'Step 2', status: 'skipped', metadata: {} },
+            { id: 'step-3', parentId: 'step-2', orderIndex: 2, title: 'Step 3', status: 'completed', metadata: {} },
+          ],
+        });
+
+        const result = baseResult();
+        const { implementationComplete } = await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        expect(implementationComplete).toBe(true);
+      });
+    });
+
+    describe('status updates', () => {
+      it('should update currentStepId from implementationStatus', async () => {
+        const result = baseResult();
+        result.parsed.implementationStatus = {
+          stepId: 'step-2',
+          status: 'in_progress',
+          filesModified: [],
+          testsStatus: null,
+          retryCount: 0,
+          message: 'Working on step 2',
+        };
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        const status = await storage.readJson<{ currentStepId: string | null }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/status.json`
+        );
+
+        expect(status!.currentStepId).toBe('step-2');
+      });
+
+      it('should set status to running during execution', async () => {
+        const result = baseResult();
+        result.parsed.implementationStatus = {
+          stepId: 'step-1',
+          status: 'in_progress',
+          filesModified: ['src/app.ts'],
+          testsStatus: null,
+          retryCount: 0,
+          message: 'Implementing',
+        };
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        const status = await storage.readJson<{ status: string }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/status.json`
+        );
+
+        expect(status!.status).toBe('running');
+      });
+
+      it('should set status to completed when implementation is done', async () => {
+        const sessionDir = `${stage3Session.projectId}/${stage3Session.featureId}`;
+        // Mark all steps as completed
+        const plan = await storage.readJson(`${sessionDir}/plan.json`) as Record<string, unknown>;
+        await storage.writeJson(`${sessionDir}/plan.json`, {
+          ...plan,
+          steps: [
+            { id: 'step-1', status: 'completed', metadata: {} },
+            { id: 'step-2', status: 'completed', metadata: {} },
+            { id: 'step-3', status: 'completed', metadata: {} },
+          ],
+        });
+
+        const result = baseResult();
+        result.parsed.implementationComplete = true;
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        const status = await storage.readJson<{ status: string; lastAction: string }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/status.json`
+        );
+
+        expect(status!.status).toBe('completed');
+        expect(status!.lastAction).toBe('stage3_complete');
+      });
+
+      it('should set lastAction to stage3_blocked when blocker detected', async () => {
+        const result = baseResult();
+        result.parsed.decisions = [
+          { priority: 1, category: 'blocker', questionText: 'Blocked', options: [] },
+        ];
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-2');
+
+        const status = await storage.readJson<{ lastAction: string }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/status.json`
+        );
+
+        expect(status!.lastAction).toBe('stage3_blocked');
+      });
+
+      it('should set lastAction to stage3_progress during normal execution', async () => {
+        const result = baseResult();
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        const status = await storage.readJson<{ lastAction: string }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/status.json`
+        );
+
+        expect(status!.lastAction).toBe('stage3_progress');
+      });
+
+      it('should increment claudeSpawnCount', async () => {
+        const result = baseResult();
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        const status = await storage.readJson<{ claudeSpawnCount: number }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/status.json`
+        );
+
+        expect(status!.claudeSpawnCount).toBe(2);
+      });
+    });
+
+    describe('error handling', () => {
+      it('should handle error results', async () => {
+        const result = baseResult();
+        result.isError = true;
+        result.error = 'Claude spawn failed';
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        const status = await storage.readJson<{ status: string }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/status.json`
+        );
+
+        expect(status!.status).toBe('error');
+      });
+    });
+  });
 });
