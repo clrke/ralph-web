@@ -7,6 +7,7 @@ import { OutputParser } from './services/OutputParser';
 import { ClaudeResultHandler } from './services/ClaudeResultHandler';
 import { DecisionValidator } from './services/DecisionValidator';
 import { TestRequirementAssessor } from './services/TestRequirementAssessor';
+import { IncompleteStepsAssessor } from './services/IncompleteStepsAssessor';
 import { EventBroadcaster } from './services/EventBroadcaster';
 import { buildStage1Prompt, buildStage2Prompt, buildStage3Prompt, buildStage4Prompt, buildStage5Prompt, buildPlanRevisionPrompt, buildBatchAnswersContinuationPrompt } from './prompts/stagePrompts';
 import { Session } from '@claude-code-web/shared';
@@ -572,10 +573,30 @@ async function handleStage5Result(
     const updatedSession = await sessionManager.transitionStage(session.projectId, session.featureId, 2);
     eventBroadcaster?.stageChanged(updatedSession, previousStage);
 
-    // Auto-spawn Stage 2 with plan revision prompt
+    // Use LLM to identify which steps are actually incomplete
     const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
     if (plan) {
-      const revisionPrompt = buildPlanRevisionPrompt(updatedSession, plan, `CI/Review Issues from Stage 5:\n${reason}\n\nPlease update the plan to address these issues.`);
+      // Assess which steps are affected by the CI/review issues
+      const incompleteAssessor = new IncompleteStepsAssessor();
+      const assessment = await incompleteAssessor.assess(plan, reason, session.projectPath);
+
+      // Update plan based on assessment
+      plan.isApproved = false;
+      plan.planVersion = (plan.planVersion || 1) + 1;
+
+      // Only mark affected steps as needs_review or pending
+      for (const affected of assessment.affectedSteps) {
+        const step = plan.steps.find(s => s.id === affected.stepId);
+        if (step) {
+          step.status = affected.status;
+        }
+      }
+
+      await storage.writeJson(`${sessionDir}/plan.json`, plan);
+
+      // Auto-spawn Stage 2 with plan revision prompt including assessment summary
+      const revisionFeedback = `CI/Review Issues from Stage 5:\n${reason}\n\nAssessment: ${assessment.summary}\n\nAffected steps:\n${assessment.affectedSteps.map(s => `- ${s.stepId}: ${s.reason}`).join('\n')}\n\nPlease update the plan to address these issues.`;
+      const revisionPrompt = buildPlanRevisionPrompt(updatedSession, plan, revisionFeedback);
       await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, revisionPrompt);
     }
 

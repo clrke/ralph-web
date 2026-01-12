@@ -160,3 +160,52 @@ ${planStepsText}
 - Check for existing test patterns in the codebase
 - Consider the complexity and risk of the changes`;
 }
+
+/**
+ * Build prompt for Haiku to identify which plan steps are incomplete
+ * based on CI failures or review issues from Stage 5.
+ */
+export function buildIncompleteStepsPrompt(plan: Plan, issueReason: string): string {
+  const planStepsText = plan.steps.map((step, i) =>
+    `${i + 1}. [${step.id}] ${step.title} (status: ${step.status})\n   ${step.description || 'No description'}`
+  ).join('\n\n');
+
+  return `Analyze CI/review issues and identify which plan steps are incomplete or need revision.
+
+## Implementation Plan
+${planStepsText}
+
+## CI/Review Issues
+${issueReason}
+
+## Instructions
+
+1. **Analyze the issues**: What specifically failed or needs fixing?
+2. **Map to plan steps**: Which steps are affected by these issues?
+3. **Determine status**: For each step, decide if it needs revision
+
+## Response Format (JSON only)
+
+{
+  "affectedSteps": [
+    {
+      "stepId": "step-1",
+      "status": "needs_review" | "pending",
+      "reason": "Brief explanation of why this step is affected"
+    }
+  ],
+  "unaffectedSteps": ["step-2", "step-3"],
+  "summary": "Brief summary of what needs to be fixed"
+}
+
+## Status Meanings
+- **needs_review**: Step was completed but has issues that need fixing
+- **pending**: Step needs to be re-implemented from scratch
+- Keep as **completed** if step is not affected by the issues
+
+## Rules
+- Only mark steps as affected if they are DIRECTLY related to the issues
+- If unsure, mark as "needs_review" (safer than leaving as completed)
+- Be specific about why each step is affected
+- Consider dependencies - if step A affects step B, both may need review`;
+}
