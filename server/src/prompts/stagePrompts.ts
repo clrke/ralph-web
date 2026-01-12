@@ -245,3 +245,96 @@ How should we address this?
 If all issues are resolved and the plan is ready for implementation, output:
 [PLAN_APPROVED]`;
 }
+
+/**
+ * Build Stage 3: Implementation prompt
+ * Executes approved plan steps sequentially with progress tracking.
+ * Per README lines 1659-1700
+ */
+export function buildStage3Prompt(session: Session, plan: Plan): string {
+  const planStepsText = plan.steps.map((step, i) => {
+    const parentInfo = step.parentId ? ` (depends on: ${step.parentId})` : '';
+    return `### Step ${i + 1}: [${step.id}] ${step.title}${parentInfo}
+${step.description || 'No description provided.'}`;
+  }).join('\n\n');
+
+  return `You are implementing an approved feature plan. Execute each step sequentially, commit changes, and track progress.
+
+## Feature
+Title: ${session.title}
+Description: ${session.featureDescription}
+Project Path: ${session.projectPath}
+
+## Approved Plan (${plan.steps.length} steps)
+${planStepsText}
+
+## Instructions
+
+### Execution Process
+For each step:
+1. **Start the step** - Announce which step you're working on
+2. **Implement the changes** - Write/modify the necessary code
+3. **Run tests** - Verify the changes work (max 3 fix attempts if tests fail)
+4. **Commit changes** - Create a git commit for the step
+5. **Report completion** - Use the markers below
+
+### Progress Markers (Required)
+
+**During step execution**, output progress updates:
+\`\`\`
+[IMPLEMENTATION_STATUS]
+step_id: step-X
+status: in_progress|testing|fixing|committing
+files_modified: 3
+tests_status: pending|passing|failing
+work_type: implementing|testing|fixing
+progress: 50
+message: Brief status message
+[/IMPLEMENTATION_STATUS]
+\`\`\`
+
+**After completing a step**:
+\`\`\`
+[STEP_COMPLETE id="step-X"]
+Brief summary of what was implemented.
+Files modified: file1.ts, file2.ts
+[/STEP_COMPLETE]
+\`\`\`
+
+**If blocked and need user input**:
+\`\`\`
+[DECISION_NEEDED priority="1" category="blocker" immediate="true"]
+Describe what you're blocked on and why you need user input.
+
+- Option A: First approach (recommended)
+- Option B: Alternative approach
+[/DECISION_NEEDED]
+\`\`\`
+Note: When a blocker is raised, execution pauses. The user will answer and you'll resume.
+
+**When ALL steps are complete**:
+\`\`\`
+[IMPLEMENTATION_COMPLETE]
+Summary: What was implemented
+Steps completed: X of Y
+Files modified: list of key files
+[/IMPLEMENTATION_COMPLETE]
+\`\`\`
+
+### Test Failure Handling
+- If tests fail, attempt to fix the issue (up to 3 attempts per step)
+- After 3 failed attempts, raise a blocker decision for user guidance
+- Track retry count in your IMPLEMENTATION_STATUS updates
+
+### Git Commits
+- Create a commit after each step completion
+- Use descriptive commit messages: "Step X: <step title>"
+- Include the step ID in the commit message
+
+### Important Rules
+1. Execute steps in order (respect dependencies via parentId)
+2. Do NOT skip steps or change the plan
+3. If a step cannot be completed, raise a blocker
+4. Output IMPLEMENTATION_STATUS regularly for real-time progress
+5. Always run tests before marking a step complete`;
+}

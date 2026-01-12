@@ -1,5 +1,13 @@
 import { Server } from 'socket.io';
-import { Question, Plan, Session } from '@claude-code-web/shared';
+import {
+  Question,
+  Plan,
+  PlanStep,
+  Session,
+  StepStartedEvent,
+  StepCompletedEvent,
+  ImplementationProgressEvent,
+} from '@claude-code-web/shared';
 
 /**
  * Broadcasts real-time events to connected clients via Socket.IO.
@@ -147,5 +155,54 @@ export class EventBroadcaster {
       isComplete,
       timestamp: new Date().toISOString(),
     });
+  }
+
+  /**
+   * Broadcast step started event (Stage 3)
+   */
+  stepStarted(projectId: string, featureId: string, stepId: string): void {
+    const room = this.getRoom(projectId, featureId);
+    const event: StepStartedEvent = {
+      stepId,
+      timestamp: new Date().toISOString(),
+    };
+    this.io.to(room).emit('step.started', event);
+  }
+
+  /**
+   * Broadcast step completed event (Stage 3)
+   */
+  stepCompleted(
+    projectId: string,
+    featureId: string,
+    step: PlanStep,
+    summary: string,
+    filesModified: string[]
+  ): void {
+    const room = this.getRoom(projectId, featureId);
+    const event: StepCompletedEvent = {
+      stepId: step.id,
+      status: step.status,
+      summary,
+      filesModified,
+      timestamp: new Date().toISOString(),
+    };
+    this.io.to(room).emit('step.completed', event);
+  }
+
+  /**
+   * Broadcast implementation progress event (Stage 3 real-time status)
+   */
+  implementationProgress(
+    projectId: string,
+    featureId: string,
+    progress: Omit<ImplementationProgressEvent, 'timestamp'>
+  ): void {
+    const room = this.getRoom(projectId, featureId);
+    const event: ImplementationProgressEvent = {
+      ...progress,
+      timestamp: new Date().toISOString(),
+    };
+    this.io.to(room).emit('implementation.progress', event);
   }
 }

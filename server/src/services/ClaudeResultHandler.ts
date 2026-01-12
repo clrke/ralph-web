@@ -56,6 +56,7 @@ interface StatusFile {
   lastOutputLength: number;
   lastAction: string;
   lastActionAt: string;
+  stepRetries?: Record<string, number>; // Track retry count per step for Stage 3
 }
 
 export class ClaudeResultHandler {
@@ -165,6 +166,160 @@ export class ClaudeResultHandler {
 
     // Update status.json
     await this.updateStatus(sessionDir, result, 2);
+  }
+
+  /**
+   * Handle Stage 3 (Implementation) result from Claude.
+   * Updates step statuses, tracks retries, handles blockers.
+   */
+  async handleStage3Result(
+    session: Session,
+    result: ClaudeResult,
+    prompt: string
+  ): Promise<{ hasBlocker: boolean; implementationComplete: boolean }> {
+    const sessionDir = `${session.projectId}/${session.featureId}`;
+    const now = new Date().toISOString();
+
+    // Save conversation entry
+    await this.saveConversation(sessionDir, {
+      stage: 3,
+      timestamp: now,
+      prompt,
+      output: result.output,
+      sessionId: result.sessionId,
+      costUsd: result.costUsd,
+      isError: result.isError,
+      error: result.error,
+      parsed: result.parsed,
+    });
+
+    // Update plan step statuses based on stepsCompleted
+    if (result.parsed.stepsCompleted.length > 0) {
+      await this.updatePlanStepStatuses(sessionDir, result.parsed.stepsCompleted);
+    }
+
+    // Handle blocker decisions (category="blocker")
+    const blockerDecisions = result.parsed.decisions.filter(
+      d => d.category === 'blocker'
+    );
+
+    if (blockerDecisions.length > 0) {
+      // Read plan for validation context (skip validation for blockers - they're urgent)
+      await this.saveQuestions(sessionDir, session, blockerDecisions, null);
+    }
+
+    // Update status.json with Stage 3 specific fields
+    await this.updateStage3Status(sessionDir, result);
+
+    return {
+      hasBlocker: blockerDecisions.length > 0,
+      implementationComplete: result.parsed.implementationComplete,
+    };
+  }
+
+  /**
+   * Update plan step statuses based on completed steps from Claude output.
+   */
+  private async updatePlanStepStatuses(
+    sessionDir: string,
+    stepsCompleted: ClaudeResult['parsed']['stepsCompleted']
+  ): Promise<void> {
+    const planPath = `${sessionDir}/plan.json`;
+    const plan = await this.storage.readJson<Plan>(planPath);
+
+    if (!plan) return;
+
+    for (const completed of stepsCompleted) {
+      const step = plan.steps.find(s => s.id === completed.id);
+      if (step) {
+        step.status = 'completed';
+        // Store summary in metadata
+        step.metadata = {
+          ...step.metadata,
+          completionSummary: completed.summary,
+          completedAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    await this.storage.writeJson(planPath, plan);
+  }
+
+  /**
+   * Update status.json for Stage 3 with step tracking and retry counts.
+   */
+  private async updateStage3Status(
+    sessionDir: string,
+    result: ClaudeResult
+  ): Promise<void> {
+    const statusPath = `${sessionDir}/status.json`;
+    const status = await this.storage.readJson<StatusFile>(statusPath);
+
+    if (!status) return;
+
+    const now = new Date().toISOString();
+
+    // Track current step from implementation status
+    if (result.parsed.implementationStatus) {
+      status.currentStepId = result.parsed.implementationStatus.stepId;
+    }
+
+    // Initialize stepRetries if not present
+    if (!status.stepRetries) {
+      status.stepRetries = {};
+    }
+
+    // Update retry count if tests are failing
+    if (result.parsed.implementationStatus?.testsStatus === 'failing') {
+      const stepId = result.parsed.implementationStatus.stepId;
+      status.stepRetries[stepId] = (status.stepRetries[stepId] || 0) + 1;
+    }
+
+    // Clear retry count for completed steps
+    for (const completed of result.parsed.stepsCompleted) {
+      delete status.stepRetries[completed.id];
+    }
+
+    status.status = result.isError ? 'error' : (result.parsed.implementationComplete ? 'completed' : 'running');
+    status.claudeSpawnCount = (status.claudeSpawnCount || 0) + 1;
+    status.lastAction = result.parsed.implementationComplete
+      ? 'stage3_complete'
+      : (result.parsed.decisions.some(d => d.category === 'blocker') ? 'stage3_blocked' : 'stage3_progress');
+    status.lastActionAt = now;
+    status.lastOutputLength = result.output.length;
+
+    await this.storage.writeJson(statusPath, status);
+  }
+
+  /**
+   * Mark a step as blocked after max retries exceeded.
+   */
+  async markStepBlocked(sessionDir: string, stepId: string): Promise<void> {
+    const planPath = `${sessionDir}/plan.json`;
+    const plan = await this.storage.readJson<Plan>(planPath);
+
+    if (!plan) return;
+
+    const step = plan.steps.find(s => s.id === stepId);
+    if (step) {
+      step.status = 'blocked';
+      step.metadata = {
+        ...step.metadata,
+        blockedAt: new Date().toISOString(),
+        blockedReason: 'Max retry attempts exceeded',
+      };
+    }
+
+    await this.storage.writeJson(planPath, plan);
+  }
+
+  /**
+   * Get retry count for a specific step.
+   */
+  async getStepRetryCount(sessionDir: string, stepId: string): Promise<number> {
+    const statusPath = `${sessionDir}/status.json`;
+    const status = await this.storage.readJson<StatusFile>(statusPath);
+    return status?.stepRetries?.[stepId] || 0;
   }
 
   private async saveConversation(

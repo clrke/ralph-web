@@ -4,6 +4,7 @@ import { useSessionStore } from '../stores/sessionStore';
 import { PlanEditor } from '../components/PlanEditor';
 import { ConversationPanel } from '../components/ConversationPanel';
 import { connectToSession, disconnectFromSession, getSocket } from '../services/socket';
+import type { PlanStepStatus, ImplementationProgressEvent } from '@claude-code-web/shared';
 
 const STAGE_LABELS: Record<number, string> = {
   1: 'Feature Discovery',
@@ -36,6 +37,8 @@ export default function SessionView() {
     addQuestion,
     setExecutionStatus,
     appendLiveOutput,
+    updateStepStatus,
+    setImplementationProgress,
   } = useSessionStore();
 
   // Socket.IO event handlers
@@ -70,6 +73,19 @@ export default function SessionView() {
     }
   }, [setSession]);
 
+  // Stage 3 event handlers
+  const handleStepStarted = useCallback((data: { stepId: string }) => {
+    updateStepStatus(data.stepId, 'in_progress');
+  }, [updateStepStatus]);
+
+  const handleStepCompleted = useCallback((data: { stepId: string; status: PlanStepStatus }) => {
+    updateStepStatus(data.stepId, data.status);
+  }, [updateStepStatus]);
+
+  const handleImplementationProgress = useCallback((data: ImplementationProgressEvent) => {
+    setImplementationProgress(data);
+  }, [setImplementationProgress]);
+
   // Fetch session data
   useEffect(() => {
     if (projectId && featureId) {
@@ -89,6 +105,9 @@ export default function SessionView() {
     socket.on('questions.batch', handleQuestionsBatch);
     socket.on('plan.updated', handlePlanUpdated);
     socket.on('stage.changed', handleStageChanged);
+    socket.on('step.started', handleStepStarted);
+    socket.on('step.completed', handleStepCompleted);
+    socket.on('implementation.progress', handleImplementationProgress);
 
     return () => {
       socket.off('execution.status', handleExecutionStatus);
@@ -96,9 +115,12 @@ export default function SessionView() {
       socket.off('questions.batch', handleQuestionsBatch);
       socket.off('plan.updated', handlePlanUpdated);
       socket.off('stage.changed', handleStageChanged);
+      socket.off('step.started', handleStepStarted);
+      socket.off('step.completed', handleStepCompleted);
+      socket.off('implementation.progress', handleImplementationProgress);
       disconnectFromSession(projectId, featureId);
     };
-  }, [projectId, featureId, handleExecutionStatus, handleClaudeOutput, handleQuestionsBatch, handlePlanUpdated, handleStageChanged]);
+  }, [projectId, featureId, handleExecutionStatus, handleClaudeOutput, handleQuestionsBatch, handlePlanUpdated, handleStageChanged, handleStepStarted, handleStepCompleted, handleImplementationProgress]);
 
   if (isLoading) {
     return (
@@ -549,6 +571,8 @@ function ImplementationSection({
                   ? 'bg-green-900/20'
                   : step.status === 'in_progress'
                   ? 'bg-blue-900/20'
+                  : step.status === 'blocked' || step.status === 'needs_review'
+                  ? 'bg-yellow-900/20'
                   : 'bg-gray-700/50'
               }`}
             >
@@ -559,6 +583,10 @@ function ImplementationSection({
                   </svg>
                 ) : step.status === 'in_progress' ? (
                   <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                ) : step.status === 'blocked' || step.status === 'needs_review' ? (
+                  <svg className="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
                 ) : (
                   <div className="w-5 h-5 rounded-full border-2 border-gray-500" />
                 )}
@@ -567,6 +595,11 @@ function ImplementationSection({
                 <span className={step.status === 'completed' ? 'text-gray-400' : ''}>
                   {index + 1}. {step.title}
                 </span>
+                {(step.status === 'blocked' || step.status === 'needs_review') && (
+                  <span className="ml-2 text-xs text-yellow-400">
+                    {step.status === 'blocked' ? 'Waiting for input' : 'Needs review'}
+                  </span>
+                )}
               </div>
             </div>
           ))}

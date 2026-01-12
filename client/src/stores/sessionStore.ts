@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Session, Plan, Question } from '@claude-code-web/shared';
+import type { Session, Plan, Question, PlanStepStatus, ImplementationProgressEvent } from '@claude-code-web/shared';
 
 export interface ConversationEntry {
   stage: number;
@@ -29,6 +29,7 @@ interface SessionState {
   executionStatus: ExecutionStatus | null;
   liveOutput: string;
   isOutputComplete: boolean;
+  implementationProgress: ImplementationProgressEvent | null;
 
   // UI state
   isLoading: boolean;
@@ -43,6 +44,8 @@ interface SessionState {
   setConversations: (conversations: ConversationEntry[]) => void;
   setExecutionStatus: (status: ExecutionStatus) => void;
   appendLiveOutput: (output: string, isComplete: boolean) => void;
+  updateStepStatus: (stepId: string, status: PlanStepStatus) => void;
+  setImplementationProgress: (progress: ImplementationProgressEvent | null) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   reset: () => void;
@@ -64,6 +67,7 @@ const initialState = {
   executionStatus: null,
   liveOutput: '',
   isOutputComplete: true,
+  implementationProgress: null,
   isLoading: false,
   error: null,
 };
@@ -96,6 +100,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       liveOutput: isComplete ? output : state.liveOutput + output,
       isOutputComplete: isComplete,
     })),
+
+  updateStepStatus: (stepId, status) =>
+    set((state) => {
+      if (!state.plan) return state;
+      return {
+        plan: {
+          ...state.plan,
+          steps: state.plan.steps.map((step) =>
+            step.id === stepId ? { ...step, status } : step
+          ),
+        },
+      };
+    }),
+
+  setImplementationProgress: (implementationProgress) =>
+    set({ implementationProgress }),
 
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
