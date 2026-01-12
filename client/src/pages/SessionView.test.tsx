@@ -792,3 +792,397 @@ describe('SessionView Socket Handlers', () => {
     });
   });
 });
+
+describe('SessionView Blocked Status Rendering', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useSessionStore.setState({
+      session: null,
+      plan: null,
+      questions: [],
+      conversations: [],
+      executionStatus: null,
+      liveOutput: '',
+      isOutputComplete: true,
+      implementationProgress: null,
+      isLoading: false,
+      error: null,
+    });
+
+    // Mock fetch to prevent fetchSession from overwriting store state
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      // Return the current store state for session/plan/questions
+      const state = useSessionStore.getState();
+      if (url.includes('/questions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ questions: state.questions }),
+        });
+      }
+      if (url.includes('/plan')) {
+        return Promise.resolve({
+          ok: state.plan !== null,
+          json: () => Promise.resolve(state.plan),
+        });
+      }
+      if (url.includes('/conversations')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ entries: state.conversations }),
+        });
+      }
+      // Session endpoint
+      return Promise.resolve({
+        ok: state.session !== null,
+        json: () => Promise.resolve(state.session),
+      });
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  describe('ImplementationListView blocked step rendering', () => {
+    it('should render blocked step with yellow background', async () => {
+      const plan = createTestPlan({
+        steps: [
+          { id: 'step-1', title: 'Step 1', description: 'First step', status: 'completed', order: 0, parentId: null },
+          { id: 'step-2', title: 'Blocked Step', description: 'Blocked step', status: 'blocked', order: 1, parentId: null },
+          { id: 'step-3', title: 'Step 3', description: 'Third step', status: 'pending', order: 2, parentId: null },
+        ],
+      });
+
+      useSessionStore.setState({
+        session: createTestSession(),
+        plan,
+        isLoading: false,
+      });
+
+      renderWithRouter('project-1', 'feature-a');
+
+      await waitFor(() => {
+        // The blocked step should be rendered
+        expect(screen.getByText(/Blocked Step/)).toBeInTheDocument();
+      });
+
+      // Find the "Waiting for user input" text which is only shown for blocked steps
+      expect(screen.getByText('Waiting for user input')).toBeInTheDocument();
+    });
+
+    it('should render needs_review step with warning text', async () => {
+      const plan = createTestPlan({
+        steps: [
+          { id: 'step-1', title: 'Step 1', description: 'First step', status: 'completed', order: 0, parentId: null },
+          { id: 'step-2', title: 'Review Step', description: 'Needs review step', status: 'needs_review', order: 1, parentId: null },
+          { id: 'step-3', title: 'Step 3', description: 'Third step', status: 'pending', order: 2, parentId: null },
+        ],
+      });
+
+      useSessionStore.setState({
+        session: createTestSession(),
+        plan,
+        isLoading: false,
+      });
+
+      renderWithRouter('project-1', 'feature-a');
+
+      await waitFor(() => {
+        expect(screen.getByText(/Review Step/)).toBeInTheDocument();
+      });
+
+      // Find the "Needs review" text which is only shown for needs_review steps
+      expect(screen.getByText('Needs review')).toBeInTheDocument();
+    });
+
+    it('should render multiple blocked steps correctly', async () => {
+      const plan = createTestPlan({
+        steps: [
+          { id: 'step-1', title: 'First Blocked', description: 'First blocked step', status: 'blocked', order: 0, parentId: null },
+          { id: 'step-2', title: 'Second Blocked', description: 'Second blocked step', status: 'blocked', order: 1, parentId: null },
+        ],
+      });
+
+      useSessionStore.setState({
+        session: createTestSession(),
+        plan,
+        isLoading: false,
+      });
+
+      renderWithRouter('project-1', 'feature-a');
+
+      await waitFor(() => {
+        expect(screen.getByText(/First Blocked/)).toBeInTheDocument();
+        expect(screen.getByText(/Second Blocked/)).toBeInTheDocument();
+      });
+
+      // Both blocked steps should show "Waiting for user input"
+      const waitingTexts = screen.getAllByText('Waiting for user input');
+      expect(waitingTexts).toHaveLength(2);
+    });
+
+    it('should differentiate between blocked and needs_review statuses', async () => {
+      const plan = createTestPlan({
+        steps: [
+          { id: 'step-1', title: 'Blocked Step', description: 'Blocked step', status: 'blocked', order: 0, parentId: null },
+          { id: 'step-2', title: 'Review Step', description: 'Needs review step', status: 'needs_review', order: 1, parentId: null },
+        ],
+      });
+
+      useSessionStore.setState({
+        session: createTestSession(),
+        plan,
+        isLoading: false,
+      });
+
+      renderWithRouter('project-1', 'feature-a');
+
+      await waitFor(() => {
+        expect(screen.getByText(/Blocked Step/)).toBeInTheDocument();
+        expect(screen.getByText(/Review Step/)).toBeInTheDocument();
+      });
+
+      // One should say "Waiting for user input", one should say "Needs review"
+      expect(screen.getByText('Waiting for user input')).toBeInTheDocument();
+      expect(screen.getByText('Needs review')).toBeInTheDocument();
+    });
+
+    it('should render blocked step after step.completed event with blocked status', async () => {
+      const plan = createTestPlan({
+        steps: [
+          { id: 'step-1', title: 'Step 1', description: 'First step', status: 'in_progress', order: 0, parentId: null },
+        ],
+      });
+
+      useSessionStore.setState({
+        session: createTestSession(),
+        plan,
+        isLoading: false,
+      });
+
+      renderWithRouter('project-1', 'feature-a');
+
+      await waitFor(() => {
+        expect(mockSocket.on).toHaveBeenCalled();
+      });
+
+      // Verify initial state doesn't have "Waiting for user input"
+      expect(screen.queryByText('Waiting for user input')).not.toBeInTheDocument();
+
+      // Simulate step getting blocked
+      const handler = getSocketHandler('step.completed');
+      act(() => {
+        handler!({
+          sessionId: 'session-123',
+          projectId: 'project-1',
+          featureId: 'feature-a',
+          stepId: 'step-1',
+          stepTitle: 'Step 1',
+          status: 'blocked',
+          timestamp: '2026-01-13T00:00:00Z',
+        } as StepCompletedEvent);
+      });
+
+      // Now it should show "Waiting for user input"
+      await waitFor(() => {
+        expect(screen.getByText('Waiting for user input')).toBeInTheDocument();
+      });
+    });
+
+    it('should show completed steps without blocked styling', async () => {
+      const plan = createTestPlan({
+        steps: [
+          { id: 'step-1', title: 'Completed Step', description: 'Completed step', status: 'completed', order: 0, parentId: null },
+        ],
+      });
+
+      useSessionStore.setState({
+        session: createTestSession(),
+        plan,
+        isLoading: false,
+      });
+
+      renderWithRouter('project-1', 'feature-a');
+
+      await waitFor(() => {
+        expect(screen.getByText(/Completed Step/)).toBeInTheDocument();
+      });
+
+      // Completed step should not show "Waiting for user input" or "Needs review"
+      expect(screen.queryByText('Waiting for user input')).not.toBeInTheDocument();
+      expect(screen.queryByText('Needs review')).not.toBeInTheDocument();
+    });
+
+    it('should show in_progress steps without blocked styling', async () => {
+      const plan = createTestPlan({
+        steps: [
+          { id: 'step-1', title: 'Active Step', description: 'In progress step', status: 'in_progress', order: 0, parentId: null },
+        ],
+      });
+
+      useSessionStore.setState({
+        session: createTestSession(),
+        plan,
+        isLoading: false,
+      });
+
+      renderWithRouter('project-1', 'feature-a');
+
+      await waitFor(() => {
+        expect(screen.getByText(/Active Step/)).toBeInTheDocument();
+      });
+
+      // In progress step should not show "Waiting for user input" or "Needs review"
+      expect(screen.queryByText('Waiting for user input')).not.toBeInTheDocument();
+      expect(screen.queryByText('Needs review')).not.toBeInTheDocument();
+    });
+
+    it('should show pending steps without blocked styling', async () => {
+      const plan = createTestPlan({
+        steps: [
+          { id: 'step-1', title: 'Pending Step', description: 'Pending step', status: 'pending', order: 0, parentId: null },
+        ],
+      });
+
+      useSessionStore.setState({
+        session: createTestSession(),
+        plan,
+        isLoading: false,
+      });
+
+      renderWithRouter('project-1', 'feature-a');
+
+      await waitFor(() => {
+        expect(screen.getByText(/Pending Step/)).toBeInTheDocument();
+      });
+
+      // Pending step should not show "Waiting for user input" or "Needs review"
+      expect(screen.queryByText('Waiting for user input')).not.toBeInTheDocument();
+      expect(screen.queryByText('Needs review')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Implementation progress with blocked status', () => {
+    it('should update progress when status is blocked', async () => {
+      const plan = createTestPlan({
+        steps: [
+          { id: 'step-1', title: 'Step 1', description: 'First step', status: 'in_progress', order: 0, parentId: null },
+        ],
+      });
+
+      useSessionStore.setState({
+        session: createTestSession(),
+        plan,
+        isLoading: false,
+      });
+
+      renderWithRouter('project-1', 'feature-a');
+
+      await waitFor(() => {
+        expect(mockSocket.on).toHaveBeenCalled();
+      });
+
+      const progressHandler = getSocketHandler('implementation.progress');
+      const event: ImplementationProgressEvent = {
+        sessionId: 'session-123',
+        projectId: 'project-1',
+        featureId: 'feature-a',
+        status: 'blocked',
+        currentStepId: 'step-1',
+        completedSteps: 0,
+        totalSteps: 1,
+        timestamp: '2026-01-13T00:00:00Z',
+      };
+
+      act(() => {
+        progressHandler!(event);
+      });
+
+      const progress = useSessionStore.getState().implementationProgress;
+      expect(progress?.status).toBe('blocked');
+      expect(progress?.currentStepId).toBe('step-1');
+    });
+  });
+
+  describe('Step status transition to blocked', () => {
+    it('should transition from in_progress to blocked correctly', async () => {
+      const plan = createTestPlan({
+        steps: [
+          { id: 'step-1', title: 'Step 1', description: 'First step', status: 'in_progress', order: 0, parentId: null },
+        ],
+      });
+
+      useSessionStore.setState({
+        session: createTestSession(),
+        plan,
+        isLoading: false,
+      });
+
+      renderWithRouter('project-1', 'feature-a');
+
+      await waitFor(() => {
+        expect(mockSocket.on).toHaveBeenCalled();
+      });
+
+      // Initial state - in progress
+      expect(useSessionStore.getState().plan?.steps[0].status).toBe('in_progress');
+
+      // Transition to blocked
+      const completeHandler = getSocketHandler('step.completed');
+      act(() => {
+        completeHandler!({
+          sessionId: 'session-123',
+          projectId: 'project-1',
+          featureId: 'feature-a',
+          stepId: 'step-1',
+          stepTitle: 'Step 1',
+          status: 'blocked',
+          timestamp: '2026-01-13T00:00:00Z',
+        } as StepCompletedEvent);
+      });
+
+      // Verify blocked state
+      expect(useSessionStore.getState().plan?.steps[0].status).toBe('blocked');
+    });
+
+    it('should transition from in_progress to needs_review correctly', async () => {
+      const plan = createTestPlan({
+        steps: [
+          { id: 'step-1', title: 'Step 1', description: 'First step', status: 'in_progress', order: 0, parentId: null },
+        ],
+      });
+
+      useSessionStore.setState({
+        session: createTestSession(),
+        plan,
+        isLoading: false,
+      });
+
+      renderWithRouter('project-1', 'feature-a');
+
+      await waitFor(() => {
+        expect(mockSocket.on).toHaveBeenCalled();
+      });
+
+      // Initial state - in progress
+      expect(useSessionStore.getState().plan?.steps[0].status).toBe('in_progress');
+
+      // Transition to needs_review
+      const completeHandler = getSocketHandler('step.completed');
+      act(() => {
+        completeHandler!({
+          sessionId: 'session-123',
+          projectId: 'project-1',
+          featureId: 'feature-a',
+          stepId: 'step-1',
+          stepTitle: 'Step 1',
+          status: 'needs_review',
+          timestamp: '2026-01-13T00:00:00Z',
+        } as StepCompletedEvent);
+      });
+
+      // Verify needs_review state
+      expect(useSessionStore.getState().plan?.steps[0].status).toBe('needs_review');
+    });
+  });
+});
