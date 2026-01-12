@@ -115,12 +115,32 @@ export class OutputParser {
       const questionLines: string[] = [];
       const options: DecisionOption[] = [];
 
-      for (const line of lines) {
-        const optionMatch = line.match(/^-\s+(?:Option\s+\w+:\s+)?(.+?)(?:\s+\(recommended\))?$/i);
-        if (optionMatch) {
-          const isRecommended = line.toLowerCase().includes('(recommended)');
-          const label = optionMatch[1].replace(/\s*\(recommended\)\s*/i, '').trim();
-          options.push({ label, recommended: isRecommended });
+      // First pass: identify where options start (look for "Option X:" pattern)
+      let optionsStartIndex = -1;
+      for (let i = 0; i < lines.length; i++) {
+        if (/^-\s+\*?\*?Option\s+\w+/i.test(lines[i])) {
+          optionsStartIndex = i;
+          break;
+        }
+      }
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        // Only treat as option if:
+        // 1. We're in the options section (after "Option X:" was found), OR
+        // 2. Line explicitly has "Option X:" prefix, OR
+        // 3. Line has "(recommended)" suffix
+        const isInOptionsSection = optionsStartIndex >= 0 && i >= optionsStartIndex;
+        const hasOptionPrefix = /^-\s+\*?\*?Option\s+\w+/i.test(line);
+        const hasRecommendedSuffix = line.toLowerCase().includes('(recommended)');
+
+        if ((isInOptionsSection || hasOptionPrefix || hasRecommendedSuffix) && line.trim().startsWith('-')) {
+          const optionMatch = line.match(/^-\s+(?:\*?\*?Option\s+\w+:\s*\*?\*?\s*)?(.+?)(?:\s+\(recommended\))?$/i);
+          if (optionMatch) {
+            const isRecommended = hasRecommendedSuffix;
+            const label = optionMatch[1].replace(/\s*\(recommended\)\s*/i, '').trim();
+            options.push({ label, recommended: isRecommended });
+          }
         } else if (line.trim()) {
           questionLines.push(line);
         }

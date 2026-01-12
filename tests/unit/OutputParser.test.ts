@@ -68,6 +68,33 @@ Issue in file
         line: 42,
       });
     });
+
+    it('should not treat bullet points as options unless they have Option prefix', () => {
+      const input = `
+[DECISION_NEEDED priority="2" category="technical"]
+**Issue: Missing Test Coverage**
+Three critical gaps:
+- \`handleStage3Result()\` - No tests for retry tracking
+- \`EventBroadcaster\` - Zero tests for stage 3 methods
+- \`buildStage3Prompt()\` - Only sanitization tested
+**How should we address this?**
+- Option A: Add comprehensive tests now (recommended)
+- Option B: Add minimal tests
+- Option C: Defer to separate PR
+[/DECISION_NEEDED]
+`;
+      const result = parser.parse(input);
+
+      expect(result.decisions).toHaveLength(1);
+      // Question text should include the bullet points (not parsed as options)
+      expect(result.decisions[0].questionText).toContain('handleStage3Result()');
+      expect(result.decisions[0].questionText).toContain('EventBroadcaster');
+      expect(result.decisions[0].questionText).toContain('buildStage3Prompt()');
+      // Only the actual Option A/B/C should be parsed as options
+      expect(result.decisions[0].options).toHaveLength(3);
+      expect(result.decisions[0].options[0].label).toContain('Add comprehensive tests');
+      expect(result.decisions[0].options[0].recommended).toBe(true);
+    });
   });
 
   describe('parsePlanStep', () => {
