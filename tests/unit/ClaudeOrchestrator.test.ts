@@ -224,8 +224,8 @@ Create authentication
       const tools = orchestrator.getStageTools(4);
 
       expect(tools).toContain('Read');
-      expect(tools).toContain('Bash(git:*)');
-      expect(tools).toContain('Bash(gh:*)');
+      expect(tools).toContain('Bash');
+      expect(tools).toContain('Task');
       expect(tools).not.toContain('Write');
     });
 
@@ -233,8 +233,10 @@ Create authentication
       const tools = orchestrator.getStageTools(5);
 
       expect(tools).toContain('Read');
-      expect(tools).toContain('Bash(git:diff*)');
-      expect(tools).toContain('Bash(gh:pr*)');
+      expect(tools).toContain('Glob');
+      expect(tools).toContain('Grep');
+      expect(tools).toContain('Task');
+      expect(tools).toContain('Bash');
       expect(tools).not.toContain('Write');
     });
   });

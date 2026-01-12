@@ -68,19 +68,18 @@ describe('Stage Prompt Builders', () => {
       // Should use [PLAN_STEP] format
       expect(prompt).toContain('[PLAN_STEP');
 
-      // Should reference plan mode markers
-      expect(prompt).toContain('[PLAN_MODE_ENTERED]');
+      // Should reference plan mode exit marker
       expect(prompt).toContain('[PLAN_MODE_EXITED]');
 
       // Should reference plan file tracking
       expect(prompt).toContain('[PLAN_FILE');
     });
 
-    it('should instruct Claude to enter plan mode', () => {
+    it('should instruct Claude to explore codebase first', () => {
       const prompt = buildStage1Prompt(mockSession);
 
-      expect(prompt).toContain('EnterPlanMode');
-      expect(prompt).toContain('plan mode');
+      expect(prompt).toContain('Codebase Exploration');
+      expect(prompt).toContain('MANDATORY');
     });
 
     it('should handle session with no affected files', () => {
