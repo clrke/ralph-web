@@ -100,10 +100,15 @@ export function buildStage2Prompt(session: Session, plan: Plan, currentIteration
 
   const targetIterations = 10; // README recommendation
 
+  // Reference plan file for full context (handles context compaction)
+  const planFileReference = session.claudePlanFilePath
+    ? `\n\n## Full Plan Reference\nFor complete plan details, read: ${session.claudePlanFilePath}`
+    : '';
+
   return `You are reviewing an implementation plan. Find issues and present them as decisions for the user.
 
 ## Current Plan (v${plan.planVersion})
-${planStepsText}
+${planStepsText}${planFileReference}
 
 ## Review Iteration
 This is review ${currentIteration} of ${targetIterations} recommended.
@@ -155,6 +160,11 @@ export function buildPlanRevisionPrompt(session: Session, plan: Plan, feedback: 
       }).join('\n\n')
     : 'No plan steps defined.';
 
+  // Reference plan file for full context (handles context compaction)
+  const planFileReference = session.claudePlanFilePath
+    ? `\n\n## Full Plan Reference\nFor complete plan details, read: ${session.claudePlanFilePath}`
+    : '';
+
   return `You are revising an implementation plan based on user feedback.
 
 ## Feature
@@ -162,7 +172,7 @@ Title: ${session.title}
 Description: ${session.featureDescription}
 
 ## Current Plan (v${plan.planVersion})
-${planStepsText}
+${planStepsText}${planFileReference}
 
 ## User Feedback
 ${feedback}
@@ -258,6 +268,11 @@ export function buildStage3Prompt(session: Session, plan: Plan): string {
 ${step.description || 'No description provided.'}`;
   }).join('\n\n');
 
+  // Reference plan file for full context (handles context compaction)
+  const planFileReference = session.claudePlanFilePath
+    ? `\n\n## Full Plan Reference\nIMPORTANT: Read ${session.claudePlanFilePath} for complete plan details and context.`
+    : '';
+
   return `You are implementing an approved feature plan. Execute each step sequentially, commit changes, and track progress.
 
 ## Feature
@@ -266,7 +281,7 @@ Description: ${session.featureDescription}
 Project Path: ${session.projectPath}
 
 ## Approved Plan (${plan.steps.length} steps)
-${planStepsText}
+${planStepsText}${planFileReference}
 
 ## Instructions
 
