@@ -1,4 +1,4 @@
-import { Session, Plan, Question } from '@claude-code-web/shared';
+import { Session, Plan, PlanStep, Question } from '@claude-code-web/shared';
 import { escapeMarkers } from '../utils/sanitizeInput';
 
 /**
@@ -114,8 +114,11 @@ Description referencing specific files/modules found during exploration.
 [/PLAN_STEP]
 
 ### Phase 4: Complete
-1. Write plan to file and output: [PLAN_FILE path="/path/to/plan.md"]
-2. Exit plan mode and output: [PLAN_MODE_EXITED]`;
+1. Use the Edit tool to write the complete plan to: ${session.claudePlanFilePath}
+   - This file already exists and you have permission to edit it
+   - Include all plan steps, technical details, and implementation notes
+2. Output: [PLAN_FILE path="${session.claudePlanFilePath}"]
+3. Exit plan mode and output: [PLAN_MODE_EXITED]`;
 }
 
 /**
@@ -232,7 +235,8 @@ Question about the feedback...
 - Option B: Interpretation 2
 [/DECISION_NEEDED]
 
-5. After revising the plan, continue with Stage 2 review process to find any remaining issues.`;
+5. After outputting revised [PLAN_STEP] markers, use the Edit tool to update the plan file: ${session.claudePlanFilePath}
+6. After revising the plan, continue with Stage 2 review process to find any remaining issues.`;
 }
 
 /**
@@ -242,7 +246,8 @@ Question about the feedback...
  */
 export function buildBatchAnswersContinuationPrompt(
   answeredQuestions: Question[],
-  currentStage: number
+  currentStage: number,
+  claudePlanFilePath?: string | null
 ): string {
   // Sanitize user answers to prevent marker injection
   const answers = answeredQuestions.map(q => {
@@ -268,8 +273,9 @@ Question here?
 
 When you have enough information:
 1. Generate the implementation plan with [PLAN_STEP] markers
-2. Write the plan to a file and output: [PLAN_FILE path="/path/to/plan.md"]
-3. Exit plan mode and output: [PLAN_MODE_EXITED]`;
+2. Use the Edit tool to write the plan to: ${claudePlanFilePath || '/path/to/plan.md'}
+3. Output: [PLAN_FILE path="${claudePlanFilePath || '/path/to/plan.md'}"]
+4. Exit plan mode and output: [PLAN_MODE_EXITED]`;
   }
 
   // Stage 2 continuation
@@ -431,6 +437,149 @@ ${testsRequired ? `
 3. If a step cannot be completed, raise a blocker
 4. Output IMPLEMENTATION_STATUS regularly for real-time progress
 ${testsRequired ? '5. Always run tests before marking a step complete' : '5. Run existing tests to ensure no regressions'}`;
+}
+
+/**
+ * Completed step summary for single-step prompts
+ */
+interface CompletedStepSummary {
+  id: string;
+  title: string;
+  summary: string;
+}
+
+/**
+ * Build a single-step implementation prompt for Stage 3.
+ * Used for one-step-at-a-time execution (instead of all steps at once).
+ */
+export function buildSingleStepPrompt(
+  session: Session,
+  plan: Plan,
+  step: PlanStep,
+  completedSteps: CompletedStepSummary[]
+): string {
+  // Sanitize user-provided fields to prevent prompt injection
+  const sanitized = sanitizeSessionFields(session);
+
+  // Build completed steps summary
+  const completedSummary = completedSteps.length > 0
+    ? completedSteps.map((s, i) =>
+        `${i + 1}. [${s.id}] ${s.title}: ${s.summary}`
+      ).join('\n')
+    : 'None yet - this is the first step.';
+
+  // Reference plan file for full context (handles context compaction)
+  const planFileReference = session.claudePlanFilePath
+    ? `\n\n## Full Plan Reference\nIMPORTANT: Read ${session.claudePlanFilePath} for complete plan details and context.`
+    : '';
+
+  // Determine test requirements based on assessment
+  const testsRequired = plan.testRequirement?.required ?? true;
+  const testTypesText = plan.testRequirement?.testTypes?.join(', ') || 'unit';
+  const frameworkText = plan.testRequirement?.existingFramework
+    ? `Use the existing ${plan.testRequirement.existingFramework} test framework.`
+    : 'Set up a test framework if needed.';
+  const coverageText = plan.testRequirement?.suggestedCoverage || '';
+
+  // Build test section based on requirement
+  const testSection = testsRequired
+    ? `### Test Requirements (MANDATORY)
+- **Tests ARE required for this step**
+- Test types needed: ${testTypesText}
+- ${frameworkText}${coverageText ? `\n- Coverage focus: ${coverageText}` : ''}
+- Write tests BEFORE marking the step complete
+- Match existing test patterns in the codebase`
+    : `### Test Requirements
+- **Tests are NOT required for this step**
+- Reason: ${plan.testRequirement?.reason || 'Documentation/configuration changes only'}
+- Run existing tests to ensure no regressions`;
+
+  const executionSteps = testsRequired
+    ? `1. **Implement the changes** - Write/modify the necessary code
+2. **Write tests** - Add ${testTypesText} tests for new functionality
+3. **Run tests** - Verify all tests pass (max 3 fix attempts if tests fail)
+4. **Commit changes** - Create a git commit for this step
+5. **Report completion** - Use the [STEP_COMPLETE] marker below`
+    : `1. **Implement the changes** - Write/modify the necessary code
+2. **Run existing tests** - Ensure no regressions
+3. **Commit changes** - Create a git commit for this step
+4. **Report completion** - Use the [STEP_COMPLETE] marker below`;
+
+  // Step dependency info
+  const dependencyInfo = step.parentId
+    ? `\n**Dependency:** This step depends on [${step.parentId}] which is already completed.`
+    : '';
+
+  return `You are implementing one step of an approved feature plan.
+
+## Feature
+Title: ${sanitized.title}
+Description: ${sanitized.featureDescription}
+Project Path: ${session.projectPath}
+${planFileReference}
+
+## Progress
+**Completed Steps:**
+${completedSummary}
+
+## Current Step: [${step.id}] ${step.title}${dependencyInfo}
+${step.description || 'No description provided.'}
+
+## Instructions
+
+### Execution Process
+${executionSteps}
+
+${testSection}
+
+### Progress Markers (Required)
+
+**During implementation**, output progress updates:
+\`\`\`
+[IMPLEMENTATION_STATUS]
+step_id: ${step.id}
+status: in_progress|testing|fixing|committing
+files_modified: 3
+tests_status: ${testsRequired ? 'pending|passing|failing' : 'skipped|passing'}
+work_type: implementing${testsRequired ? '|testing|fixing' : ''}
+progress: 50
+message: Brief status message
+[/IMPLEMENTATION_STATUS]
+\`\`\`
+
+**When this step is complete**:
+\`\`\`
+[STEP_COMPLETE id="${step.id}"]
+Summary: Brief summary of what was implemented.
+Files modified: file1.ts, file2.ts
+${testsRequired ? 'Tests added: test1.spec.ts, test2.spec.ts\nTests passing: Yes' : 'Tests added: none (not required)\nTests passing: N/A'}
+[/STEP_COMPLETE]
+\`\`\`
+
+**If blocked and need user input**:
+\`\`\`
+[DECISION_NEEDED priority="1" category="blocker" immediate="true"]
+Describe what you're blocked on and why you need user input.
+
+- Option A: First approach (recommended)
+- Option B: Alternative approach
+[/DECISION_NEEDED]
+\`\`\`
+Note: When a blocker is raised, execution pauses. The user will answer and you'll resume.
+${testsRequired ? `
+### Test Failure Handling
+- If tests fail, attempt to fix the issue (up to 3 attempts)
+- After 3 failed attempts, raise a blocker decision for user guidance` : ''}
+
+### Git Commits
+- Create a commit after step completion
+- Use descriptive commit message: "Step ${step.id}: ${step.title}"
+
+### Important Rules
+1. Focus ONLY on this step - do NOT work on other steps
+2. Do NOT output [IMPLEMENTATION_COMPLETE] - only [STEP_COMPLETE]
+3. If this step cannot be completed, raise a blocker
+4. Output IMPLEMENTATION_STATUS regularly for real-time progress`;
 }
 
 /**

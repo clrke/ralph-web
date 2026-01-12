@@ -42,6 +42,7 @@ export interface Session {
   claudeSessionId: string | null;
   claudePlanFilePath: string | null;
   currentPlanVersion: number;
+  claudeStage3SessionId: string | null; // Fresh sessionId for Stage 3 execution
   sessionExpiresAt: string;
   createdAt: string;
   updatedAt: string;
@@ -53,6 +54,7 @@ export interface SessionRuntimeStatus {
   timestamp: string;
   currentStage: number;
   currentStepId: string | null;
+  blockedStepId?: string | null; // Which step has a blocker
   status: 'idle' | 'executing' | 'waiting_input' | 'paused' | 'error';
   claudeSpawnCount: number;
   callsThisHour: number;

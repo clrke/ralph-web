@@ -17,6 +17,13 @@ export class FileStorageService {
     this.normalizedBaseDir = path.resolve(baseDir);
   }
 
+  /**
+   * Get absolute path for a relative path (for external tools like Claude)
+   */
+  getAbsolutePath(relativePath: string): string {
+    return this.resolvePath(relativePath);
+  }
+
   private resolvePath(relativePath: string): string {
     // Resolve the full path
     const fullPath = path.resolve(this.normalizedBaseDir, relativePath);
@@ -83,6 +90,21 @@ export class FileStorageService {
   async delete(relativePath: string): Promise<void> {
     const fullPath = this.resolvePath(relativePath);
     await fs.remove(fullPath);
+  }
+
+  async writeText(relativePath: string, content: string): Promise<void> {
+    const fullPath = this.resolvePath(relativePath);
+    const dir = path.dirname(fullPath);
+
+    // Ensure parent directory exists
+    await fs.ensureDir(dir);
+
+    // Create backup if file exists
+    if (await fs.pathExists(fullPath)) {
+      await fs.copy(fullPath, `${fullPath}.bak`);
+    }
+
+    await fs.writeFile(fullPath, content, 'utf-8');
   }
 
   async list(relativePath: string): Promise<string[]> {

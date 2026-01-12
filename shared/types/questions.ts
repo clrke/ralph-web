@@ -39,6 +39,7 @@ export interface Question {
   isRequired: boolean;
   file?: string;
   line?: number;
+  stepId?: string; // Plan step this question relates to (for Stage 3 blockers)
   askedAt: string;
   answeredAt: string | null;
 }

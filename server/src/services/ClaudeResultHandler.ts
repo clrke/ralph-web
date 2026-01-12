@@ -5,6 +5,7 @@ import { SessionManager } from './SessionManager';
 import { ClaudeResult } from './ClaudeOrchestrator';
 import { DecisionValidator, ValidationLog } from './DecisionValidator';
 import { OutputParser, ParsedPlanStep } from './OutputParser';
+import { PostProcessingType } from './HaikuPostProcessor';
 import { Session, Plan, Question, QuestionStage, QuestionCategory } from '@claude-code-web/shared';
 
 const STAGE_TO_QUESTION_STAGE: Record<number, QuestionStage> = {
@@ -21,6 +22,7 @@ const VALID_CATEGORIES: QuestionCategory[] = [
 
 interface ConversationEntry {
   stage: number;
+  stepId?: string; // Plan step this conversation is for (Stage 3)
   timestamp: string;
   prompt: string;
   output: string;
@@ -31,7 +33,7 @@ interface ConversationEntry {
   parsed: ClaudeResult['parsed'];
   status?: 'started' | 'completed' | 'interrupted';
   /** Post-processing type (if this is a Haiku post-processing call) */
-  postProcessingType?: 'decision_validation' | 'test_assessment' | 'incomplete_steps' | 'question_extraction';
+  postProcessingType?: PostProcessingType;
 }
 
 interface ConversationsFile {
@@ -50,6 +52,7 @@ interface StatusFile {
   timestamp: string;
   currentStage: number;
   currentStepId: string | null;
+  blockedStepId?: string | null; // Which step has a blocker
   status: string;
   claudeSpawnCount: number;
   callsThisHour: number;
@@ -174,18 +177,21 @@ export class ClaudeResultHandler {
   /**
    * Handle Stage 3 (Implementation) result from Claude.
    * Updates step statuses, tracks retries, handles blockers.
+   * @param stepId - The plan step being executed (for one-step-at-a-time execution)
    */
   async handleStage3Result(
     session: Session,
     result: ClaudeResult,
-    prompt: string
+    prompt: string,
+    stepId?: string
   ): Promise<{ hasBlocker: boolean; implementationComplete: boolean }> {
     const sessionDir = `${session.projectId}/${session.featureId}`;
     const now = new Date().toISOString();
 
-    // Save conversation entry
+    // Save conversation entry (with stepId if provided)
     await this.saveConversation(sessionDir, {
       stage: 3,
+      stepId,
       timestamp: now,
       prompt,
       output: result.output,
@@ -208,14 +214,15 @@ export class ClaudeResultHandler {
 
     if (blockerDecisions.length > 0) {
       // Read plan for validation context (skip validation for blockers - they're urgent)
-      await this.saveQuestions(sessionDir, session, blockerDecisions, null);
+      await this.saveQuestions(sessionDir, session, blockerDecisions, null, stepId);
     }
 
-    // Update status.json with Stage 3 specific fields
-    await this.updateStage3Status(sessionDir, result);
+    // Update status.json with Stage 3 specific fields (including blockedStepId if blocker)
+    const hasBlocker = blockerDecisions.length > 0;
+    await this.updateStage3Status(sessionDir, result, hasBlocker ? stepId : undefined);
 
     return {
-      hasBlocker: blockerDecisions.length > 0,
+      hasBlocker,
       implementationComplete: result.parsed.implementationComplete,
     };
   }
@@ -250,10 +257,12 @@ export class ClaudeResultHandler {
 
   /**
    * Update status.json for Stage 3 with step tracking and retry counts.
+   * @param blockedStepId - If provided, set as the blocked step (when blocker detected)
    */
   private async updateStage3Status(
     sessionDir: string,
-    result: ClaudeResult
+    result: ClaudeResult,
+    blockedStepId?: string
   ): Promise<void> {
     const statusPath = `${sessionDir}/status.json`;
     const status = await this.storage.readJson<StatusFile>(statusPath);
@@ -265,6 +274,14 @@ export class ClaudeResultHandler {
     // Track current step from implementation status
     if (result.parsed.implementationStatus) {
       status.currentStepId = result.parsed.implementationStatus.stepId;
+    }
+
+    // Track blocked step if blocker detected
+    if (blockedStepId) {
+      status.blockedStepId = blockedStepId;
+    } else if (result.parsed.stepsCompleted.length > 0) {
+      // Clear blockedStepId when step completes
+      status.blockedStepId = null;
     }
 
     // Initialize stepRetries if not present
@@ -332,7 +349,7 @@ export class ClaudeResultHandler {
   async savePostProcessingConversation(
     sessionDir: string,
     stage: number,
-    postProcessingType: 'decision_validation' | 'test_assessment' | 'incomplete_steps' | 'question_extraction',
+    postProcessingType: PostProcessingType,
     prompt: string,
     output: string,
     durationMs: number,
@@ -404,11 +421,12 @@ export class ClaudeResultHandler {
     return count;
   }
 
-  async saveConversationStart(sessionDir: string, stage: number, prompt: string): Promise<void> {
+  async saveConversationStart(sessionDir: string, stage: number, prompt: string, stepId?: string): Promise<void> {
     const conversationPath = `${sessionDir}/conversations.json`;
     const conversations = await this.storage.readJson<ConversationsFile>(conversationPath) || { entries: [] };
     conversations.entries.push({
       stage,
+      stepId,
       timestamp: new Date().toISOString(),
       prompt,
       output: '',
@@ -471,7 +489,8 @@ export class ClaudeResultHandler {
     sessionDir: string,
     session: Session,
     decisions: ClaudeResult['parsed']['decisions'],
-    plan: Plan | null
+    plan: Plan | null,
+    stepId?: string
   ): Promise<void> {
     // Validate decisions if we have a validator and a plan
     let validatedDecisions = decisions;
@@ -538,6 +557,7 @@ export class ClaudeResultHandler {
         isRequired: decision.priority <= 2,
         priority,
         category,
+        stepId, // Include stepId for Stage 3 blockers
         askedAt: now,
         answeredAt: null,
       };

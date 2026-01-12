@@ -2,15 +2,16 @@ import express, { Express, Request, Response, NextFunction } from 'express';
 import { ZodSchema, ZodError } from 'zod';
 import { FileStorageService } from './data/FileStorageService';
 import { SessionManager } from './services/SessionManager';
-import { ClaudeOrchestrator } from './services/ClaudeOrchestrator';
+import { ClaudeOrchestrator, hasActionableContent } from './services/ClaudeOrchestrator';
 import { OutputParser } from './services/OutputParser';
+import { HaikuPostProcessor } from './services/HaikuPostProcessor';
 import { ClaudeResultHandler } from './services/ClaudeResultHandler';
 import { DecisionValidator } from './services/DecisionValidator';
 import { TestRequirementAssessor } from './services/TestRequirementAssessor';
 import { IncompleteStepsAssessor } from './services/IncompleteStepsAssessor';
 import { EventBroadcaster } from './services/EventBroadcaster';
-import { buildStage1Prompt, buildStage2Prompt, buildStage3Prompt, buildStage4Prompt, buildStage5Prompt, buildPlanRevisionPrompt, buildBatchAnswersContinuationPrompt } from './prompts/stagePrompts';
-import { Session } from '@claude-code-web/shared';
+import { buildStage1Prompt, buildStage2Prompt, buildStage3Prompt, buildStage4Prompt, buildStage5Prompt, buildPlanRevisionPrompt, buildBatchAnswersContinuationPrompt, buildSingleStepPrompt } from './prompts/stagePrompts';
+import { Session, PlanStep } from '@claude-code-web/shared';
 import { ClaudeResult } from './services/ClaudeOrchestrator';
 import { Plan, Question } from '@claude-code-web/shared';
 import {
@@ -25,13 +26,23 @@ import * as packageJson from '../package.json';
 
 const startTime = Date.now();
 
-// Initialize orchestrator
+// Initialize orchestrator and post-processor
 const outputParser = new OutputParser();
 const orchestrator = new ClaudeOrchestrator(outputParser);
+const haikuPostProcessor = new HaikuPostProcessor(outputParser);
 
 /**
- * Apply Haiku post-processing to extract questions when Claude's output
- * contains unformatted questions. Mutates result.parsed if questions are found.
+ * Apply Haiku post-processing to extract various content types when Claude's output
+ * lacks proper markers. Uses smart extraction based on current stage.
+ *
+ * Extracts:
+ * - Stage 1: Questions, Plan steps
+ * - Stage 2: Questions (review decisions)
+ * - Stage 3: Implementation status
+ * - Stage 4: PR info
+ * - Stage 5: Review findings (as questions)
+ *
+ * @returns Number of items extracted
  */
 async function applyHaikuPostProcessing(
   result: ClaudeResult,
@@ -40,38 +51,139 @@ async function applyHaikuPostProcessing(
   session: Session,
   resultHandler: ClaudeResultHandler
 ): Promise<number> {
-  // Skip if already have decisions or if there's an error
-  if (result.parsed.decisions.length > 0 || result.isError) {
+  // Skip if error
+  if (result.isError) {
     return 0;
   }
 
-  // Try Haiku post-processing
-  const haikuResult = await orchestrator.postProcessWithHaiku(result.output, projectPath);
-  if (haikuResult && haikuResult.parsed.decisions.length > 0) {
-    // Merge extracted decisions into result
-    result.parsed.decisions = haikuResult.parsed.decisions;
+  // Check what's already in the parsed output
+  const hasDecisions = result.parsed.decisions.length > 0;
+  const hasPlanSteps = result.parsed.planSteps.length > 0;
+  const hasImplementationStatus = result.parsed.implementationStatus !== null;
+  const hasPRCreated = result.parsed.prCreated !== null;
 
-    // Save the extracted questions (with validation)
-    const sessionDir = `${session.projectId}/${session.featureId}`;
+  // Skip if we already have all the content we need for this stage
+  if (hasActionableContent(result.parsed)) {
+    // Still try to extract additional content if some types are missing
+    const shouldExtract = (
+      (session.currentStage === 1 && (!hasDecisions || !hasPlanSteps)) ||
+      (session.currentStage === 2 && !hasDecisions) ||
+      (session.currentStage === 3 && !hasImplementationStatus) ||
+      (session.currentStage === 4 && !hasPRCreated) ||
+      (session.currentStage === 5 && !hasDecisions)
+    );
+
+    if (!shouldExtract) {
+      return 0;
+    }
+  }
+
+  // Use smart extraction based on stage context
+  const extractionResult = await haikuPostProcessor.smartExtract(
+    result.output,
+    projectPath,
+    {
+      stage: session.currentStage,
+      hasDecisions,
+      hasPlanSteps,
+      hasImplementationStatus,
+      hasPRCreated,
+    }
+  );
+
+  const sessionDir = `${session.projectId}/${session.featureId}`;
+  let totalExtracted = 0;
+
+  // Merge extracted questions into result
+  if (extractionResult.questions && extractionResult.questions.length > 0) {
+    result.parsed.decisions = extractionResult.questions;
     const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
-    await resultHandler['saveQuestions'](sessionDir, session, haikuResult.parsed.decisions, plan);
+    await resultHandler['saveQuestions'](sessionDir, session, extractionResult.questions, plan);
+    totalExtracted += extractionResult.questions.length;
+    console.log(`Haiku extracted ${extractionResult.questions.length} questions for ${session.featureId}`);
+  }
 
-    // Save post-processing conversation
+  // Merge extracted plan steps into result
+  if (extractionResult.planSteps && extractionResult.planSteps.length > 0) {
+    result.parsed.planSteps = extractionResult.planSteps;
+    totalExtracted += extractionResult.planSteps.length;
+    console.log(`Haiku extracted ${extractionResult.planSteps.length} plan steps for ${session.featureId}`);
+  }
+
+  // Merge extracted PR info into result
+  if (extractionResult.prInfo) {
+    result.parsed.prCreated = extractionResult.prInfo;
+    totalExtracted += 1;
+    console.log(`Haiku extracted PR info for ${session.featureId}: ${extractionResult.prInfo.title}`);
+  }
+
+  // Merge extracted implementation status into result
+  if (extractionResult.implementationStatus) {
+    result.parsed.implementationStatus = extractionResult.implementationStatus;
+    totalExtracted += 1;
+    console.log(`Haiku extracted implementation status for ${session.featureId}`);
+  }
+
+  // Merge extracted review findings into result (as decisions)
+  if (extractionResult.reviewFindings && extractionResult.reviewFindings.length > 0) {
+    result.parsed.decisions = extractionResult.reviewFindings;
+    const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+    await resultHandler['saveQuestions'](sessionDir, session, extractionResult.reviewFindings, plan);
+    totalExtracted += extractionResult.reviewFindings.length;
+    console.log(`Haiku extracted ${extractionResult.reviewFindings.length} review findings for ${session.featureId}`);
+  }
+
+  // Save all post-processing conversations
+  for (const ppResult of extractionResult.postProcessResults) {
     await resultHandler.savePostProcessingConversation(
       sessionDir,
       session.currentStage,
-      'question_extraction',
-      haikuResult.prompt,
-      haikuResult.output,
-      haikuResult.durationMs,
+      ppResult.type,
+      ppResult.prompt,
+      ppResult.output,
+      ppResult.durationMs,
       false
     );
-
-    console.log(`Haiku fallback extracted ${haikuResult.parsed.decisions.length} questions for ${session.featureId}`);
-    return haikuResult.parsed.decisions.length;
   }
 
-  return 0;
+  return totalExtracted;
+}
+
+/**
+ * Generate a commit message from implementation output using Haiku.
+ */
+async function generateCommitMessage(
+  output: string,
+  projectPath: string
+): Promise<string | null> {
+  const result = await haikuPostProcessor.generateCommitMessage(output, projectPath);
+  return result?.data || null;
+}
+
+/**
+ * Generate a brief summary of Claude output using Haiku.
+ */
+async function generateOutputSummary(
+  output: string,
+  projectPath: string
+): Promise<string | null> {
+  const result = await haikuPostProcessor.generateSummary(output, projectPath);
+  return result?.data || null;
+}
+
+/**
+ * Extract test results from output using Haiku.
+ */
+async function extractTestResults(
+  output: string,
+  projectPath: string
+): Promise<{ testsPassing: boolean; summary: string } | null> {
+  const result = await haikuPostProcessor.extractTestResults(output, projectPath);
+  if (!result) return null;
+  return {
+    testsPassing: result.data.testsPassing,
+    summary: result.data.summary,
+  };
 }
 
 /**
@@ -257,17 +369,18 @@ async function handleStage2Completion(
   const updatedSession = await sessionManager.transitionStage(session.projectId, session.featureId, 3);
   eventBroadcaster?.stageChanged(updatedSession, previousStage);
 
-  // Auto-start Stage 3 implementation
+  // Auto-start Stage 3 implementation (step-by-step)
   if (plan) {
-    const stage3Prompt = buildStage3Prompt(updatedSession, plan);
-    await spawnStage3Implementation(
+    executeStage3Steps(
       updatedSession,
       storage,
       sessionManager,
       resultHandler,
-      eventBroadcaster,
-      stage3Prompt
-    );
+      eventBroadcaster
+    ).catch(err => {
+      console.error('Stage 3 step execution error:', err);
+      eventBroadcaster?.executionStatus(updatedSession.projectId, updatedSession.featureId, 'error', 'stage3_error');
+    });
   }
 }
 
@@ -406,8 +519,274 @@ async function spawnStage3Implementation(
 }
 
 /**
+ * Get the next step ready for execution (respects dependencies).
+ */
+function getNextReadyStep(plan: Plan): PlanStep | null {
+  return plan.steps.find(step =>
+    step.status === 'pending' &&
+    (step.parentId === null ||
+      plan.steps.find(p => p.id === step.parentId)?.status === 'completed')
+  ) || null;
+}
+
+/**
+ * Get completed steps with their summaries for prompt context.
+ */
+function getCompletedStepsSummary(plan: Plan): Array<{ id: string; title: string; summary: string }> {
+  return plan.steps
+    .filter(step => step.status === 'completed')
+    .map(step => ({
+      id: step.id,
+      title: step.title,
+      summary: (step.metadata?.completionSummary as string) || 'Completed',
+    }));
+}
+
+/**
+ * Execute a single step of Stage 3 implementation.
+ * Returns after the step completes or is blocked.
+ */
+async function executeSingleStep(
+  session: Session,
+  plan: Plan,
+  step: PlanStep,
+  storage: FileStorageService,
+  sessionManager: SessionManager,
+  resultHandler: ClaudeResultHandler,
+  eventBroadcaster: EventBroadcaster | undefined,
+  resumeContext?: string
+): Promise<{ stepCompleted: boolean; hasBlocker: boolean; sessionId: string | null }> {
+  const sessionDir = `${session.projectId}/${session.featureId}`;
+  const statusPath = `${sessionDir}/status.json`;
+
+  // Update currentStepId in status
+  const status = await storage.readJson<Record<string, unknown>>(statusPath);
+  if (status) {
+    status.currentStepId = step.id;
+    status.lastAction = 'step_started';
+    status.lastActionAt = new Date().toISOString();
+    await storage.writeJson(statusPath, status);
+  }
+
+  // Build prompt for this single step
+  const completedSteps = getCompletedStepsSummary(plan);
+  let prompt = buildSingleStepPrompt(session, plan, step, completedSteps);
+
+  // Add resume context if this is a resume after blocker answer
+  if (resumeContext) {
+    prompt = `${resumeContext}\n\n---\n\n${prompt}`;
+  }
+
+  // Broadcast step started
+  eventBroadcaster?.stepStarted(session.projectId, session.featureId, step.id);
+
+  // Save "started" conversation entry
+  await resultHandler.saveConversationStart(sessionDir, 3, prompt, step.id);
+
+  // Determine which sessionId to use
+  // First step of Stage 3: don't resume (fresh session)
+  // Subsequent steps: resume with Stage 3 sessionId
+  const sessionIdToUse = session.claudeStage3SessionId || undefined;
+
+  console.log(`Executing step [${step.id}] ${step.title} for ${session.featureId}${sessionIdToUse ? ' (resuming session)' : ' (fresh session)'}`);
+
+  return new Promise((resolve, reject) => {
+    orchestrator.spawn({
+      prompt,
+      projectPath: session.projectPath,
+      sessionId: sessionIdToUse,
+      allowedTools: orchestrator.getStageTools(3),
+      onOutput: (output, isComplete) => {
+        // Broadcast raw output
+        eventBroadcaster?.claudeOutput(session.projectId, session.featureId, output, isComplete);
+
+        // Parse and broadcast IMPLEMENTATION_STATUS in real-time
+        const statusMatch = output.match(/\[IMPLEMENTATION_STATUS\]([\s\S]*?)\[\/IMPLEMENTATION_STATUS\]/);
+        if (statusMatch && eventBroadcaster) {
+          const statusContent = statusMatch[1];
+          const getValue = (key: string): string => {
+            const match = statusContent.match(new RegExp(`${key}:\\s*(.+)`, 'i'));
+            return match ? match[1].trim() : '';
+          };
+
+          eventBroadcaster.implementationProgress(session.projectId, session.featureId, {
+            stepId: step.id,
+            status: getValue('status'),
+            filesModified: [],
+            testsStatus: getValue('tests_status') || null,
+            retryCount: parseInt(getValue('retry_count') || '0', 10) || 0,
+            message: getValue('message'),
+          });
+        }
+      },
+    }).then(async (result) => {
+      // Capture sessionId from first spawn (for subsequent steps)
+      const capturedSessionId = result.sessionId;
+
+      // If this is the first step (no claudeStage3SessionId), save the new sessionId
+      if (!session.claudeStage3SessionId && capturedSessionId) {
+        await sessionManager.updateSession(session.projectId, session.featureId, {
+          claudeStage3SessionId: capturedSessionId,
+        });
+        // Update local session object for next iteration
+        session.claudeStage3SessionId = capturedSessionId;
+      }
+
+      // Handle Stage 3 result with stepId
+      const { hasBlocker, implementationComplete } = await resultHandler.handleStage3Result(
+        session, result, prompt, step.id
+      );
+
+      // Check if this step was completed
+      const stepCompleted = result.parsed.stepsCompleted.some(s => s.id === step.id);
+
+      // Broadcast step completed if applicable
+      if (stepCompleted && eventBroadcaster) {
+        const completedStep = result.parsed.stepsCompleted.find(s => s.id === step.id);
+        eventBroadcaster.stepCompleted(
+          session.projectId,
+          session.featureId,
+          step,
+          completedStep?.summary || '',
+          []
+        );
+
+        // Reload and broadcast updated plan
+        const updatedPlan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+        if (updatedPlan) {
+          eventBroadcaster.planUpdated(session.projectId, session.featureId, updatedPlan);
+        }
+      }
+
+      // Broadcast blocker questions if any
+      if (hasBlocker && eventBroadcaster) {
+        const questionsPath = `${sessionDir}/questions.json`;
+        const questionsData = await storage.readJson<{ questions: Question[] }>(questionsPath);
+        if (questionsData) {
+          const blockerQuestions = questionsData.questions.filter(
+            q => q.category === 'blocker' && !q.answer
+          );
+          if (blockerQuestions.length > 0) {
+            eventBroadcaster.questionsAsked(session.projectId, session.featureId, blockerQuestions);
+          }
+        }
+      }
+
+      resolve({
+        stepCompleted,
+        hasBlocker,
+        sessionId: capturedSessionId,
+      });
+    }).catch((error) => {
+      console.error(`Step ${step.id} spawn error for ${session.featureId}:`, error);
+      eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'step_spawn_error');
+      reject(error);
+    });
+  });
+}
+
+/**
+ * Execute Stage 3 steps one at a time.
+ * Main orchestration loop that processes steps sequentially.
+ */
+async function executeStage3Steps(
+  session: Session,
+  storage: FileStorageService,
+  sessionManager: SessionManager,
+  resultHandler: ClaudeResultHandler,
+  eventBroadcaster: EventBroadcaster | undefined,
+  resumeStepId?: string,
+  resumeContext?: string
+): Promise<void> {
+  const sessionDir = `${session.projectId}/${session.featureId}`;
+
+  // Load current plan
+  let plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+  if (!plan) {
+    console.error(`No plan found for ${session.featureId}`);
+    return;
+  }
+
+  console.log(`Starting Stage 3 step-by-step execution for ${session.featureId}`);
+
+  // If resuming a specific step (after blocker answer), find and execute that step
+  if (resumeStepId) {
+    const resumeStep = plan.steps.find(s => s.id === resumeStepId);
+    if (resumeStep && resumeStep.status !== 'completed') {
+      console.log(`Resuming step [${resumeStepId}] after blocker answer`);
+      const result = await executeSingleStep(
+        session, plan, resumeStep, storage, sessionManager,
+        resultHandler, eventBroadcaster, resumeContext
+      );
+
+      if (result.hasBlocker) {
+        // Still blocked - wait for user
+        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_blocked');
+        return;
+      }
+
+      // Reload plan after step execution
+      plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+      if (!plan) return;
+    }
+  }
+
+  // Main execution loop - process steps one at a time
+  while (true) {
+    const nextStep = getNextReadyStep(plan);
+
+    if (!nextStep) {
+      // Check if all steps are completed
+      const allCompleted = plan.steps.every(s => s.status === 'completed');
+      if (allCompleted) {
+        console.log(`All steps completed for ${session.featureId}, transitioning to Stage 4`);
+
+        // Trigger Stage 3→4 transition
+        await handleStage3Completion(
+          session, sessionDir, storage, sessionManager,
+          resultHandler, eventBroadcaster, null
+        );
+        return;
+      } else {
+        // Some steps are blocked or have unmet dependencies
+        console.log(`No more steps ready for ${session.featureId}, waiting for user input`);
+        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_waiting');
+        return;
+      }
+    }
+
+    // Execute the next step
+    const result = await executeSingleStep(
+      session, plan, nextStep, storage, sessionManager,
+      resultHandler, eventBroadcaster
+    );
+
+    if (result.hasBlocker) {
+      // Step is blocked - pause and wait for user
+      console.log(`Step [${nextStep.id}] blocked, waiting for user input`);
+      eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_blocked');
+      return;
+    }
+
+    if (!result.stepCompleted) {
+      // Step didn't complete (unexpected) - log and stop
+      console.warn(`Step [${nextStep.id}] did not complete, stopping execution`);
+      eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_waiting');
+      return;
+    }
+
+    // Reload plan for next iteration
+    plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+    if (!plan) return;
+
+    console.log(`Step [${nextStep.id}] completed, checking for next step...`);
+  }
+}
+
+/**
  * Handle Stage 3 completion - transition to Stage 4 when implementation complete
  * Requires all tests to be passing before allowing transition (if tests were required).
+ * @param result - Optional ClaudeResult (null when called from step-by-step execution)
  */
 async function handleStage3Completion(
   session: Session,
@@ -416,7 +795,7 @@ async function handleStage3Completion(
   sessionManager: SessionManager,
   resultHandler: ClaudeResultHandler,
   eventBroadcaster: EventBroadcaster | undefined,
-  result: ClaudeResult
+  result: ClaudeResult | null
 ): Promise<void> {
   // Verify all steps are completed
   const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
@@ -431,14 +810,18 @@ async function handleStage3Completion(
   // Check test requirements based on assessment
   const testsRequired = plan.testRequirement?.required ?? true; // Default to required if not assessed
 
-  if (testsRequired) {
+  if (testsRequired && result) {
     // Verify all tests are passing (REQUIRED for Stage 3→4 transition)
+    // Only check if we have a result (from old all-at-once execution)
     if (!result.parsed.allTestsPassing) {
       console.log(`Stage 3 cannot transition: tests required but not passing for ${session.featureId}`);
       return;
     }
     const testsCount = result.parsed.testsAdded.length;
     console.log(`All ${plan.steps.length} steps completed with ${testsCount} tests passing, transitioning to Stage 4 for ${session.featureId}`);
+  } else if (testsRequired) {
+    // Step-by-step execution: tests are run per-step, trust that they passed
+    console.log(`All ${plan.steps.length} steps completed (tests run per-step), transitioning to Stage 4 for ${session.featureId}`);
   } else {
     console.log(`All ${plan.steps.length} steps completed (tests not required: ${plan.testRequirement?.reason}), transitioning to Stage 4 for ${session.featureId}`);
   }
@@ -1058,9 +1441,12 @@ export function createApp(
           return;
         }
 
-        // Build Stage 3 prompt and spawn implementation
-        const prompt = buildStage3Prompt(session, plan);
-        await spawnStage3Implementation(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
+        // Start Stage 3 step-by-step execution
+        executeStage3Steps(session, storage, sessionManager, resultHandler, eventBroadcaster)
+          .catch(err => {
+            console.error('Stage 3 step execution error:', err);
+            eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage3_error');
+          });
       } else if (targetStage === 4) {
         // If transitioning to Stage 4, spawn PR creation
         const sessionDir = `${projectId}/${featureId}`;
@@ -1191,7 +1577,7 @@ export function createApp(
             console.log(`All ${batchQuestions.length} questions in batch answered, resuming Claude`);
 
             // Build continuation prompt with all batch answers
-            const prompt = buildBatchAnswersContinuationPrompt(batchQuestions, session.currentStage);
+            const prompt = buildBatchAnswersContinuationPrompt(batchQuestions, session.currentStage, session.claudePlanFilePath);
             const sessionDir = `${projectId}/${featureId}`;
             const statusPath = `${sessionDir}/status.json`;
 
@@ -1411,7 +1797,7 @@ After creating all steps, write the plan to a file and output:
         try {
           console.log(`All ${answeredQuestions.length} questions answered via batch, resuming Claude`);
 
-          const prompt = buildBatchAnswersContinuationPrompt(answeredQuestions, session.currentStage);
+          const prompt = buildBatchAnswersContinuationPrompt(answeredQuestions, session.currentStage, session.claudePlanFilePath);
           const sessionDir = `${projectId}/${featureId}`;
           const statusPath = `${sessionDir}/status.json`;
 
@@ -1452,24 +1838,32 @@ After creating all steps, write the plan to a file and output:
             await resultHandler.incrementReviewCount(sessionDir);
             await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster);
           } else if (session.currentStage === 3) {
-            // Stage 3: Resume implementation after blocker answer
-            // Use spawnStage3Implementation with blocker answer context
-            const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
-            if (plan) {
-              const stage3ResumePrompt = `The user answered your blocker question:
+            // Stage 3: Resume step-by-step execution after blocker answer
+            // Get the blocked step from status.json or from the answered question's stepId
+            const status = await storage.readJson<{ blockedStepId?: string | null }>(statusPath);
+            const blockedStepId = status?.blockedStepId ||
+              answeredQuestions.find(q => q.stepId)?.stepId;
+
+            if (blockedStepId) {
+              const resumeContext = `The user answered your blocker question:
 
 ${answeredQuestions.map(q => `**Q:** ${q.questionText}\n**A:** ${typeof q.answer?.value === 'string' ? q.answer.value : JSON.stringify(q.answer?.value)}`).join('\n\n')}
 
-Continue implementing the plan. Pick up where you left off.`;
+Continue implementing step [${blockedStepId}].`;
 
-              await spawnStage3Implementation(
+              // Use step-by-step execution with resume
+              executeStage3Steps(
                 session,
                 storage,
                 sessionManager,
                 resultHandler,
                 eventBroadcaster,
-                stage3ResumePrompt
-              );
+                blockedStepId,
+                resumeContext
+              ).catch(err => {
+                console.error('Stage 3 step execution error:', err);
+                eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage3_error');
+              });
             }
             return; // Stage 3 handles its own completion
           } else if (session.currentStage === 5) {
@@ -1661,16 +2055,17 @@ After creating all steps, write the plan to a file and output:
         eventBroadcaster.stageChanged(updatedSession, previousStage);
       }
 
-      // Auto-start Stage 3 implementation
-      const stage3Prompt = buildStage3Prompt(updatedSession, plan);
-      spawnStage3Implementation(
+      // Auto-start Stage 3 step-by-step execution
+      executeStage3Steps(
         updatedSession,
         storage,
         sessionManager,
         resultHandler,
-        eventBroadcaster,
-        stage3Prompt
-      );
+        eventBroadcaster
+      ).catch(err => {
+        console.error('Stage 3 step execution error:', err);
+        eventBroadcaster?.executionStatus(updatedSession.projectId, updatedSession.featureId, 'error', 'stage3_error');
+      });
 
       res.json({ plan, session: updatedSession });
     } catch (error) {
@@ -1916,10 +2311,13 @@ After creating all steps, write the plan to a file and output:
               break;
             }
             case 3: {
-              // Stage 3: Implementation - resume with stage 3 prompt
+              // Stage 3: Implementation - resume step-by-step execution
               if (!plan) break;
-              const prompt = buildStage3Prompt(session, plan);
-              await spawnStage3Implementation(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
+              // Get currentStepId from status to resume from interrupted step
+              const status3 = await storage.readJson<{ currentStepId?: string | null }>(`${sessionDir}/status.json`);
+              const resumeStepId = status3?.currentStepId || undefined;
+              executeStage3Steps(session, storage, sessionManager, resultHandler, eventBroadcaster, resumeStepId)
+                .catch(err => console.error('Stage 3 resume error:', err));
               break;
             }
             case 4: {

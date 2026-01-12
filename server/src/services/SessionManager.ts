@@ -212,7 +212,8 @@ export class SessionManager {
       currentStage: 1,
       replanningCount: 0,
       claudeSessionId: null,
-      claudePlanFilePath: null,
+      claudeStage3SessionId: null,
+      claudePlanFilePath: this.storage.getAbsolutePath(`${sessionPath}/plan.md`),
       currentPlanVersion: 0,
       sessionExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       createdAt: now,
@@ -231,6 +232,9 @@ export class SessionManager {
       createdAt: now,
       steps: [],
     });
+
+    // Create empty plan.md for Claude to edit (D1 approach - path-restricted Edit)
+    await this.storage.writeText(`${sessionPath}/plan.md`, `# Implementation Plan: ${input.title}\n\n<!-- Claude will edit this file with the implementation plan -->\n`);
 
     // Create questions.json
     await this.storage.writeJson(`${sessionPath}/questions.json`, {

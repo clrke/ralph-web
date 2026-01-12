@@ -47,8 +47,8 @@ interface ClaudeJsonOutput {
 }
 
 const STAGE_TOOLS: Record<number, string[]> = {
-  1: ['Read', 'Glob', 'Grep', 'Task', 'WebFetch', 'WebSearch'],  // Discovery - read-only + web
-  2: ['Read', 'Glob', 'Grep', 'Task', 'WebFetch', 'WebSearch'],  // Plan review - read-only + web
+  1: ['Read', 'Glob', 'Grep', 'Task', 'WebFetch', 'WebSearch', 'Edit(~/.clrke/**/plan.md)'],  // Discovery - read-only + web + plan.md edit
+  2: ['Read', 'Glob', 'Grep', 'Task', 'WebFetch', 'WebSearch', 'Edit(~/.clrke/**/plan.md)'],  // Plan review - read-only + web + plan.md edit
   3: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'Task'],
   4: ['Read', 'Bash(git:*)', 'Bash(gh:*)'],  // Restricted to git and gh commands for PR creation
   5: ['Read', 'Glob', 'Grep', 'Task', 'Bash(git:diff*)', 'Bash(gh:pr*)'],  // PR review with limited diff/PR access
@@ -56,6 +56,32 @@ const STAGE_TOOLS: Record<number, string[]> = {
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const HAIKU_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes for Haiku post-processing
+const MIN_OUTPUT_LENGTH_FOR_POSTPROCESS = 100; // Minimum output length to consider for post-processing
+
+/**
+ * Check if parsed output contains any actionable markers.
+ * If false, the output may need post-processing to extract content.
+ */
+export function hasActionableContent(parsed: ParsedMarker): boolean {
+  return (
+    parsed.decisions.length > 0 ||
+    parsed.planSteps.length > 0 ||
+    parsed.stepCompleted !== null ||
+    parsed.stepsCompleted.length > 0 ||
+    parsed.planModeEntered ||
+    parsed.planModeExited ||
+    parsed.planFilePath !== null ||
+    parsed.implementationComplete ||
+    parsed.implementationSummary !== null ||
+    parsed.implementationStatus !== null ||
+    parsed.prCreated !== null ||
+    parsed.planApproved ||
+    parsed.ciStatus !== null ||
+    parsed.ciFailed ||
+    parsed.prApproved ||
+    parsed.returnToStage2 !== null
+  );
+}
 
 // Prompt for Haiku to extract and format questions
 const QUESTION_EXTRACTION_PROMPT = `You are a formatting assistant. Extract any questions or decisions from the following text and format them using the [DECISION_NEEDED] marker format.
@@ -89,14 +115,22 @@ export class ClaudeOrchestrator {
     // Heuristics to detect question-like content
     const questionIndicators = [
       /\?\s*$/m,                          // Ends with question mark
+      /\?\s*\n/m,                         // Question mark followed by newline
       /should\s+(we|i|it)\b/i,            // "should we/I/it"
       /would\s+you\s+(prefer|like)/i,     // "would you prefer/like"
       /which\s+(option|approach)/i,       // "which option/approach"
       /please\s+(choose|select|decide)/i, // "please choose/select/decide"
       /decision[s]?\s*(needed|required)/i,// "decision needed"
       /option\s*[a-z]:/i,                 // "Option A:"
-      /^\s*[-•]\s+/m,                     // Bullet points (options)
+      /option\s*[a-z]\s*\(/i,             // "Option A (" or "Option A("
+      /^\s*[-•]\s+/m,                     // Bullet points (- or •)
+      /^\s*\d+\.\s+/m,                    // Numbered list (1. 2. 3.)
       /\(recommended\)/i,                 // Recommendation marker
+      /how\s+should\s+(we|i)\b/i,         // "how should we/I"
+      /what\s+(approach|method|option)/i, // "what approach/method/option"
+      /provide\s+your\s+(decision|answer)/i, // "provide your decision/answer"
+      /priority\s*\d/i,                   // "Priority 1", "Priority 2"
+      /issue[s]?\s*:/i,                   // "Issue:" or "Issues:"
     ];
 
     const matchCount = questionIndicators.filter(pattern => pattern.test(output)).length;
@@ -104,14 +138,25 @@ export class ClaudeOrchestrator {
   }
 
   /**
-   * Post-process output with Haiku to extract and format questions
+   * Post-process output with Haiku to extract and format questions.
+   * @param output The Claude output to process
+   * @param cwd Working directory for the Haiku subprocess
+   * @param force If true, skip heuristics check and always attempt extraction
    */
-  async postProcessWithHaiku(output: string, cwd: string): Promise<HaikuPostProcessResult | null> {
-    if (!this.looksLikeQuestions(output)) {
+  async postProcessWithHaiku(output: string, cwd: string, force: boolean = false): Promise<HaikuPostProcessResult | null> {
+    // Skip very short outputs
+    if (output.length < MIN_OUTPUT_LENGTH_FOR_POSTPROCESS) {
       return null;
     }
 
-    console.log('Output looks like it contains questions, using Haiku to extract...');
+    // Check heuristics unless forced
+    if (!force && !this.looksLikeQuestions(output)) {
+      return null;
+    }
+
+    console.log(force
+      ? 'No actionable markers found, using Haiku to extract potential questions...'
+      : 'Output looks like it contains questions, using Haiku to extract...');
 
     const prompt = QUESTION_EXTRACTION_PROMPT + output;
     const startTime = Date.now();
