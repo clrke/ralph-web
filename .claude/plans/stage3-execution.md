@@ -24,6 +24,16 @@ Implement Stage 3 that executes approved plan steps sequentially, spawns Claude 
 - **TypeScript types**: Add shared event interfaces
 - **Import pattern**: Extend existing import statement
 
+## Review Decisions (v2) - Decision Tracking Feature
+- **Decision Tracking scope**: Implement full system now (add steps 21-28 to this plan)
+- **Status storage**: Add `status` field to Question type: `'filtered_out' | 'unanswered' | 'answered' | 'documented'`
+- **Stage progression rule**: NO stage progression until ALL blocking decisions are DOCUMENTED
+- **pending → documented trigger**: Automatic on plan file change detection
+- **Tabs UI location**: Replace current QuestionsSection with tabbed interface
+- **After submitting answers**: Always return to Stage 2 for plan revision
+- **Filtered decisions**: Keep audit trail in separate file (filtered-decisions.json)
+- **Duplicate questions**: Improve prompts to document decisions in plan/codebase/README
+
 ---
 
 ## Implementation Steps
@@ -265,18 +275,108 @@ Also add `reviewCount?: number` to 'plan.updated' event type.
 
 ---
 
+## Decision Tracking Feature (v2)
+
+[PLAN_STEP id="step-21" parent="null" status="pending"]
+Add status field to Question type
+Update `/shared/types/questions.ts`:
+- Add `status: DecisionStatus` field to Question interface
+- Create `DecisionStatus` type: `'filtered_out' | 'unanswered' | 'answered' | 'documented'`
+- Add `lastSubmittedAt?: string` field for re-submit tracking (5-minute rule)
+- Add `documentedAt?: string` field for when decision was written to plan
+- Export DecisionStatus from shared/types/index.ts
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-22" parent="null" status="pending"]
+Add filtered decisions audit trail
+Create `/server/src/services/FilteredDecisionsLog.ts`:
+- Function: `logFilteredDecision(sessionDir, question, reason)` - save to filtered-decisions.json
+- Function: `getFilteredDecisions(sessionDir)` - read audit log
+- Structure: `{ id, questionText, filteredAt, reason, originalDecision }`
+- Update DecisionValidator to call logFilteredDecision when filtering
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-23" parent="null" status="pending"]
+Add decision status transition logic
+Create `/server/src/services/DecisionStatusManager.ts`:
+- Function: `markAsAnswered(sessionDir, questionId, answer)` - unanswered → answered
+- Function: `markAsDocumented(sessionDir, questionId)` - answered → documented
+- Function: `getUndocumentedDecisions(sessionDir)` - return all non-documented decisions
+- Function: `canProgressToNextStage(sessionDir)` - check all blocking decisions are documented
+- Integrate with ClaudeResultHandler.saveQuestions to set initial status='unanswered'
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-24" parent="null" status="pending"]
+Add automatic documented detection on plan file change
+Update `/server/src/services/ClaudeResultHandler.ts`:
+- After saving plan.json, check if any answered decisions are now documented
+- Parse plan content for decision references (question IDs or text matches)
+- Call DecisionStatusManager.markAsDocumented for matching decisions
+- Broadcast 'decision.documented' event when status changes
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-25" parent="null" status="pending"]
+Block stage transitions on undocumented decisions
+Update `/server/src/app.ts` transition endpoint:
+- Before ANY stage transition, call DecisionStatusManager.canProgressToNextStage()
+- If returns false, return 400 with list of undocumented decisions
+- Add check in handleStage2Completion before transitioning to Stage 3
+- Add check in handleStage3Completion before transitioning to Stage 4
+- Add check in all manual transition handlers
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-26" parent="null" status="pending"]
+Update batch answers to return to Stage 2
+Modify batch answers endpoint in `/server/src/app.ts`:
+- After marking decisions as 'answered', always transition to Stage 2
+- Remove stage-specific resume logic (Stage 3 blocker resume)
+- Call sessionManager.transitionStage(projectId, featureId, 2)
+- Broadcast stageChanged event
+- Set status to 'idle' waiting for Claude to document decisions
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-27" parent="null" status="pending"]
+Replace QuestionsSection with DecisionTabs UI
+Update `/client/src/pages/SessionView.tsx`:
+- Create DecisionTabs component with 4 tabs: Filtered | Unanswered | Answered | Documented
+- Each tab shows count badge: `Unanswered (3)`
+- Unanswered tab: Show decision cards with answer selection and Submit button
+- Answered tab: Show decisions pending documentation with Re-submit button (if lastSubmittedAt > 5 min ago)
+- Documented tab: Show completed decisions (read-only)
+- Filtered tab: Show audit log from filtered-decisions.json
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-28" parent="null" status="pending"]
+Add decision socket events and store actions
+Update `/client/src/stores/sessionStore.ts`:
+- Add `decisions` state field grouped by status
+- Add `updateDecisionStatus(id, status)` action
+- Add `setDecisions(decisions)` action
+Update `/client/src/services/socket.ts`:
+- Add 'decision.answered' event type
+- Add 'decision.documented' event type
+- Add 'decisions.updated' event type (full refresh)
+Update SessionView.tsx to handle new socket events
+[/PLAN_STEP]
+
+---
+
 ## Files to Modify
 
 | File | Changes |
 |------|---------|
 | `shared/types/events.ts` | Add Stage 3 event interfaces (new file or extend existing) |
-| `shared/types/index.ts` | Export new event types |
+| `shared/types/questions.ts` | Add `status: DecisionStatus` field, `lastSubmittedAt`, `documentedAt` |
+| `shared/types/index.ts` | Export new event types and DecisionStatus |
 | `server/src/prompts/stagePrompts.ts` | Add `buildStage3Prompt()` function |
-| `server/src/services/ClaudeResultHandler.ts` | Add `handleStage3Result()` method with retry tracking |
-| `server/src/services/EventBroadcaster.ts` | Add `stepStarted()`, `stepCompleted()`, `implementationProgress()` methods |
-| `server/src/app.ts` | Add `spawnStage3Implementation()`, `handleStage3Completion()`, wire up auto-start, Stage 3 transition, blocker resume |
-| `client/src/stores/sessionStore.ts` | Add `updateStepStatus()`, `setImplementationProgress()` actions |
-| `client/src/pages/SessionView.tsx` | Add socket handlers for Stage 3 events, add blocked status UI |
+| `server/src/services/ClaudeResultHandler.ts` | Add `handleStage3Result()`, auto-document detection |
+| `server/src/services/EventBroadcaster.ts` | Add step events, decision events |
+| `server/src/services/FilteredDecisionsLog.ts` | NEW: Audit trail for filtered decisions |
+| `server/src/services/DecisionStatusManager.ts` | NEW: Decision lifecycle state management |
+| `server/src/app.ts` | Add spawn helpers, block transitions on undocumented decisions, always return to Stage 2 |
+| `client/src/stores/sessionStore.ts` | Add step status, implementation progress, decision state |
+| `client/src/pages/SessionView.tsx` | Replace QuestionsSection with DecisionTabs, add socket handlers |
+| `client/src/services/socket.ts` | Add decision event types |
 
 ## Testing Strategy (Deferred)
 - Unit test `buildStage3Prompt()` generates correct marker instructions
