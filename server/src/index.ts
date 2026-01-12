@@ -17,7 +17,7 @@ const sessionManager = new SessionManager(storage);
 const httpServer = createServer();
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.NODE_ENV === 'production' ? false : ['http://localhost:5173', 'http://localhost:5174'],
+    origin: process.env.NODE_ENV === 'production' ? false : true,  // Allow all origins in dev for mobile access
   },
 });
 
@@ -71,8 +71,9 @@ io.on('connection', (socket) => {
 
 // Start server
 const PORT = process.env.PORT || 3333;
-httpServer.listen(PORT, async () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+const HOST = process.env.HOST || '0.0.0.0';
+httpServer.listen(Number(PORT), HOST, async () => {
+  console.log(`Server running on http://${HOST}:${PORT}`);
   console.log(`Data directory: ${dataDir}`);
 
   // Resume any sessions that were interrupted by server restart

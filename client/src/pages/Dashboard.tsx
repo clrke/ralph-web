@@ -111,8 +111,8 @@ export default function Dashboard() {
                 to={`/session/${session.projectId}/${session.featureId}`}
                 className="block bg-gray-800 hover:bg-gray-700 rounded-lg p-4 transition-colors"
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div className="flex-1 min-w-0">
                     <h3 className="font-medium text-lg">{session.title}</h3>
                     <p className="text-gray-400 text-sm mt-1 truncate">
                       {session.projectPath}
@@ -123,11 +123,11 @@ export default function Dashboard() {
                       </p>
                     )}
                   </div>
-                  <div className="flex items-center gap-3 ml-4">
+                  <div className="flex items-center gap-2 sm:gap-3 sm:ml-4 flex-wrap">
                     <span className={`px-2 py-1 rounded text-xs font-medium ${STATUS_COLORS[session.status] || 'bg-gray-600'}`}>
                       Stage {session.currentStage}: {STAGE_LABELS[session.currentStage]}
                     </span>
-                    <span className="text-gray-500 text-sm whitespace-nowrap">
+                    <span className="text-gray-500 text-sm">
                       {formatRelativeTime(new Date(session.updatedAt))}
                     </span>
                   </div>
