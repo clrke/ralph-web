@@ -203,6 +203,7 @@ async function spawnStage3Implementation(
   eventBroadcaster: EventBroadcaster | undefined,
   prompt: string
 ): Promise<void> {
+  console.log(`Starting Stage 3 implementation for ${session.featureId}`);
   const sessionDir = `${session.projectId}/${session.featureId}`;
   const statusPath = `${sessionDir}/status.json`;
 
@@ -1116,6 +1117,17 @@ After creating all steps, write the plan to a file and output:
         eventBroadcaster.planApproved(projectId, featureId, plan);
         eventBroadcaster.stageChanged(updatedSession, previousStage);
       }
+
+      // Auto-start Stage 3 implementation
+      const stage3Prompt = buildStage3Prompt(updatedSession, plan);
+      spawnStage3Implementation(
+        updatedSession,
+        storage,
+        sessionManager,
+        resultHandler,
+        eventBroadcaster,
+        stage3Prompt
+      );
 
       res.json({ plan, session: updatedSession });
     } catch (error) {
