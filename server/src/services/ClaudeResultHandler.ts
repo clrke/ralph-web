@@ -433,12 +433,13 @@ export class ClaudeResultHandler {
   }
 
   async saveConversationStart(sessionDir: string, stage: number, prompt: string, stepId?: string): Promise<void> {
+    const now = new Date().toISOString();
     const conversationPath = `${sessionDir}/conversations.json`;
     const conversations = await this.storage.readJson<ConversationsFile>(conversationPath) || { entries: [] };
     conversations.entries.push({
       stage,
       stepId,
-      timestamp: new Date().toISOString(),
+      timestamp: now,
       prompt,
       output: '',
       sessionId: null,
@@ -467,6 +468,14 @@ export class ClaudeResultHandler {
       status: 'started',
     });
     await this.storage.writeJson(conversationPath, conversations);
+
+    // Update session.updatedAt
+    const sessionPath = `${sessionDir}/session.json`;
+    const session = await this.storage.readJson<{ updatedAt?: string }>(sessionPath);
+    if (session) {
+      session.updatedAt = now;
+      await this.storage.writeJson(sessionPath, session);
+    }
   }
 
   private async saveConversation(
