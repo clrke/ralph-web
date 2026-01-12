@@ -8,7 +8,7 @@ import { ClaudeResultHandler } from './services/ClaudeResultHandler';
 import { DecisionValidator } from './services/DecisionValidator';
 import { TestRequirementAssessor } from './services/TestRequirementAssessor';
 import { EventBroadcaster } from './services/EventBroadcaster';
-import { buildStage1Prompt, buildStage2Prompt, buildStage3Prompt, buildPlanRevisionPrompt, buildBatchAnswersContinuationPrompt } from './prompts/stagePrompts';
+import { buildStage1Prompt, buildStage2Prompt, buildStage3Prompt, buildStage4Prompt, buildPlanRevisionPrompt, buildBatchAnswersContinuationPrompt } from './prompts/stagePrompts';
 import { Session } from '@claude-code-web/shared';
 import { ClaudeResult } from './services/ClaudeOrchestrator';
 import { Plan, Question } from '@claude-code-web/shared';
@@ -362,6 +362,96 @@ async function handleStage3Completion(
   const previousStage = session.currentStage;
   const updatedSession = await sessionManager.transitionStage(session.projectId, session.featureId, 4);
   eventBroadcaster?.stageChanged(updatedSession, previousStage);
+
+  // Auto-start Stage 4 PR creation
+  const stage4Prompt = buildStage4Prompt(updatedSession, plan);
+  await spawnStage4PRCreation(updatedSession, storage, sessionManager, eventBroadcaster, stage4Prompt);
+}
+
+/**
+ * Spawn Stage 4 PR Creation Claude. Used by:
+ * - Auto-start after Stage 3 implementation complete
+ * - Manual /transition endpoint
+ */
+async function spawnStage4PRCreation(
+  session: Session,
+  storage: FileStorageService,
+  sessionManager: SessionManager,
+  eventBroadcaster: EventBroadcaster | undefined,
+  prompt: string
+): Promise<void> {
+  console.log(`Starting Stage 4 PR creation for ${session.featureId}`);
+  const sessionDir = `${session.projectId}/${session.featureId}`;
+  const statusPath = `${sessionDir}/status.json`;
+
+  // Update status to running
+  const status = await storage.readJson<Record<string, unknown>>(statusPath);
+  if (status) {
+    status.status = 'running';
+    status.lastAction = 'stage4_started';
+    status.lastActionAt = new Date().toISOString();
+    await storage.writeJson(statusPath, status);
+  }
+
+  // Broadcast execution started
+  eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage4_started');
+
+  // Spawn Claude with Stage 4 tools (git and gh commands)
+  orchestrator.spawn({
+    prompt,
+    projectPath: session.projectPath,
+    sessionId: session.claudeSessionId || undefined,
+    allowedTools: orchestrator.getStageTools(4),
+    onOutput: (output, isComplete) => {
+      eventBroadcaster?.claudeOutput(session.projectId, session.featureId, output, isComplete);
+    },
+  }).then(async (result) => {
+    // Parse PR_CREATED marker from output
+    const prCreatedMatch = result.output.match(/\[PR_CREATED\]([\s\S]*?)\[\/PR_CREATED\]/);
+
+    if (prCreatedMatch) {
+      const prContent = prCreatedMatch[1];
+      const getValue = (key: string): string => {
+        const match = prContent.match(new RegExp(`${key}:\\s*(.+)`, 'i'));
+        return match ? match[1].trim() : '';
+      };
+
+      const prInfo = {
+        title: getValue('Title'),
+        branch: getValue('Branch'),
+        url: getValue('URL'),
+        createdAt: new Date().toISOString(),
+      };
+
+      // Save PR info
+      await storage.writeJson(`${sessionDir}/pr.json`, prInfo);
+
+      console.log(`PR created: ${prInfo.url || prInfo.title}`);
+
+      // Broadcast PR created event
+      eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage4_complete');
+    } else {
+      console.log(`Stage 4 completed but no PR_CREATED marker found for ${session.featureId}`);
+      eventBroadcaster?.executionStatus(
+        session.projectId,
+        session.featureId,
+        result.isError ? 'error' : 'idle',
+        result.isError ? 'stage4_error' : 'stage4_complete'
+      );
+    }
+
+    // Update status
+    const finalStatus = await storage.readJson<Record<string, unknown>>(statusPath);
+    if (finalStatus) {
+      finalStatus.status = result.isError ? 'error' : 'idle';
+      finalStatus.lastAction = result.isError ? 'stage4_error' : 'stage4_complete';
+      finalStatus.lastActionAt = new Date().toISOString();
+      await storage.writeJson(statusPath, finalStatus);
+    }
+  }).catch((error) => {
+    console.error(`Stage 4 spawn error for ${session.featureId}:`, error);
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage4_spawn_error');
+  });
 }
 
 /**
@@ -647,6 +737,20 @@ export function createApp(
         // Build Stage 3 prompt and spawn implementation
         const prompt = buildStage3Prompt(session, plan);
         await spawnStage3Implementation(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
+      } else if (targetStage === 4) {
+        // If transitioning to Stage 4, spawn PR creation
+        const sessionDir = `${projectId}/${featureId}`;
+
+        // Read current plan
+        const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+        if (!plan) {
+          console.error(`No plan found for Stage 4 transition: ${featureId}`);
+          return;
+        }
+
+        // Build Stage 4 prompt and spawn PR creation
+        const prompt = buildStage4Prompt(session, plan);
+        await spawnStage4PRCreation(session, storage, sessionManager, eventBroadcaster, prompt);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to transition stage';

@@ -391,3 +391,114 @@ ${testsRequired ? `
 4. Output IMPLEMENTATION_STATUS regularly for real-time progress
 ${testsRequired ? '5. Always run tests before marking a step complete' : '5. Run existing tests to ensure no regressions'}`;
 }
+
+/**
+ * Build Stage 4: PR Creation prompt
+ * Creates a pull request for the completed implementation.
+ * Per README lines 1757-1795
+ */
+export function buildStage4Prompt(session: Session, plan: Plan): string {
+  const completedSteps = plan.steps.filter(s => s.status === 'completed');
+  const planStepsText = completedSteps.map((step, i) => {
+    return `${i + 1}. [${step.id}] ${step.title}\n   ${step.description || 'No description'}`;
+  }).join('\n\n');
+
+  // Reference plan file for full context
+  const planFileReference = session.claudePlanFilePath
+    ? `\n\n## Full Plan Reference\nFor complete plan details, read: ${session.claudePlanFilePath}`
+    : '';
+
+  // Build test summary if available
+  const testSummary = plan.testRequirement
+    ? plan.testRequirement.required
+      ? `\n- Tests were required: ${plan.testRequirement.testTypes?.join(', ') || 'unit'}`
+      : `\n- Tests were not required: ${plan.testRequirement.reason}`
+    : '';
+
+  return `You are creating a pull request for a completed implementation.
+
+## Feature
+Title: ${session.title}
+Description: ${session.featureDescription}
+Project Path: ${session.projectPath}
+
+## Completed Implementation (${completedSteps.length} steps)
+${planStepsText}${planFileReference}
+
+## Implementation Summary${testSummary}
+
+## Instructions
+
+### Phase 1: Review Changes (MANDATORY)
+Use the Task tool to spawn parallel review agents that examine the changes:
+
+1. **Diff Analysis Agent**: Review the git diff for the implementation
+   - Run: git diff main...HEAD (or appropriate base branch)
+   - Summarize what was added, modified, deleted
+   - Note any significant patterns
+
+2. **Commit History Agent**: Review the commit history
+   - Run: git log main...HEAD --oneline
+   - Summarize the progression of changes
+   - Note the commit structure
+
+3. **Test Results Agent**: Review test status
+   - Check if tests were run and passed
+   - Note test coverage for new code
+   - Flag any untested areas
+
+Wait for ALL review agents to complete before proceeding.
+
+### Phase 2: Prepare PR Content
+Based on the review, prepare:
+
+1. **PR Title**: Clear, descriptive title (under 72 characters)
+   - Format: "feat: <what this adds>" or "fix: <what this fixes>"
+
+2. **PR Summary**: What was implemented and why
+   - Reference the feature description
+   - Highlight key changes
+   - Note any important decisions made
+
+3. **Test Plan**: How reviewers should test the changes
+   - Manual testing steps if applicable
+   - Automated test coverage summary
+   - Edge cases to verify
+
+### Phase 3: Create the PR
+1. First, ensure all changes are committed
+2. Push the branch to remote if not already pushed
+3. Use \`gh pr create\` to create the pull request
+
+### Progress Markers (Required)
+
+**During review**, output status:
+\`\`\`
+[PR_STATUS]
+phase: reviewing|preparing|creating
+message: Brief status message
+[/PR_STATUS]
+\`\`\`
+
+**When PR is created**, output:
+\`\`\`
+[PR_CREATED]
+Title: {{prTitle}}
+Branch: {{featureBranch}} → {{baseBranch}}
+URL: {{prUrl}}
+
+## Summary
+{{summary}}
+
+## Test Plan
+{{testPlan}}
+[/PR_CREATED]
+\`\`\`
+
+### Important Rules
+1. Review changes BEFORE creating the PR
+2. Include a clear, actionable test plan
+3. Reference the original feature description
+4. Use \`gh pr create\` with --title and --body flags
+5. Return the PR URL in the output`;
+}
