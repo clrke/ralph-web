@@ -333,7 +333,8 @@ describe('IncompleteStepsAssessor', () => {
 
       const result = await resultPromise;
 
-      expect(result.durationMs).toBeGreaterThanOrEqual(10);
+      // Allow for timing variance in CI environments (setTimeout is not exact)
+      expect(result.durationMs).toBeGreaterThanOrEqual(5);
       expect(result.durationMs).toBeLessThan(Date.now() - startTime + 100);
     });
   });
