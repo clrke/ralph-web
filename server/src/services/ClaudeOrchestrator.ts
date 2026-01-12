@@ -40,8 +40,8 @@ const STAGE_TOOLS: Record<number, string[]> = {
   1: ['Read', 'Glob', 'Grep', 'Task'],
   2: ['Read', 'Glob', 'Grep', 'Task'],
   3: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'Task'],
-  4: ['Read', 'Bash', 'Task'],  // git and gh commands for PR creation
-  5: ['Read', 'Glob', 'Grep', 'Task', 'Bash'],  // PR review with diff access
+  4: ['Read', 'Bash(git:*)', 'Bash(gh:*)'],  // Restricted to git and gh commands for PR creation
+  5: ['Read', 'Glob', 'Grep', 'Task', 'Bash(git:diff*)', 'Bash(gh:pr*)'],  // PR review with limited diff/PR access
 };
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
