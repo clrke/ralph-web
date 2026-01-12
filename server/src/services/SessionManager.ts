@@ -376,6 +376,16 @@ export class SessionManager {
 
     const newStatus = STAGE_STATUS_MAP[targetStage] || session.status;
 
+    // Update status.json to keep currentStage in sync
+    const sessionPath = this.getSessionPath(projectId, featureId);
+    const statusPath = `${sessionPath}/status.json`;
+    const statusFile = await this.storage.readJson<Record<string, unknown>>(statusPath);
+    if (statusFile) {
+      statusFile.currentStage = targetStage;
+      statusFile.timestamp = new Date().toISOString();
+      await this.storage.writeJson(statusPath, statusFile);
+    }
+
     return this.updateSession(projectId, featureId, {
       currentStage: targetStage,
       status: newStatus,
