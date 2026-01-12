@@ -18,6 +18,27 @@ const STATUS_COLORS: Record<string, string> = {
   pr_review: 'bg-teal-600',
 };
 
+function formatRelativeTime(date: Date): string {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSeconds = Math.floor(diffMs / 1000);
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  const diffHours = Math.floor(diffMinutes / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffSeconds < 60) {
+    return 'active just now';
+  } else if (diffMinutes < 60) {
+    return `active ${diffMinutes} minute${diffMinutes === 1 ? '' : 's'} ago`;
+  } else if (diffHours < 24) {
+    return `active ${diffHours} hour${diffHours === 1 ? '' : 's'} ago`;
+  } else if (diffDays < 7) {
+    return `active ${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+  } else {
+    return `active ${date.toLocaleDateString()}`;
+  }
+}
+
 export default function Dashboard() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -107,7 +128,7 @@ export default function Dashboard() {
                       Stage {session.currentStage}: {STAGE_LABELS[session.currentStage]}
                     </span>
                     <span className="text-gray-500 text-sm whitespace-nowrap">
-                      {new Date(session.updatedAt).toLocaleDateString()}
+                      {formatRelativeTime(new Date(session.updatedAt))}
                     </span>
                   </div>
                 </div>

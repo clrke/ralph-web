@@ -7,6 +7,8 @@ interface ConversationPanelProps {
   featureId: string;
 }
 
+const PAGE_SIZE = 10;
+
 export function ConversationPanel({ projectId, featureId }: ConversationPanelProps) {
   const {
     conversations,
@@ -16,7 +18,7 @@ export function ConversationPanel({ projectId, featureId }: ConversationPanelPro
     fetchConversations,
   } = useSessionStore();
 
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
   const outputRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -30,16 +32,26 @@ export function ConversationPanel({ projectId, featureId }: ConversationPanelPro
     }
   }, [liveOutput, isOutputComplete]);
 
+  // Reset to first page when new conversations arrive
+  useEffect(() => {
+    setCurrentPage(0);
+  }, [conversations.length]);
+
   const isRunning = executionStatus?.status === 'running';
   const totalCost = conversations.reduce((sum, c) => sum + c.costUsd, 0);
 
+  // Pagination
+  const reversedConversations = [...conversations].reverse();
+  const totalPages = Math.ceil(reversedConversations.length / PAGE_SIZE);
+  const paginatedConversations = reversedConversations.slice(
+    currentPage * PAGE_SIZE,
+    (currentPage + 1) * PAGE_SIZE
+  );
+
   return (
     <div className="bg-gray-800 rounded-lg overflow-hidden">
-      {/* Header */}
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center justify-between p-4 hover:bg-gray-700/50 transition-colors"
-      >
+      {/* Header - no longer a button */}
+      <div className="flex items-center justify-between p-4 border-b border-gray-700">
         <div className="flex items-center gap-3">
           <StatusIndicator status={executionStatus} />
           <h2 className="font-semibold">Claude Conversation</h2>
@@ -55,52 +67,69 @@ export function ConversationPanel({ projectId, featureId }: ConversationPanelPro
               ${totalCost.toFixed(4)} total
             </span>
           )}
-          <svg
-            className={`w-5 h-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
         </div>
-      </button>
+      </div>
 
-      {/* Expanded Content */}
-      {isExpanded && (
-        <div className="border-t border-gray-700">
-          {/* Live output when running */}
-          {isRunning && (
-            <div className="p-4 border-b border-gray-700 bg-gray-900/50">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                <span className="text-sm text-blue-400">
-                  {executionStatus?.action || 'Processing...'}
-                </span>
-              </div>
-              <div
-                ref={outputRef}
-                className="font-mono text-sm text-gray-300 max-h-64 overflow-y-auto whitespace-pre-wrap"
-              >
-                {liveOutput || 'Waiting for output...'}
-              </div>
+      {/* Always visible content */}
+      <div>
+        {/* Live output when running */}
+        {isRunning && (
+          <div className="p-4 border-b border-gray-700 bg-gray-900/50">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+              <span className="text-sm text-blue-400">
+                {executionStatus?.action || 'Processing...'}
+              </span>
             </div>
-          )}
-
-          {/* Conversation history */}
-          <div className="overflow-y-auto">
-            {conversations.length === 0 && !isRunning ? (
-              <div className="p-8 text-center text-gray-500">
-                No conversation history yet
-              </div>
-            ) : (
-              [...conversations].reverse().map((entry, index) => (
-                <ConversationEntryCard key={index} entry={entry} index={conversations.length - 1 - index} />
-              ))
-            )}
+            <div
+              ref={outputRef}
+              className="font-mono text-sm text-gray-300 max-h-64 overflow-y-auto whitespace-pre-wrap"
+            >
+              {liveOutput || 'Waiting for output...'}
+            </div>
           </div>
+        )}
+
+        {/* Conversation history */}
+        <div className="overflow-y-auto">
+          {conversations.length === 0 && !isRunning ? (
+            <div className="p-8 text-center text-gray-500">
+              No conversation history yet
+            </div>
+          ) : (
+            paginatedConversations.map((entry, index) => (
+              <ConversationEntryCard
+                key={currentPage * PAGE_SIZE + index}
+                entry={entry}
+                index={conversations.length - 1 - (currentPage * PAGE_SIZE + index)}
+              />
+            ))
+          )}
         </div>
-      )}
+
+        {/* Pagination controls */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between p-4 border-t border-gray-700">
+            <button
+              onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
+              disabled={currentPage === 0}
+              className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Previous
+            </button>
+            <span className="text-sm text-gray-400">
+              Page {currentPage + 1} of {totalPages}
+            </span>
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))}
+              disabled={currentPage >= totalPages - 1}
+              className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Next
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

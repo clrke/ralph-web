@@ -158,6 +158,113 @@ Update the `ImplementationSection` component in `/client/src/pages/SessionView.t
 
 ---
 
+## Stage 5 Review Fix Steps (v3)
+
+[PLAN_STEP id="step-13" parent="null" status="pending"]
+Replace Tree View with Timeline View
+Remove the current ReactFlow "visual" view in `/client/src/pages/SessionView.tsx` and `/client/src/components/PlanEditor/`. Implement a Timeline View that shows:
+- Sequential steps in a vertical timeline format
+- Step status indicators (pending, in_progress, completed, blocked)
+- Timestamps for started/completed steps
+- Progress connecting lines between steps
+- Current step highlighted
+Keep the List view as an alternative. Update view mode toggle from 'visual'/'list' to 'timeline'/'list'.
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-14" parent="null" status="pending"]
+Implement Circuit Breaker Pattern (following ralph-claude-code)
+Create `/server/src/services/CircuitBreaker.ts` following the ralph-claude-code pattern:
+- 3-state machine: CLOSED (normal), HALF_OPEN (monitoring), OPEN (halted)
+- State file: `.circuit_breaker_state` in session directory with JSON format
+- History file: `.circuit_breaker_history` tracking all state transitions
+- Thresholds: NO_PROGRESS_THRESHOLD=3, SAME_ERROR_THRESHOLD=5
+- Functions: `initCircuitBreaker()`, `recordLoopResult(filesChanged, hasErrors)`, `canExecute()`, `shouldHaltExecution()`, `resetCircuitBreaker()`
+- Transition logic: CLOSED→HALF_OPEN at 2 no-progress, CLOSED→OPEN at 3, HALF_OPEN→CLOSED on progress detected
+- Integration: Call from spawn helpers in app.ts before spawning Claude
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-15" parent="null" status="pending"]
+Implement Log Rotation per README spec
+Create `/server/src/services/LogRotation.ts` with:
+- Configuration: LOG_MAX_SIZE_MB=50, LOG_MAX_FILES=10, LOG_RETENTION_DAYS=30
+- Function: `rotateLogFile(filePath)` - rotate when file exceeds max size
+- Function: `cleanupOldLogs(directory)` - delete logs older than retention days
+- Function: `checkAndRotate(filePath)` - check size and rotate if needed
+- Apply to: conversations.json, status.json activity logs
+- Integrate with FileStorageService for automatic rotation on write
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-16" parent="null" status="pending"]
+Fix Stage 4 PR Verification with gh pr command
+Update `spawnStage4PRCreation()` in `/server/src/app.ts`:
+- After Claude completes, run `gh pr list --head <branch> --json number,url` to verify PR exists
+- Parse JSON output to extract PR number and URL
+- Remove reliance on `[PR_CREATED]` marker parsing
+- Update session with actual PR URL from GitHub API response
+- Broadcast pr.created event with verified PR data
+- Handle case where PR already exists (reuse existing PR)
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-17" parent="null" status="pending"]
+Add Mutex/Lock Around Spawn Logic
+Create `/server/src/services/SpawnLock.ts`:
+- In-memory lock map: `Map<string, { locked: boolean, acquiredAt: Date }>`
+- Function: `acquireLock(sessionId): boolean` - returns false if already locked
+- Function: `releaseLock(sessionId): void` - release the lock
+- Function: `isLocked(sessionId): boolean` - check lock status
+- Add timeout: auto-release after 10 minutes (safety)
+Update batch answers endpoint in `/server/src/app.ts`:
+- Acquire lock before spawning Stage 2/3
+- Release lock in finally block after spawn completes
+- Return 409 Conflict if lock already held
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-18" parent="null" status="pending"]
+Escape Special Markers in User Input
+Create `/server/src/utils/sanitizeInput.ts`:
+- Function: `escapeMarkers(text: string): string`
+- Escape patterns: `[PLAN_APPROVED]`, `[PR_APPROVED]`, `[DECISION_NEEDED`, `[STEP_COMPLETE`, `[IMPLEMENTATION_COMPLETE]`, `[PR_CREATED]`, `[PLAN_FILE`
+- Replace `[` with `\[` only for these specific markers
+- Apply in prompt builders: buildStage1Prompt, buildStage2Prompt, buildStage3Prompt, buildStage4Prompt, buildStage5Prompt
+- Sanitize: session.title, session.featureDescription, session.technicalNotes, remarks parameter
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-19" parent="null" status="pending"]
+Add Tests for Haiku Subprocess Services
+Create test files for untested services:
+
+`/tests/unit/DecisionValidator.test.ts`:
+- Test validateQuestions with valid/invalid questions
+- Test Haiku subprocess spawning
+- Test JSON parsing of Haiku response
+- Test timeout handling
+- Test error recovery
+
+`/tests/unit/TestRequirementAssessor.test.ts`:
+- Test assessTestRequirements with different codebases
+- Test subprocess spawning and output parsing
+- Test timeout handling
+
+`/tests/unit/IncompleteStepsAssessor.test.ts`:
+- Test assessIncompleteSteps with various plan states
+- Test subprocess spawning and output parsing
+- Test edge cases (empty plans, all complete, all incomplete)
+
+Mock subprocess spawning using jest.mock for unit tests.
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-20" parent="null" status="pending"]
+Add Missing Socket Event Type Definitions
+Update `/client/src/services/socket.ts` SocketEvents interface to add:
+- 'step.started': { stepId: string, timestamp: string }
+- 'step.completed': { stepId, status, summary, filesModified, timestamp }
+- 'implementation.progress': { stepId, status, filesModified, testsStatus, retryCount, message, timestamp }
+- 'pr.created': { prNumber, prUrl, timestamp }
+Also add `reviewCount?: number` to 'plan.updated' event type.
+[/PLAN_STEP]
+
+---
+
 ## Files to Modify
 
 | File | Changes |

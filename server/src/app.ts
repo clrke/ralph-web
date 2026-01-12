@@ -983,6 +983,16 @@ export function createApp(
           return;
         }
 
+        // Check for unanswered Stage 2 questions before starting new iteration
+        const questionsData = await storage.readJson<{ questions: Question[] }>(`${sessionDir}/questions.json`);
+        const unansweredStage2Questions = questionsData?.questions.filter(
+          q => q.stage === 'planning' && !q.answeredAt
+        ) || [];
+        if (unansweredStage2Questions.length > 0) {
+          console.log(`Cannot start Stage 2 iteration: ${unansweredStage2Questions.length} unanswered questions for ${featureId}`);
+          return;
+        }
+
         // Build Stage 2 prompt and spawn review using helper function
         const currentIteration = (plan.reviewCount || 0) + 1;
         const prompt = buildStage2Prompt(session, plan, currentIteration);
@@ -1373,6 +1383,9 @@ After creating all steps, write the plan to a file and output:
           // Broadcast execution started
           eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'batch_answers_resume');
 
+          // Save "started" conversation entry
+          await resultHandler.saveConversationStart(sessionDir, session.currentStage, prompt);
+
           // Resume Claude with the batch answers
           const result = await orchestrator.spawn({
             prompt,
@@ -1475,6 +1488,9 @@ After creating all steps, write the plan to a file and output:
 [PLAN_FILE path="/path/to/plan.md"]
 [PLAN_MODE_EXITED]`;
 
+              // Save "started" conversation entry
+              await resultHandler.saveConversationStart(sessionDir, 1, createPlanPrompt);
+
               orchestrator.spawn({
                 prompt: createPlanPrompt,
                 projectPath: session.projectPath,
@@ -1551,6 +1567,18 @@ After creating all steps, write the plan to a file and output:
         return res.status(404).json({ error: 'Plan not found' });
       }
 
+      // Check for unanswered Stage 2 questions - must answer before approving
+      const questionsData = await storage.readJson<{ questions: Question[] }>(`${projectId}/${featureId}/questions.json`);
+      const unansweredStage2Questions = questionsData?.questions.filter(
+        q => q.stage === 'planning' && !q.answeredAt
+      ) || [];
+      if (unansweredStage2Questions.length > 0) {
+        return res.status(400).json({
+          error: 'Cannot approve plan while there are unanswered plan review questions',
+          unansweredCount: unansweredStage2Questions.length,
+        });
+      }
+
       plan.isApproved = true;
 
       // Assess test requirements using Haiku (fire-and-forget, but save result)
@@ -1625,6 +1653,18 @@ After creating all steps, write the plan to a file and output:
         return res.status(404).json({ error: 'Plan not found' });
       }
 
+      // Check for unanswered Stage 2 questions - must answer before requesting changes
+      const questionsData = await storage.readJson<{ questions: Question[] }>(`${sessionDir}/questions.json`);
+      const unansweredStage2Questions = questionsData?.questions.filter(
+        q => q.stage === 'planning' && !q.answeredAt
+      ) || [];
+      if (unansweredStage2Questions.length > 0) {
+        return res.status(400).json({
+          error: 'Cannot request changes while there are unanswered plan review questions',
+          unansweredCount: unansweredStage2Questions.length,
+        });
+      }
+
       // Return response immediately
       res.json({ success: true, feedback });
 
@@ -1643,6 +1683,9 @@ After creating all steps, write the plan to a file and output:
 
       // Broadcast execution started
       eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'plan_revision_started');
+
+      // Save "started" conversation entry
+      await resultHandler.saveConversationStart(sessionDir, 2, prompt);
 
       // Spawn Claude to revise the plan
       orchestrator.spawn({

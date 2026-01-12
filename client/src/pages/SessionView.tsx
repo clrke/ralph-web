@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useSessionStore } from '../stores/sessionStore';
-import { PlanEditor } from '../components/PlanEditor';
+import { TimelineView } from '../components/PlanEditor';
 import { ConversationPanel } from '../components/ConversationPanel';
 import { connectToSession, disconnectFromSession, getSocket } from '../services/socket';
 import type { PlanStepStatus, ImplementationProgressEvent } from '@claude-code-web/shared';
@@ -218,7 +218,7 @@ export default function SessionView() {
 
           {/* Stage 2: Plan Review */}
           {currentStage === 2 && plan && (
-            <PlanReviewSection plan={plan} />
+            <PlanReviewSection plan={plan} isRunning={executionStatus?.status === 'running'} />
           )}
 
           {/* Stage 3: Implementation Progress */}
@@ -553,10 +553,31 @@ function QuestionCard({
   );
 }
 
-function PlanReviewSection({ plan }: { plan: Plan }) {
+function PlanReviewSection({ plan, isRunning }: { plan: Plan; isRunning?: boolean }) {
   const { approvePlan, requestPlanChanges } = useSessionStore();
-  const [viewMode, setViewMode] = useState<'list' | 'visual'>('visual');
+  const [viewMode, setViewMode] = useState<'list' | 'timeline'>('timeline');
   const [selectedStep, setSelectedStep] = useState<PlanStep | null>(null);
+
+  // While plan review is running, show a loading state instead of the plan
+  if (isRunning) {
+    return (
+      <div className="bg-gray-800 rounded-lg p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+          <h2 className="text-xl font-semibold">Reviewing Plan...</h2>
+        </div>
+        <p className="text-gray-400">
+          Claude is reviewing the implementation plan. The plan will be shown once the review is complete.
+        </p>
+        <div className="mt-4 p-3 bg-gray-700/50 rounded-lg">
+          <p className="text-sm text-gray-400">
+            Plan version: <span className="text-gray-300">v{plan.planVersion}</span> |
+            Steps: <span className="text-gray-300">{plan.steps.length}</span>
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -567,12 +588,12 @@ function PlanReviewSection({ plan }: { plan: Plan }) {
             <span className="text-sm text-gray-400">v{plan.planVersion}</span>
             <div className="flex bg-gray-700 rounded-lg p-1">
               <button
-                onClick={() => setViewMode('visual')}
+                onClick={() => setViewMode('timeline')}
                 className={`px-3 py-1 text-sm rounded ${
-                  viewMode === 'visual' ? 'bg-blue-600 text-white' : 'text-gray-400'
+                  viewMode === 'timeline' ? 'bg-blue-600 text-white' : 'text-gray-400'
                 }`}
               >
-                Visual
+                Timeline
               </button>
               <button
                 onClick={() => setViewMode('list')}
@@ -586,8 +607,8 @@ function PlanReviewSection({ plan }: { plan: Plan }) {
           </div>
         </div>
 
-        {viewMode === 'visual' ? (
-          <PlanEditor plan={plan} onStepSelect={setSelectedStep} />
+        {viewMode === 'timeline' ? (
+          <TimelineView plan={plan} onStepSelect={setSelectedStep} selectedStepId={selectedStep?.id} />
         ) : (
           <div className="space-y-4">
             {plan.steps.map((step, index) => (
@@ -648,6 +669,9 @@ function ImplementationSection({
 }: {
   plan: Plan | null;
 }) {
+  const { implementationProgress } = useSessionStore();
+  const [viewMode, setViewMode] = useState<'list' | 'timeline'>('timeline');
+
   if (!plan) {
     return (
       <div className="bg-gray-800 rounded-lg p-6">
@@ -656,74 +680,113 @@ function ImplementationSection({
     );
   }
 
+  return (
+    <div className="space-y-6">
+      <div className="bg-gray-800 rounded-lg p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold">Implementation Progress</h2>
+          <div className="flex bg-gray-700 rounded-lg p-1">
+            <button
+              onClick={() => setViewMode('timeline')}
+              className={`px-3 py-1 text-sm rounded ${
+                viewMode === 'timeline' ? 'bg-blue-600 text-white' : 'text-gray-400'
+              }`}
+            >
+              Timeline
+            </button>
+            <button
+              onClick={() => setViewMode('list')}
+              className={`px-3 py-1 text-sm rounded ${
+                viewMode === 'list' ? 'bg-blue-600 text-white' : 'text-gray-400'
+              }`}
+            >
+              List
+            </button>
+          </div>
+        </div>
+
+        {viewMode === 'timeline' ? (
+          <TimelineView
+            plan={plan}
+            implementationProgress={implementationProgress ? {
+              stepId: implementationProgress.stepId,
+              retryCount: implementationProgress.retryCount,
+              message: implementationProgress.message,
+            } : null}
+          />
+        ) : (
+          <ImplementationListView plan={plan} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ImplementationListView({ plan }: { plan: Plan }) {
   const completedSteps = plan.steps.filter(s => s.status === 'completed').length;
   const totalSteps = plan.steps.length;
   const progress = totalSteps > 0 ? (completedSteps / totalSteps) * 100 : 0;
 
   return (
-    <div className="space-y-6">
-      <div className="bg-gray-800 rounded-lg p-6">
-        <h2 className="text-xl font-semibold mb-4">Implementation Progress</h2>
-
-        {/* Progress bar */}
-        <div className="mb-6">
-          <div className="flex justify-between text-sm mb-2">
-            <span>{completedSteps} of {totalSteps} steps completed</span>
-            <span>{Math.round(progress)}%</span>
-          </div>
-          <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-green-500 transition-all duration-300"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
+    <>
+      {/* Progress bar */}
+      <div className="mb-6">
+        <div className="flex justify-between text-sm mb-2">
+          <span>{completedSteps} of {totalSteps} steps completed</span>
+          <span>{Math.round(progress)}%</span>
         </div>
-
-        {/* Steps */}
-        <div className="space-y-3">
-          {plan.steps.map((step, index) => (
-            <div
-              key={step.id}
-              className={`flex items-center gap-3 p-3 rounded-lg ${
-                step.status === 'completed'
-                  ? 'bg-green-900/20'
-                  : step.status === 'in_progress'
-                  ? 'bg-blue-900/20'
-                  : step.status === 'blocked' || step.status === 'needs_review'
-                  ? 'bg-yellow-900/20'
-                  : 'bg-gray-700/50'
-              }`}
-            >
-              <div className="flex-shrink-0">
-                {step.status === 'completed' ? (
-                  <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                ) : step.status === 'in_progress' ? (
-                  <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                ) : step.status === 'blocked' || step.status === 'needs_review' ? (
-                  <svg className="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                ) : (
-                  <div className="w-5 h-5 rounded-full border-2 border-gray-500" />
-                )}
-              </div>
-              <div className="flex-1">
-                <span className={step.status === 'completed' ? 'text-gray-400' : ''}>
-                  {index + 1}. {step.title}
-                </span>
-                {(step.status === 'blocked' || step.status === 'needs_review') && (
-                  <span className="ml-2 text-xs text-yellow-400">
-                    {step.status === 'blocked' ? 'Waiting for input' : 'Needs review'}
-                  </span>
-                )}
-              </div>
-            </div>
-          ))}
+        <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-green-500 transition-all duration-300"
+            style={{ width: `${progress}%` }}
+          />
         </div>
       </div>
-    </div>
+
+      {/* Steps */}
+      <div className="space-y-3">
+        {plan.steps.map((step, index) => (
+          <div
+            key={step.id}
+            className={`flex items-center gap-3 p-3 rounded-lg ${
+              step.status === 'completed'
+                ? 'bg-green-900/20'
+                : step.status === 'in_progress'
+                ? 'bg-blue-900/20'
+                : step.status === 'blocked' || step.status === 'needs_review'
+                ? 'bg-yellow-900/20'
+                : 'bg-gray-700/50'
+            }`}
+          >
+            <div className="flex-shrink-0">
+              {step.status === 'completed' ? (
+                <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              ) : step.status === 'in_progress' ? (
+                <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+              ) : step.status === 'blocked' || step.status === 'needs_review' ? (
+                <svg className="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              ) : (
+                <div className="w-5 h-5 rounded-full border-2 border-gray-500" />
+              )}
+            </div>
+            <div className="flex-1">
+              <span className={step.status === 'completed' ? 'text-gray-400' : ''}>
+                {index + 1}. {step.title}
+              </span>
+              {(step.status === 'blocked' || step.status === 'needs_review') && (
+                <span className="ml-2 text-xs text-yellow-400">
+                  {step.status === 'blocked' ? 'Waiting for input' : 'Needs review'}
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
