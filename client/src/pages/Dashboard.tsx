@@ -1,6 +1,47 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import type { Session } from '@claude-code-web/shared';
+
+const STAGE_LABELS: Record<number, string> = {
+  1: 'Discovery',
+  2: 'Planning',
+  3: 'Implementing',
+  4: 'PR Creation',
+  5: 'PR Review',
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  discovery: 'bg-blue-600',
+  planning: 'bg-yellow-600',
+  implementing: 'bg-purple-600',
+  pr_creation: 'bg-green-600',
+  pr_review: 'bg-teal-600',
+};
 
 export default function Dashboard() {
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function fetchSessions() {
+      try {
+        const response = await fetch('/api/sessions');
+        if (!response.ok) {
+          throw new Error('Failed to fetch sessions');
+        }
+        const data = await response.json();
+        setSessions(data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load sessions');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    fetchSessions();
+  }, []);
+
   return (
     <div className="container mx-auto px-4 py-8">
       <header className="mb-8">
@@ -22,9 +63,58 @@ export default function Dashboard() {
 
       <section>
         <h2 className="text-xl font-semibold mb-4">Recent Sessions</h2>
-        <div className="bg-gray-800 rounded-lg p-6 text-gray-400">
-          No sessions yet. Create your first session to get started.
-        </div>
+
+        {isLoading && (
+          <div className="bg-gray-800 rounded-lg p-6 text-gray-400">
+            Loading sessions...
+          </div>
+        )}
+
+        {error && (
+          <div className="bg-red-900/30 border border-red-700 rounded-lg p-4 text-red-400">
+            {error}
+          </div>
+        )}
+
+        {!isLoading && !error && sessions.length === 0 && (
+          <div className="bg-gray-800 rounded-lg p-6 text-gray-400">
+            No sessions yet. Create your first session to get started.
+          </div>
+        )}
+
+        {!isLoading && !error && sessions.length > 0 && (
+          <div className="space-y-3">
+            {sessions.map((session) => (
+              <Link
+                key={`${session.projectId}/${session.featureId}`}
+                to={`/session/${session.projectId}/${session.featureId}`}
+                className="block bg-gray-800 hover:bg-gray-700 rounded-lg p-4 transition-colors"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <h3 className="font-medium text-lg">{session.title}</h3>
+                    <p className="text-gray-400 text-sm mt-1 truncate">
+                      {session.projectPath}
+                    </p>
+                    {session.featureDescription && (
+                      <p className="text-gray-500 text-sm mt-1 line-clamp-2">
+                        {session.featureDescription}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 ml-4">
+                    <span className={`px-2 py-1 rounded text-xs font-medium ${STATUS_COLORS[session.status] || 'bg-gray-600'}`}>
+                      Stage {session.currentStage}: {STAGE_LABELS[session.currentStage]}
+                    </span>
+                    <span className="text-gray-500 text-sm whitespace-nowrap">
+                      {new Date(session.updatedAt).toLocaleDateString()}
+                    </span>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );

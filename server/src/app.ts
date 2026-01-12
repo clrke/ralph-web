@@ -5,6 +5,7 @@ import { SessionManager } from './services/SessionManager';
 import { ClaudeOrchestrator } from './services/ClaudeOrchestrator';
 import { OutputParser } from './services/OutputParser';
 import { ClaudeResultHandler } from './services/ClaudeResultHandler';
+import { DecisionValidator } from './services/DecisionValidator';
 import { EventBroadcaster } from './services/EventBroadcaster';
 import { buildStage1Prompt, buildStage2Prompt, buildPlanRevisionPrompt, buildBatchAnswersContinuationPrompt } from './prompts/stagePrompts';
 import { Session } from '@claude-code-web/shared';
@@ -48,9 +49,10 @@ async function applyHaikuPostProcessing(
     // Merge extracted decisions into result
     result.parsed.decisions = extractedParsed.decisions;
 
-    // Save the extracted questions
+    // Save the extracted questions (with validation)
     const sessionDir = `${session.projectId}/${session.featureId}`;
-    await resultHandler['saveQuestions'](sessionDir, session, extractedParsed.decisions);
+    const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+    await resultHandler['saveQuestions'](sessionDir, session, extractedParsed.decisions, plan);
 
     console.log(`Haiku fallback extracted ${extractedParsed.decisions.length} questions for ${session.featureId}`);
     return extractedParsed.decisions.length;
@@ -230,7 +232,10 @@ export function createApp(
   eventBroadcaster?: EventBroadcaster
 ): Express {
   const app = express();
-  const resultHandler = new ClaudeResultHandler(storage, sessionManager);
+
+  // Create decision validator for filtering false positives (README line 1461)
+  const decisionValidator = new DecisionValidator();
+  const resultHandler = new ClaudeResultHandler(storage, sessionManager, decisionValidator);
 
   // Middleware
   app.use(express.json());
@@ -258,6 +263,17 @@ export function createApp(
   });
 
   // API Routes
+
+  // List all sessions across all projects
+  app.get('/api/sessions', async (_req, res) => {
+    try {
+      const sessions = await sessionManager.listAllSessions();
+      res.json(sessions);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to list sessions';
+      res.status(500).json({ error: message });
+    }
+  });
 
   // Create session (with Zod validation) - automatically starts Stage 1
   app.post('/api/sessions', validate(CreateSessionInputSchema), async (req, res) => {
@@ -660,7 +676,14 @@ export function createApp(
       for (const { questionId, answer } of answers) {
         const questionIndex = questionsData.questions.findIndex(q => q.id === questionId);
         if (questionIndex !== -1) {
-          questionsData.questions[questionIndex].answer = answer;
+          // Normalize answer to QuestionAnswer format { value: string | string[] }
+          const normalizedAnswer = {
+            value: (answer as { value?: string; text?: string; values?: string[] }).value
+              ?? (answer as { text?: string }).text
+              ?? (answer as { values?: string[] }).values
+              ?? '',
+          };
+          questionsData.questions[questionIndex].answer = normalizedAnswer;
           questionsData.questions[questionIndex].answeredAt = now;
           answeredQuestions.push(questionsData.questions[questionIndex]);
         }

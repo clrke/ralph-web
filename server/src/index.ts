@@ -30,6 +30,27 @@ const app = createApp(storage, sessionManager, eventBroadcaster);
 // Attach Express app to HTTP server
 httpServer.on('request', app);
 
+// Handle Socket.IO engine errors to prevent crashes
+io.engine.on('connection_error', (err) => {
+  console.error('Socket.IO connection error:', err.message);
+});
+
+// Handle uncaught errors on the httpServer
+httpServer.on('error', (err) => {
+  console.error('HTTP Server error:', err.message);
+});
+
+// Global error handlers to prevent crashes
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err.message);
+  // Don't exit - keep running
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason);
+  // Don't exit - keep running
+});
+
 // Socket.IO for real-time updates
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);

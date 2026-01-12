@@ -51,6 +51,7 @@ interface SessionState {
   fetchSession: (projectId: string, featureId: string) => Promise<void>;
   fetchConversations: (projectId: string, featureId: string) => Promise<void>;
   submitQuestionAnswer: (questionId: string, answer: Question['answer']) => Promise<void>;
+  submitAllAnswers: (answers: Array<{ questionId: string; answer: Question['answer'] }>) => Promise<void>;
   approvePlan: () => Promise<void>;
   requestPlanChanges: (feedback: string) => Promise<void>;
 }
@@ -156,7 +157,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ answer }),
+          body: JSON.stringify(answer),
         }
       );
 
@@ -170,6 +171,37 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       set({
         error: error instanceof Error ? error.message : 'Failed to submit answer',
       });
+    }
+  },
+
+  submitAllAnswers: async (answers: Array<{ questionId: string; answer: Question['answer'] }>) => {
+    const { session } = get();
+    if (!session) return;
+
+    try {
+      const response = await fetch(
+        `/api/sessions/${session.projectId}/${session.featureId}/questions/answers`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(answers),
+        }
+      );
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to submit answers');
+      }
+
+      // Update local state for all answered questions
+      answers.forEach(({ questionId, answer }) => {
+        get().answerQuestion(questionId, answer);
+      });
+    } catch (error) {
+      set({
+        error: error instanceof Error ? error.message : 'Failed to submit answers',
+      });
+      throw error; // Re-throw so caller knows it failed
     }
   },
 

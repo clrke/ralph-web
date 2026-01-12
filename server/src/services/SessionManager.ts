@@ -332,6 +332,26 @@ export class SessionManager {
     return sessions;
   }
 
+  async listAllSessions(): Promise<Session[]> {
+    const projectsIndex = await this.storage.readJson<Record<string, string>>('projects.json');
+
+    if (!projectsIndex) {
+      return [];
+    }
+
+    const allSessions: Session[] = [];
+
+    for (const projectId of Object.keys(projectsIndex)) {
+      const sessions = await this.listSessions(projectId);
+      allSessions.push(...sessions);
+    }
+
+    // Sort by updatedAt descending (most recent first)
+    return allSessions.sort((a, b) =>
+      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    );
+  }
+
   async transitionStage(projectId: string, featureId: string, targetStage: number): Promise<Session> {
     const session = await this.getSession(projectId, featureId);
 

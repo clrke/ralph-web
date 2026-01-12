@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { FileStorageService } from '../data/FileStorageService';
 import { SessionManager } from './SessionManager';
 import { ClaudeResult } from './ClaudeOrchestrator';
+import { DecisionValidator, ValidationLog } from './DecisionValidator';
 import { Session, Plan, Question, QuestionStage, QuestionCategory } from '@claude-code-web/shared';
 
 const STAGE_TO_QUESTION_STAGE: Record<number, QuestionStage> = {
@@ -58,7 +59,8 @@ interface StatusFile {
 export class ClaudeResultHandler {
   constructor(
     private readonly storage: FileStorageService,
-    private readonly sessionManager: SessionManager
+    private readonly sessionManager: SessionManager,
+    private readonly validator?: DecisionValidator
   ) {}
 
   /**
@@ -86,9 +88,11 @@ export class ClaudeResultHandler {
       parsed: result.parsed,
     });
 
-    // Save parsed questions to questions.json
+    // Save parsed questions to questions.json (with validation)
     if (result.parsed.decisions.length > 0) {
-      await this.saveQuestions(sessionDir, session, result.parsed.decisions);
+      // Read plan for validation context
+      const plan = await this.storage.readJson<Plan>(`${sessionDir}/plan.json`);
+      await this.saveQuestions(sessionDir, session, result.parsed.decisions, plan);
     }
 
     // Save parsed plan steps to plan.json
@@ -143,9 +147,11 @@ export class ClaudeResultHandler {
       parsed: result.parsed,
     });
 
-    // Save any new questions (review findings)
+    // Save any new questions (review findings) with validation
     if (result.parsed.decisions.length > 0) {
-      await this.saveQuestions(sessionDir, session, result.parsed.decisions);
+      // Read plan for validation context
+      const plan = await this.storage.readJson<Plan>(`${sessionDir}/plan.json`);
+      await this.saveQuestions(sessionDir, session, result.parsed.decisions, plan);
     }
 
     // Update status.json
@@ -165,8 +171,29 @@ export class ClaudeResultHandler {
   private async saveQuestions(
     sessionDir: string,
     session: Session,
-    decisions: ClaudeResult['parsed']['decisions']
+    decisions: ClaudeResult['parsed']['decisions'],
+    plan: Plan | null
   ): Promise<void> {
+    // Validate decisions if we have a validator and a plan
+    let validatedDecisions = decisions;
+    if (this.validator && plan && decisions.length > 0) {
+      const { validDecisions, log } = await this.validator.validateDecisions(
+        decisions,
+        plan,
+        session.projectPath
+      );
+      validatedDecisions = validDecisions;
+
+      // Save validation log for debugging/auditing
+      await this.saveValidationLog(sessionDir, log);
+
+      // If all decisions were filtered, we're done
+      if (validatedDecisions.length === 0) {
+        console.log(`All ${decisions.length} decision(s) filtered as false positives`);
+        return;
+      }
+    }
+
     const questionsPath = `${sessionDir}/questions.json`;
     const questionsFile = await this.storage.readJson<QuestionsFile>(questionsPath) || {
       version: '1.0',
@@ -176,7 +203,7 @@ export class ClaudeResultHandler {
 
     const now = new Date().toISOString();
 
-    for (const decision of decisions) {
+    for (const decision of validatedDecisions) {
       // Map category to valid QuestionCategory, default to 'technical'
       const category: QuestionCategory = VALID_CATEGORIES.includes(decision.category as QuestionCategory)
         ? (decision.category as QuestionCategory)
@@ -213,6 +240,21 @@ export class ClaudeResultHandler {
     if (options.length === 0) return 'text';
     if (options.length <= 4) return 'single_choice';
     return 'multi_choice';
+  }
+
+  /**
+   * Save validation audit log for debugging/auditing filtered decisions.
+   */
+  private async saveValidationLog(
+    sessionDir: string,
+    log: ValidationLog
+  ): Promise<void> {
+    const logPath = `${sessionDir}/validation-logs.json`;
+    const logs = await this.storage.readJson<{ entries: ValidationLog[] }>(logPath) || {
+      entries: [],
+    };
+    logs.entries.push(log);
+    await this.storage.writeJson(logPath, logs);
   }
 
   private async savePlanSteps(

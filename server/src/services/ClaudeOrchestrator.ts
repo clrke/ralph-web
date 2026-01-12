@@ -45,7 +45,7 @@ const STAGE_TOOLS: Record<number, string[]> = {
 };
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-const HAIKU_TIMEOUT_MS = 30 * 1000; // 30 seconds for Haiku post-processing
+const HAIKU_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes for Haiku post-processing
 
 // Prompt for Haiku to extract and format questions
 const QUESTION_EXTRACTION_PROMPT = `You are a formatting assistant. Extract any questions or decisions from the following text and format them using the [DECISION_NEEDED] marker format.
