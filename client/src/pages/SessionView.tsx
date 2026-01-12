@@ -25,6 +25,7 @@ const STAGE_LABELS: Record<number, string> = {
   3: 'Implementation',
   4: 'PR Creation',
   5: 'PR Review',
+  6: 'Final Approval',
 };
 
 const STAGE_COLORS: Record<number, string> = {
@@ -33,6 +34,7 @@ const STAGE_COLORS: Record<number, string> = {
   3: 'bg-stage-implementation',
   4: 'bg-stage-pr',
   5: 'bg-stage-review',
+  6: 'bg-emerald-600',
 };
 
 export default function SessionView() {
@@ -214,6 +216,19 @@ export default function SessionView() {
         </div>
         <h1 className="text-3xl font-bold">{session.title}</h1>
         <p className="text-gray-400 mt-2">{session.featureDescription}</p>
+        {session.prUrl && (
+          <a
+            href={session.prUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 mt-3 text-blue-400 hover:text-blue-300 transition-colors"
+          >
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 16 16">
+              <path fillRule="evenodd" d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z"/>
+            </svg>
+            View Pull Request
+          </a>
+        )}
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -247,6 +262,11 @@ export default function SessionView() {
           {/* Stage 5: PR Review */}
           {currentStage === 5 && (
             <PRReviewSection plan={plan} isRunning={executionStatus?.status === 'running'} projectId={projectId} featureId={featureId} />
+          )}
+
+          {/* Stage 6: Final Approval */}
+          {currentStage === 6 && projectId && featureId && (
+            <FinalApprovalSection session={session} projectId={projectId} featureId={featureId} />
           )}
 
           {/* Conversation Panel */}
@@ -339,8 +359,8 @@ export default function SessionView() {
             {showDebug && (
               <div className="mt-4 space-y-3">
                 <p className="text-xs text-gray-500">Force transition to stage:</p>
-                <div className="grid grid-cols-5 gap-1">
-                  {[1, 2, 3, 4, 5].map((stage) => (
+                <div className="grid grid-cols-6 gap-1">
+                  {[1, 2, 3, 4, 5, 6].map((stage) => (
                     <button
                       key={stage}
                       onClick={() => handleTransition(stage)}
@@ -1045,6 +1065,192 @@ function PRReviewSection({ plan, isRunning, projectId, featureId }: { plan: Plan
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function FinalApprovalSection({ session, projectId, featureId }: { session: Session; projectId: string; featureId: string }) {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedAction, setSelectedAction] = useState<'merge' | 'plan_changes' | 're_review' | null>(null);
+  const [feedback, setFeedback] = useState('');
+
+  const handleAction = async (action: 'merge' | 'plan_changes' | 're_review') => {
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`/api/sessions/${projectId}/${featureId}/final-approval`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, feedback: feedback || undefined }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to process action');
+      }
+
+      // Reset form on success
+      setSelectedAction(null);
+      setFeedback('');
+    } catch (error) {
+      console.error('Final approval action failed:', error);
+      alert(error instanceof Error ? error.message : 'Action failed');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-gray-800 rounded-lg p-6">
+        <h2 className="text-xl font-semibold mb-4">Final Approval</h2>
+
+        {/* Success message */}
+        <div className="mb-6 p-4 bg-green-900/20 rounded-lg">
+          <div className="flex items-center gap-2 text-green-400 mb-2">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="font-medium">PR Review Complete</span>
+          </div>
+          <p className="text-sm text-gray-300">
+            Claude has reviewed the PR and found no issues. The implementation is ready for your final review.
+          </p>
+        </div>
+
+        {/* PR Link */}
+        {session.prUrl && (
+          <div className="mb-6 p-4 bg-gray-700/50 rounded-lg">
+            <div className="flex items-center gap-3">
+              <svg className="w-6 h-6 text-blue-400" fill="currentColor" viewBox="0 0 16 16">
+                <path fillRule="evenodd" d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z"/>
+              </svg>
+              <div>
+                <p className="text-sm text-gray-400">Pull Request</p>
+                <a
+                  href={session.prUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  {session.prUrl}
+                </a>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Action buttons */}
+        <div className="space-y-4">
+          <p className="text-sm text-gray-400">What would you like to do?</p>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Merge button */}
+            <button
+              onClick={() => setSelectedAction('merge')}
+              disabled={isSubmitting}
+              className={`p-4 rounded-lg border-2 transition-all ${
+                selectedAction === 'merge'
+                  ? 'border-green-500 bg-green-900/30'
+                  : 'border-gray-600 hover:border-green-500/50 hover:bg-green-900/10'
+              }`}
+            >
+              <div className="flex flex-col items-center gap-2">
+                <svg className="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                <span className="font-medium text-green-400">Complete Session</span>
+                <span className="text-xs text-gray-400 text-center">Mark as complete - ready to merge</span>
+              </div>
+            </button>
+
+            {/* Return to Plan Review button */}
+            <button
+              onClick={() => setSelectedAction('plan_changes')}
+              disabled={isSubmitting}
+              className={`p-4 rounded-lg border-2 transition-all ${
+                selectedAction === 'plan_changes'
+                  ? 'border-blue-500 bg-blue-900/30'
+                  : 'border-gray-600 hover:border-blue-500/50 hover:bg-blue-900/10'
+              }`}
+            >
+              <div className="flex flex-col items-center gap-2">
+                <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                <span className="font-medium text-blue-400">Request Changes</span>
+                <span className="text-xs text-gray-400 text-center">Return to Stage 2 for plan updates</span>
+              </div>
+            </button>
+
+            {/* Re-review button */}
+            <button
+              onClick={() => setSelectedAction('re_review')}
+              disabled={isSubmitting}
+              className={`p-4 rounded-lg border-2 transition-all ${
+                selectedAction === 're_review'
+                  ? 'border-yellow-500 bg-yellow-900/30'
+                  : 'border-gray-600 hover:border-yellow-500/50 hover:bg-yellow-900/10'
+              }`}
+            >
+              <div className="flex flex-col items-center gap-2">
+                <svg className="w-8 h-8 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span className="font-medium text-yellow-400">Re-Review PR</span>
+                <span className="text-xs text-gray-400 text-center">Return to Stage 5 for another review</span>
+              </div>
+            </button>
+          </div>
+
+          {/* Feedback form (shown when action selected) */}
+          {selectedAction && (
+            <div className="mt-4 p-4 bg-gray-700/50 rounded-lg space-y-3">
+              <label className="block text-sm font-medium">
+                {selectedAction === 'merge' ? 'Any final notes? (optional)' :
+                 selectedAction === 'plan_changes' ? 'What changes do you need?' :
+                 'What should Claude focus on in the re-review?'}
+              </label>
+              <textarea
+                value={feedback}
+                onChange={(e) => setFeedback(e.target.value)}
+                placeholder={
+                  selectedAction === 'merge' ? 'Add any notes about the implementation...' :
+                  selectedAction === 'plan_changes' ? 'Describe the changes you want to make to the plan...' :
+                  'Describe specific areas to focus on...'
+                }
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                rows={3}
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setSelectedAction(null);
+                    setFeedback('');
+                  }}
+                  className="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-lg text-sm font-medium transition-colors"
+                  disabled={isSubmitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleAction(selectedAction)}
+                  disabled={isSubmitting || (selectedAction !== 'merge' && !feedback.trim())}
+                  className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
+                    selectedAction === 'merge' ? 'bg-green-600 hover:bg-green-700' :
+                    selectedAction === 'plan_changes' ? 'bg-blue-600 hover:bg-blue-700' :
+                    'bg-yellow-600 hover:bg-yellow-700'
+                  }`}
+                >
+                  {isSubmitting ? 'Processing...' :
+                   selectedAction === 'merge' ? 'Complete Session' :
+                   selectedAction === 'plan_changes' ? 'Return to Plan Review' :
+                   'Start Re-Review'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -294,7 +294,7 @@ async function spawnStage2Review(
       eventBroadcaster?.claudeOutput(session.projectId, session.featureId, output, isComplete);
     },
   }).then(async (result) => {
-    await resultHandler.handleStage2Result(session, result, prompt);
+    const { allFiltered } = await resultHandler.handleStage2Result(session, result, prompt);
 
     // Apply Haiku fallback if no decisions were parsed but output looks like questions
     const extractedCount = await applyHaikuPostProcessing(result, session.projectPath, storage, session, resultHandler);
@@ -305,7 +305,7 @@ async function spawnStage2Review(
     // Broadcast events for parsed data
     if (eventBroadcaster) {
       // Broadcast questions (review findings) if any were asked (including Haiku-extracted)
-      if (result.parsed.decisions.length > 0) {
+      if (result.parsed.decisions.length > 0 && !allFiltered) {
         const questionsPath = `${sessionDir}/questions.json`;
         const questionsData = await storage.readJson<{ questions: Question[] }>(questionsPath);
         if (questionsData) {
@@ -327,6 +327,12 @@ async function spawnStage2Review(
         result.isError ? 'error' : 'idle',
         result.isError ? 'stage2_error' : 'stage2_complete'
       );
+    }
+
+    // Auto-approve plan if all questions were filtered as false positives
+    if (allFiltered && result.parsed.decisions.length > 0) {
+      console.log(`All ${result.parsed.decisions.length} question(s) filtered - auto-approving plan for ${session.featureId}`);
+      result.parsed.planApproved = true;
     }
 
     // Check for auto Stage 2→3 transition
@@ -901,6 +907,15 @@ async function spawnStage4PRCreation(
       // Save PR info
       await storage.writeJson(`${sessionDir}/pr.json`, prInfo);
 
+      // Save PR URL to session
+      const sessionPath = `${sessionDir}/session.json`;
+      const sessionData = await storage.readJson<Session>(sessionPath);
+      if (sessionData) {
+        sessionData.prUrl = prInfo.url;
+        sessionData.updatedAt = new Date().toISOString();
+        await storage.writeJson(sessionPath, sessionData);
+      }
+
       console.log(`PR verified: ${prInfo.url || prInfo.title}`);
 
       // Broadcast PR created event
@@ -1083,20 +1098,26 @@ async function handleStage5Result(
     return;
   }
 
-  // Check for PR approval
+  // Check for PR approval - transition to Stage 6 for user final approval
   if (result.parsed.prApproved) {
-    console.log(`PR approved for ${session.featureId}`);
+    console.log(`PR approved by Claude for ${session.featureId}, transitioning to Stage 6 for user final approval`);
 
-    // Update status to completed
+    // Transition to Stage 6
+    const previousStage = session.currentStage;
+    const updatedSession = await sessionManager.transitionStage(session.projectId, session.featureId, 6);
+
+    // Update status
     const finalStatus = await storage.readJson<Record<string, unknown>>(statusPath);
     if (finalStatus) {
+      finalStatus.currentStage = 6;
       finalStatus.status = 'idle';
-      finalStatus.lastAction = 'stage5_pr_approved';
+      finalStatus.lastAction = 'stage6_awaiting_approval';
       finalStatus.lastActionAt = new Date().toISOString();
       await storage.writeJson(statusPath, finalStatus);
     }
 
-    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage5_pr_approved');
+    eventBroadcaster?.stageChanged(updatedSession, previousStage);
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage6_awaiting_approval');
     return;
   }
 
@@ -1489,6 +1510,114 @@ export function createApp(
     }
   });
 
+  // Stage 6: Final approval actions (merge, plan_changes, re_review)
+  app.post('/api/sessions/:projectId/:featureId/final-approval', async (req, res) => {
+    try {
+      const { projectId, featureId } = req.params;
+      const { action, feedback } = req.body as { action: 'merge' | 'plan_changes' | 're_review'; feedback?: string };
+
+      if (!['merge', 'plan_changes', 're_review'].includes(action)) {
+        return res.status(400).json({ error: 'Invalid action. Must be: merge, plan_changes, or re_review' });
+      }
+
+      const session = await sessionManager.getSession(projectId, featureId);
+      if (!session) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      if (session.currentStage !== 6) {
+        return res.status(400).json({ error: 'Session is not in Stage 6 (Final Approval)' });
+      }
+
+      const sessionDir = `${projectId}/${featureId}`;
+      const previousStage = session.currentStage;
+
+      if (action === 'merge') {
+        // Mark session as completed
+        const updatedSession = await sessionManager.updateSession(projectId, featureId, {
+          status: 'completed',
+        });
+
+        // Update status.json
+        const statusPath = `${sessionDir}/status.json`;
+        const status = await storage.readJson<Record<string, unknown>>(statusPath);
+        if (status) {
+          status.status = 'idle';
+          status.lastAction = 'session_completed';
+          status.lastActionAt = new Date().toISOString();
+          if (feedback) {
+            status.completionNotes = feedback;
+          }
+          await storage.writeJson(statusPath, status);
+        }
+
+        eventBroadcaster?.executionStatus(projectId, featureId, 'idle', 'session_completed');
+
+        console.log(`Session ${featureId} marked as completed by user`);
+        res.json({ success: true, session: updatedSession });
+
+      } else if (action === 'plan_changes') {
+        // Return to Stage 2 for plan changes
+        if (!feedback) {
+          return res.status(400).json({ error: 'Feedback is required when requesting plan changes' });
+        }
+
+        const updatedSession = await sessionManager.transitionStage(projectId, featureId, 2);
+
+        eventBroadcaster?.stageChanged(updatedSession, previousStage);
+
+        // Build Stage 2 prompt with user's feedback
+        const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+        if (plan) {
+          const currentIteration = (plan.reviewCount || 0) + 1;
+          const prompt = buildPlanRevisionPrompt(updatedSession, plan, feedback);
+          await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
+        }
+
+        console.log(`Session ${featureId} returned to Stage 2 for plan changes`);
+        res.json({ success: true, session: updatedSession });
+
+      } else if (action === 're_review') {
+        // Return to Stage 5 for another PR review
+        if (!feedback) {
+          return res.status(400).json({ error: 'Feedback is required when requesting re-review' });
+        }
+
+        const updatedSession = await sessionManager.transitionStage(projectId, featureId, 5);
+
+        eventBroadcaster?.stageChanged(updatedSession, previousStage);
+
+        // Spawn Stage 5 PR review with user's focus areas
+        const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+        if (!plan) {
+          return res.status(400).json({ error: 'Plan not found for re-review' });
+        }
+
+        // Get PR info for the prompt
+        const prInfo = {
+          url: updatedSession.prUrl || '',
+          title: updatedSession.title,
+          branch: updatedSession.featureBranch,
+        };
+
+        const prompt = buildStage5Prompt(updatedSession, plan, prInfo) + `
+
+## Additional Focus Areas (User Request)
+${feedback}
+
+Please pay special attention to the above areas during your review.`;
+        spawnStage5PRReview(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
+
+        console.log(`Session ${featureId} returned to Stage 5 for re-review`);
+        res.json({ success: true, session: updatedSession });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to process final approval action';
+      console.error('Final approval error:', error);
+      res.status(500).json({ error: message });
+    }
+  });
+
   // Get plan
   app.get('/api/sessions/:projectId/:featureId/plan', async (req, res) => {
     try {
@@ -1612,8 +1741,13 @@ export function createApp(
                 await handleStage1Completion(session, result, storage, sessionManager, resultHandler, eventBroadcaster);
               }
             } else if (session.currentStage === 2) {
-              await resultHandler.handleStage2Result(session, result, prompt);
+              const { allFiltered } = await resultHandler.handleStage2Result(session, result, prompt);
               await resultHandler.incrementReviewCount(sessionDir);
+              // Auto-approve plan if all questions were filtered as false positives
+              if (allFiltered && result.parsed.decisions.length > 0) {
+                console.log(`All ${result.parsed.decisions.length} question(s) filtered - auto-approving plan for ${featureId}`);
+                result.parsed.planApproved = true;
+              }
               // Check for Stage 2→3 auto-transition
               await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster);
             }
@@ -1834,8 +1968,13 @@ After creating all steps, write the plan to a file and output:
               await handleStage1Completion(session, result, storage, sessionManager, resultHandler, eventBroadcaster);
             }
           } else if (session.currentStage === 2) {
-            await resultHandler.handleStage2Result(session, result, prompt);
+            const { allFiltered } = await resultHandler.handleStage2Result(session, result, prompt);
             await resultHandler.incrementReviewCount(sessionDir);
+            // Auto-approve plan if all questions were filtered as false positives
+            if (allFiltered && result.parsed.decisions.length > 0) {
+              console.log(`All ${result.parsed.decisions.length} question(s) filtered - auto-approving plan for ${featureId}`);
+              result.parsed.planApproved = true;
+            }
             await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster);
           } else if (session.currentStage === 3) {
             // Stage 3: Resume step-by-step execution after blocker answer
@@ -2136,15 +2275,15 @@ After creating all steps, write the plan to a file and output:
           eventBroadcaster?.claudeOutput(projectId, featureId, output, isComplete);
         },
       }).then(async (result) => {
-        await resultHandler.handleStage2Result(session, result, prompt);
+        const { allFiltered } = await resultHandler.handleStage2Result(session, result, prompt);
 
         // Increment review count
         await resultHandler.incrementReviewCount(sessionDir);
 
         // Broadcast events
         if (eventBroadcaster) {
-          // Broadcast questions if any
-          if (result.parsed.decisions.length > 0) {
+          // Broadcast questions if any (unless all were filtered)
+          if (result.parsed.decisions.length > 0 && !allFiltered) {
             const questionsPath = `${sessionDir}/questions.json`;
             const questionsData = await storage.readJson<{ questions: Question[] }>(questionsPath);
             if (questionsData) {
@@ -2166,6 +2305,12 @@ After creating all steps, write the plan to a file and output:
             result.isError ? 'error' : 'idle',
             result.isError ? 'plan_revision_error' : 'plan_revision_complete'
           );
+        }
+
+        // Auto-approve plan if all questions were filtered as false positives
+        if (allFiltered && result.parsed.decisions.length > 0) {
+          console.log(`All ${result.parsed.decisions.length} question(s) filtered - auto-approving plan for ${featureId}`);
+          result.parsed.planApproved = true;
         }
 
         // Check for auto Stage 2→3 transition if plan was approved after revision

@@ -119,11 +119,17 @@ flowchart TB
         REPLAN --> G
         CHECK -->|CI failing| CIFIX["Present CI failures<br/>as decisions"]
         CIFIX --> AG
-        CHECK -->|All clear| AI["PR approved"]
-        AI --> AJ{"User chooses action"}
-        AJ -->|Open in GitHub| AK["User merges via GitHub web"]
-        AJ -->|Keep open| AL["PR stays open, session complete"]
-        AJ -->|Start new feature| AM["Begin new session"]
+        CHECK -->|All clear| AI["PR approved by Claude"]
+    end
+
+    subgraph Stage6["Stage 6: Final Approval"]
+        AI --> FA["User reviews PR"]
+        FA --> DECIDE{"User decision"}
+        DECIDE -->|Complete| DONE["Session completed<br/>(ready to merge)"]
+        DECIDE -->|Request changes| PLAN["Return to Stage 2"]
+        PLAN --> G
+        DECIDE -->|Re-review| REVIEW["Return to Stage 5"]
+        REVIEW --> AC
     end
 
     style Stage1 fill:#334155,color:#fff
@@ -131,6 +137,7 @@ flowchart TB
     style Stage3 fill:#1e3a5f,color:#fff
     style Stage4 fill:#374151,color:#fff
     style Stage5 fill:#1f2937,color:#fff
+    style Stage6 fill:#065f46,color:#fff
 ```
 
 ## System Architecture
@@ -1060,6 +1067,7 @@ flowchart LR
         D["stage.implementation"]
         E["stage.pr_creation"]
         F["stage.pr_review"]
+        G2["stage.final_approval"]
     end
 
     subgraph QuestionEvents["Questions"]
@@ -1224,6 +1232,7 @@ sequenceDiagram
 | Stage 3: Implementation | `Read,Write,Edit,Bash,Glob,Grep,Task` | `--dangerously-skip-permissions` | Full access for uninterrupted implementation |
 | Stage 4: PR Creation | `Read,Bash(git:*),Bash(gh:*)` | Normal | Git operations and PR creation only |
 | Stage 5: PR Review | `Read,Glob,Grep,Task,Bash(git:diff*),Bash(gh:pr*)` | Normal | Read-only review with diff and CI status access |
+| Stage 6: Final Approval | N/A | N/A | User decision stage - no Claude execution |
 
 **Stage 3 Permission Bypass:**
 
@@ -1927,6 +1936,8 @@ The PR is ready to merge. All CI checks passing.
 [/PR_APPROVED]
 ```
 
+When `[PR_APPROVED]` is detected, the session automatically transitions to Stage 6 (Final Approval) for user review.
+
 **Design Decisions Return to Stage 2:**
 
 Stage 5 cannot directly update the plan. When review issues require plan changes:
@@ -1937,6 +1948,36 @@ Stage 5 cannot directly update the plan. When review issues require plan changes
 4. Flow returns to Stage 3 for re-implementation, then new PR
 
 This ensures all plan changes go through proper review before implementation.
+
+#### Stage 6: Final Approval
+
+After Claude approves the PR in Stage 5, the session transitions to Stage 6 for user final review. This stage gives the user control over the final decision rather than auto-completing.
+
+**User Options:**
+
+| Action | Description | Result |
+|--------|-------------|--------|
+| **Complete Session** | User approves the implementation | Session marked as `completed`, PR ready to merge |
+| **Request Changes** | User wants plan modifications | Returns to Stage 2 with user's feedback for plan revision |
+| **Re-Review PR** | User wants another automated review | Returns to Stage 5 with user's focus areas |
+
+**API Endpoint:**
+```
+POST /api/sessions/:projectId/:featureId/final-approval
+{
+  "action": "merge" | "plan_changes" | "re_review",
+  "feedback": "Optional user feedback or focus areas"
+}
+```
+
+**Stage Transitions from Stage 6:**
+- `merge` → Session status changes to `completed`
+- `plan_changes` → Transitions to Stage 2 (requires feedback)
+- `re_review` → Transitions to Stage 5 (requires feedback)
+
+**Auto-Approval Behavior:**
+
+When all questions raised during Stage 2 Plan Review are filtered as false positives by the validation system, the plan is automatically approved and the session transitions to Stage 3. This prevents sessions from getting stuck when the validator determines all concerns are already addressed in the codebase.
 
 #### Recontextualization Prompt (After Compact)
 

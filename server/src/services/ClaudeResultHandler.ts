@@ -146,7 +146,7 @@ export class ClaudeResultHandler {
     session: Session,
     result: ClaudeResult,
     prompt: string
-  ): Promise<void> {
+  ): Promise<{ allFiltered: boolean }> {
     const sessionDir = `${session.projectId}/${session.featureId}`;
     const now = new Date().toISOString();
 
@@ -164,14 +164,18 @@ export class ClaudeResultHandler {
     });
 
     // Save any new questions (review findings) with validation
+    let allFiltered = false;
     if (result.parsed.decisions.length > 0) {
       // Read plan for validation context
       const plan = await this.storage.readJson<Plan>(`${sessionDir}/plan.json`);
-      await this.saveQuestions(sessionDir, session, result.parsed.decisions, plan);
+      const saveResult = await this.saveQuestions(sessionDir, session, result.parsed.decisions, plan);
+      allFiltered = saveResult.allFiltered;
     }
 
     // Update status.json
     await this.updateStatus(sessionDir, result, 2);
+
+    return { allFiltered };
   }
 
   /**
@@ -511,7 +515,7 @@ export class ClaudeResultHandler {
     decisions: ClaudeResult['parsed']['decisions'],
     plan: Plan | null,
     stepId?: string
-  ): Promise<void> {
+  ): Promise<{ savedCount: number; allFiltered: boolean }> {
     // Validate decisions if we have a validator and a plan
     let validatedDecisions = decisions;
     if (this.validator && plan && decisions.length > 0) {
@@ -538,10 +542,10 @@ export class ClaudeResultHandler {
         );
       }
 
-      // If all decisions were filtered, we're done
+      // If all decisions were filtered, signal this to caller
       if (validatedDecisions.length === 0) {
         console.log(`All ${decisions.length} decision(s) filtered as false positives`);
-        return;
+        return { savedCount: 0, allFiltered: true };
       }
     }
 
@@ -586,6 +590,7 @@ export class ClaudeResultHandler {
     }
 
     await this.storage.writeJson(questionsPath, questionsFile);
+    return { savedCount: validatedDecisions.length, allFiltered: false };
   }
 
   private inferQuestionType(options: { label: string; recommended: boolean }[]): 'single_choice' | 'multi_choice' | 'text' {

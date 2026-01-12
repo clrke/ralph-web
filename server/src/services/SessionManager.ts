@@ -20,6 +20,7 @@ const STAGE_STATUS_MAP: Record<number, SessionStatus> = {
   3: 'implementing',
   4: 'pr_creation',
   5: 'pr_review',
+  6: 'final_approval',
 };
 
 const VALID_TRANSITIONS: Record<number, number[]> = {
@@ -27,7 +28,8 @@ const VALID_TRANSITIONS: Record<number, number[]> = {
   2: [1, 3], // Can go back to 1 for replanning
   3: [2, 4], // Can go back to 2 for replanning
   4: [5],
-  5: [2], // Can go back to 2 for PR review issues
+  5: [2, 6], // Can go back to 2 for PR review issues, or forward to 6 for final approval
+  6: [2, 5], // Can return to Stage 2 for plan changes, or Stage 5 for re-review
 };
 
 // Fields that cannot be modified via updateSession
@@ -215,6 +217,7 @@ export class SessionManager {
       claudeStage3SessionId: null,
       claudePlanFilePath: this.storage.getAbsolutePath(`${sessionPath}/plan.md`),
       currentPlanVersion: 0,
+      prUrl: null,
       sessionExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       createdAt: now,
       updatedAt: now,

@@ -42,6 +42,7 @@ export interface ParsedPRCreated {
   title: string;
   sourceBranch: string;
   targetBranch: string;
+  url?: string;
 }
 
 export interface ParsedCIStatus {
@@ -285,11 +286,13 @@ export class OutputParser {
     const content = match[1];
     const titleMatch = content.match(/Title:\s*(.+)/);
     const branchMatch = content.match(/Branch:\s*(\S+)\s*→\s*(\S+)/);
+    const urlMatch = content.match(/URL:\s*(\S+)/);
 
     return {
       title: titleMatch ? titleMatch[1].trim() : '',
       sourceBranch: branchMatch ? branchMatch[1] : '',
       targetBranch: branchMatch ? branchMatch[2] : '',
+      url: urlMatch ? urlMatch[1].trim() : undefined,
     };
   }
 
