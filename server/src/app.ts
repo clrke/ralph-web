@@ -46,18 +46,29 @@ async function applyHaikuPostProcessing(
   }
 
   // Try Haiku post-processing
-  const extractedParsed = await orchestrator.postProcessWithHaiku(result.output, projectPath);
-  if (extractedParsed && extractedParsed.decisions.length > 0) {
+  const haikuResult = await orchestrator.postProcessWithHaiku(result.output, projectPath);
+  if (haikuResult && haikuResult.parsed.decisions.length > 0) {
     // Merge extracted decisions into result
-    result.parsed.decisions = extractedParsed.decisions;
+    result.parsed.decisions = haikuResult.parsed.decisions;
 
     // Save the extracted questions (with validation)
     const sessionDir = `${session.projectId}/${session.featureId}`;
     const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
-    await resultHandler['saveQuestions'](sessionDir, session, extractedParsed.decisions, plan);
+    await resultHandler['saveQuestions'](sessionDir, session, haikuResult.parsed.decisions, plan);
 
-    console.log(`Haiku fallback extracted ${extractedParsed.decisions.length} questions for ${session.featureId}`);
-    return extractedParsed.decisions.length;
+    // Save post-processing conversation
+    await resultHandler.savePostProcessingConversation(
+      sessionDir,
+      session.currentStage,
+      'question_extraction',
+      haikuResult.prompt,
+      haikuResult.output,
+      haikuResult.durationMs,
+      false
+    );
+
+    console.log(`Haiku fallback extracted ${haikuResult.parsed.decisions.length} questions for ${session.featureId}`);
+    return haikuResult.parsed.decisions.length;
   }
 
   return 0;
@@ -610,6 +621,17 @@ async function handleStage5Result(
       // Assess which steps are affected by the CI/review issues
       const incompleteAssessor = new IncompleteStepsAssessor();
       const assessment = await incompleteAssessor.assess(plan, reason, session.projectPath);
+
+      // Save post-processing conversation
+      await resultHandler.savePostProcessingConversation(
+        sessionDir,
+        5, // Stage 5 spawned this
+        'incomplete_steps',
+        assessment.prompt,
+        assessment.output,
+        assessment.durationMs,
+        false
+      );
 
       // Update plan based on assessment
       plan.isApproved = false;
@@ -1501,6 +1523,18 @@ After creating all steps, write the plan to a file and output:
       // Assess test requirements using Haiku (fire-and-forget, but save result)
       console.log(`Assessing test requirements for ${featureId}...`);
       const testRequirement = await testAssessor.assess(session, plan, session.projectPath);
+
+      // Save post-processing conversation
+      await resultHandler.savePostProcessingConversation(
+        `${projectId}/${featureId}`,
+        2, // Stage 2 spawned this (plan approval)
+        'test_assessment',
+        testRequirement.prompt,
+        testRequirement.output,
+        testRequirement.durationMs,
+        false
+      );
+
       plan.testRequirement = {
         required: testRequirement.required,
         reason: testRequirement.reason,

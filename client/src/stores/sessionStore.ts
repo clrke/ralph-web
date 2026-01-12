@@ -11,6 +11,8 @@ export interface ConversationEntry {
   isError: boolean;
   error?: string;
   status?: 'started' | 'completed';
+  /** Post-processing type (if this is a Haiku post-processing call) */
+  postProcessingType?: 'decision_validation' | 'test_assessment' | 'incomplete_steps' | 'question_extraction';
 }
 
 export interface ExecutionStatus {

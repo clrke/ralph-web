@@ -30,6 +30,8 @@ interface ConversationEntry {
   error?: string;
   parsed: ClaudeResult['parsed'];
   status?: 'started' | 'completed';
+  /** Post-processing type (if this is a Haiku post-processing call) */
+  postProcessingType?: 'decision_validation' | 'test_assessment' | 'incomplete_steps' | 'question_extraction';
 }
 
 interface ConversationsFile {
@@ -324,6 +326,57 @@ export class ClaudeResultHandler {
   }
 
   /**
+   * Save a post-processing (Haiku) conversation entry.
+   * These are lightweight LLM calls for validation, assessment, etc.
+   */
+  async savePostProcessingConversation(
+    sessionDir: string,
+    stage: number,
+    postProcessingType: 'decision_validation' | 'test_assessment' | 'incomplete_steps' | 'question_extraction',
+    prompt: string,
+    output: string,
+    durationMs: number,
+    isError: boolean = false,
+    error?: string
+  ): Promise<void> {
+    const conversationPath = `${sessionDir}/conversations.json`;
+    const conversations = await this.storage.readJson<ConversationsFile>(conversationPath) || { entries: [] };
+    conversations.entries.push({
+      stage,
+      timestamp: new Date().toISOString(),
+      prompt,
+      output,
+      sessionId: null,
+      costUsd: 0, // Haiku costs are minimal, could calculate if needed
+      isError,
+      error,
+      parsed: {
+        decisions: [],
+        planSteps: [],
+        stepCompleted: null,
+        stepsCompleted: [],
+        planModeEntered: false,
+        planModeExited: false,
+        planFilePath: null,
+        implementationComplete: false,
+        implementationSummary: null,
+        implementationStatus: null,
+        allTestsPassing: false,
+        testsAdded: [],
+        prCreated: null,
+        planApproved: false,
+        ciStatus: null,
+        ciFailed: false,
+        prApproved: false,
+        returnToStage2: null,
+      },
+      status: 'completed',
+      postProcessingType,
+    });
+    await this.storage.writeJson(conversationPath, conversations);
+  }
+
+  /**
    * Save a "started" conversation entry when spawning begins.
    * This allows the frontend to show progress before Claude responds.
    */
@@ -408,6 +461,19 @@ export class ClaudeResultHandler {
 
       // Save validation log for debugging/auditing
       await this.saveValidationLog(sessionDir, log);
+
+      // Save each validation as a post-processing conversation
+      for (const result of log.results) {
+        await this.savePostProcessingConversation(
+          sessionDir,
+          session.currentStage,
+          'decision_validation',
+          result.prompt,
+          result.output,
+          result.durationMs,
+          false
+        );
+      }
 
       // If all decisions were filtered, we're done
       if (validatedDecisions.length === 0) {

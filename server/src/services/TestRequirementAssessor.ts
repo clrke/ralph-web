@@ -13,6 +13,10 @@ export interface TestRequirement {
   suggestedCoverage: string;
   assessedAt: string;
   durationMs: number;
+  /** Raw prompt sent to Haiku (for conversation logging) */
+  prompt: string;
+  /** Raw output from Haiku (for conversation logging) */
+  output: string;
 }
 
 // Timeout for assessment (2 minutes - Haiku needs to explore codebase)
@@ -62,6 +66,8 @@ export class TestRequirementAssessor {
           suggestedCoverage: 'Unable to determine - please assess manually',
           assessedAt: new Date().toISOString(),
           durationMs: Date.now() - startTime,
+          prompt,
+          output: stdout,
         });
       }, ASSESSMENT_TIMEOUT_MS);
 
@@ -83,6 +89,8 @@ export class TestRequirementAssessor {
             suggestedCoverage: 'Unable to determine - please assess manually',
             assessedAt: new Date().toISOString(),
             durationMs,
+            prompt,
+            output: stdout,
           });
           return;
         }
@@ -104,6 +112,8 @@ export class TestRequirementAssessor {
               suggestedCoverage: 'Unable to determine',
               assessedAt: new Date().toISOString(),
               durationMs,
+              prompt,
+              output: stdout,
             });
             return;
           }
@@ -119,6 +129,8 @@ export class TestRequirementAssessor {
             suggestedCoverage: String(assessment.suggestedCoverage || ''),
             assessedAt: new Date().toISOString(),
             durationMs,
+            prompt,
+            output: stdout,
           };
 
           console.log(
@@ -136,6 +148,8 @@ export class TestRequirementAssessor {
             suggestedCoverage: 'Unable to determine',
             assessedAt: new Date().toISOString(),
             durationMs,
+            prompt,
+            output: stdout,
           });
         }
       });
@@ -151,6 +165,8 @@ export class TestRequirementAssessor {
           suggestedCoverage: 'Unable to determine',
           assessedAt: new Date().toISOString(),
           durationMs: Date.now() - startTime,
+          prompt,
+          output: stdout,
         });
       });
     });

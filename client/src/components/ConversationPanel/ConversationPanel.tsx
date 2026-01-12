@@ -136,13 +136,22 @@ function ConversationEntryCard({ entry, index }: { entry: ConversationEntry; ind
   const [isExpanded, setIsExpanded] = useState(false);
   const [modalContent, setModalContent] = useState<{ title: string; content: string } | null>(null);
 
-  const stageLabel = {
-    1: 'Discovery',
-    2: 'Plan Review',
-    3: 'Implementation',
-    4: 'PR Creation',
-    5: 'PR Review',
-  }[entry.stage] || `Stage ${entry.stage}`;
+  const postProcessingLabels: Record<string, string> = {
+    decision_validation: 'Validation',
+    test_assessment: 'Test Assessment',
+    incomplete_steps: 'Step Assessment',
+    question_extraction: 'Question Extraction',
+  };
+
+  const stageLabel = entry.postProcessingType
+    ? postProcessingLabels[entry.postProcessingType] || entry.postProcessingType
+    : {
+        1: 'Discovery',
+        2: 'Plan Review',
+        3: 'Implementation',
+        4: 'PR Creation',
+        5: 'PR Review',
+      }[entry.stage] || `Stage ${entry.stage}`;
 
   return (
     <div className={`border-b border-gray-700 last:border-b-0 ${entry.isError ? 'bg-red-900/10' : ''}`}>
@@ -152,7 +161,7 @@ function ConversationEntryCard({ entry, index }: { entry: ConversationEntry; ind
       >
         <div className="flex items-center gap-3">
           <span className="text-sm font-medium text-gray-400">#{index + 1}</span>
-          <span className={`px-2 py-0.5 text-xs rounded ${getStageColor(entry.stage)}`}>
+          <span className={`px-2 py-0.5 text-xs rounded ${getStageColor(entry.stage, entry.postProcessingType)}`}>
             {stageLabel}
           </span>
           {entry.isError && (
@@ -245,7 +254,11 @@ function ConversationEntryCard({ entry, index }: { entry: ConversationEntry; ind
   );
 }
 
-function getStageColor(stage: number): string {
+function getStageColor(stage: number, postProcessingType?: string): string {
+  // Post-processing entries get a distinct color
+  if (postProcessingType) {
+    return 'bg-cyan-600';
+  }
   const colors: Record<number, string> = {
     1: 'bg-purple-600',
     2: 'bg-blue-600',

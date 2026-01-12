@@ -14,6 +14,10 @@ export interface IncompleteStepsResult {
   unaffectedSteps: string[];
   summary: string;
   durationMs: number;
+  /** Raw prompt sent to Haiku (for conversation logging) */
+  prompt: string;
+  /** Raw output from Haiku (for conversation logging) */
+  output: string;
 }
 
 // Timeout for assessment (2 minutes)
@@ -55,7 +59,7 @@ export class IncompleteStepsAssessor {
       const timeoutId = setTimeout(() => {
         childProcess.kill();
         console.log('Incomplete steps assessment timed out - marking all as needs_review');
-        resolve(this.createConservativeResult(plan, 'Assessment timed out', Date.now() - startTime));
+        resolve(this.createConservativeResult(plan, 'Assessment timed out', Date.now() - startTime, prompt, stdout));
       }, ASSESSMENT_TIMEOUT_MS);
 
       childProcess.stdout.on('data', (data: Buffer) => {
@@ -68,7 +72,7 @@ export class IncompleteStepsAssessor {
 
         if (code !== 0) {
           console.log(`Incomplete steps assessment failed (code ${code}) - marking all as needs_review`);
-          resolve(this.createConservativeResult(plan, `Assessment failed (code ${code})`, durationMs));
+          resolve(this.createConservativeResult(plan, `Assessment failed (code ${code})`, durationMs, prompt, stdout));
           return;
         }
 
@@ -81,7 +85,7 @@ export class IncompleteStepsAssessor {
           const jsonMatch = result.match(/\{[\s\S]*?"affectedSteps"[\s\S]*?\}/);
           if (!jsonMatch) {
             console.log('No valid JSON in incomplete steps response - marking all as needs_review');
-            resolve(this.createConservativeResult(plan, 'Could not parse assessment', durationMs));
+            resolve(this.createConservativeResult(plan, 'Could not parse assessment', durationMs, prompt, stdout));
             return;
           }
 
@@ -99,6 +103,8 @@ export class IncompleteStepsAssessor {
             unaffectedSteps: Array.isArray(assessment.unaffectedSteps) ? assessment.unaffectedSteps : [],
             summary: String(assessment.summary || 'No summary provided'),
             durationMs,
+            prompt,
+            output: stdout,
           };
 
           const affectedCount = incompleteStepsResult.affectedSteps.length;
@@ -107,14 +113,14 @@ export class IncompleteStepsAssessor {
           resolve(incompleteStepsResult);
         } catch (error) {
           console.log('Failed to parse incomplete steps response:', error);
-          resolve(this.createConservativeResult(plan, 'Failed to parse assessment', durationMs));
+          resolve(this.createConservativeResult(plan, 'Failed to parse assessment', durationMs, prompt, stdout));
         }
       });
 
       childProcess.on('error', (error) => {
         clearTimeout(timeoutId);
         console.log('Incomplete steps assessment spawn error:', error.message);
-        resolve(this.createConservativeResult(plan, `Spawn error: ${error.message}`, Date.now() - startTime));
+        resolve(this.createConservativeResult(plan, `Spawn error: ${error.message}`, Date.now() - startTime, prompt, stdout));
       });
     });
   }
@@ -122,7 +128,13 @@ export class IncompleteStepsAssessor {
   /**
    * Create a conservative result marking all completed steps as needs_review.
    */
-  private createConservativeResult(plan: Plan, reason: string, durationMs: number): IncompleteStepsResult {
+  private createConservativeResult(
+    plan: Plan,
+    reason: string,
+    durationMs: number,
+    prompt: string,
+    output: string
+  ): IncompleteStepsResult {
     return {
       affectedSteps: plan.steps
         .filter(s => s.status === 'completed')
@@ -136,6 +148,8 @@ export class IncompleteStepsAssessor {
         .map(s => s.id),
       summary: `${reason} - all completed steps marked for review`,
       durationMs,
+      prompt,
+      output,
     };
   }
 }

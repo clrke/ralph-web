@@ -28,6 +28,16 @@ export interface ClaudeResult {
   parsed: ParsedMarker;
 }
 
+/**
+ * Result of Haiku post-processing, includes prompt and output for conversation logging
+ */
+export interface HaikuPostProcessResult {
+  parsed: ParsedMarker;
+  prompt: string;
+  output: string;
+  durationMs: number;
+}
+
 interface ClaudeJsonOutput {
   result: string;
   session_id?: string;
@@ -96,7 +106,7 @@ export class ClaudeOrchestrator {
   /**
    * Post-process output with Haiku to extract and format questions
    */
-  async postProcessWithHaiku(output: string, cwd: string): Promise<ParsedMarker | null> {
+  async postProcessWithHaiku(output: string, cwd: string): Promise<HaikuPostProcessResult | null> {
     if (!this.looksLikeQuestions(output)) {
       return null;
     }
@@ -104,6 +114,7 @@ export class ClaudeOrchestrator {
     console.log('Output looks like it contains questions, using Haiku to extract...');
 
     const prompt = QUESTION_EXTRACTION_PROMPT + output;
+    const startTime = Date.now();
 
     return new Promise((resolve) => {
       const childProcess = spawn('claude', [
@@ -130,6 +141,7 @@ export class ClaudeOrchestrator {
 
       childProcess.on('close', (code: number | null) => {
         clearTimeout(timeoutId);
+        const durationMs = Date.now() - startTime;
 
         if (code !== 0) {
           console.log('Haiku post-processing failed with code:', code);
@@ -150,7 +162,7 @@ export class ClaudeOrchestrator {
           const parsed = this.outputParser.parse(result);
           if (parsed.decisions.length > 0) {
             console.log(`Haiku extracted ${parsed.decisions.length} questions`);
-            resolve(parsed);
+            resolve({ parsed, prompt, output: stdout, durationMs });
           } else {
             resolve(null);
           }

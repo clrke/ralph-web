@@ -19,6 +19,10 @@ export interface ValidationResult {
   repurposedQuestions?: ParsedDecision[];
   validatedAt: string;
   durationMs: number;
+  /** Raw prompt sent to Haiku (for conversation logging) */
+  prompt: string;
+  /** Raw output from Haiku (for conversation logging) */
+  output: string;
 }
 
 /**
@@ -85,6 +89,8 @@ export class DecisionValidator {
           reason: 'Validation timed out - passing conservatively',
           validatedAt: new Date().toISOString(),
           durationMs: Date.now() - startTime,
+          prompt,
+          output: stdout,
         });
       }, VALIDATION_TIMEOUT_MS);
 
@@ -105,6 +111,8 @@ export class DecisionValidator {
             reason: `Validation process failed (code ${code}) - passing conservatively`,
             validatedAt: new Date().toISOString(),
             durationMs,
+            prompt,
+            output: stdout,
           });
           return;
         }
@@ -128,6 +136,8 @@ export class DecisionValidator {
                 reason: String(legacy.reason || 'No reason provided'),
                 validatedAt: new Date().toISOString(),
                 durationMs,
+                prompt,
+                output: stdout,
               });
               return;
             }
@@ -139,6 +149,8 @@ export class DecisionValidator {
               reason: 'Could not parse validation response - passing conservatively',
               validatedAt: new Date().toISOString(),
               durationMs,
+              prompt,
+              output: stdout,
             });
             return;
           }
@@ -153,6 +165,8 @@ export class DecisionValidator {
             repurposedQuestions: validation.questions,
             validatedAt: new Date().toISOString(),
             durationMs,
+            prompt,
+            output: stdout,
           });
         } catch (error) {
           console.log('  Failed to parse Haiku validation response:', error);
@@ -163,6 +177,8 @@ export class DecisionValidator {
             reason: 'Failed to parse validation response - passing conservatively',
             validatedAt: new Date().toISOString(),
             durationMs,
+            prompt,
+            output: stdout,
           });
         }
       });
@@ -177,6 +193,8 @@ export class DecisionValidator {
           reason: `Validation spawn error: ${error.message} - passing conservatively`,
           validatedAt: new Date().toISOString(),
           durationMs: Date.now() - startTime,
+          prompt,
+          output: stdout,
         });
       });
     });
