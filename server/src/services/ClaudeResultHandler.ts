@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { readFile } from 'fs/promises';
+import crypto from 'crypto';
 import { FileStorageService } from '../data/FileStorageService';
 import { SessionManager } from './SessionManager';
 import { ClaudeResult } from './ClaudeOrchestrator';
@@ -280,7 +281,6 @@ export class ClaudeResultHandler {
       if (step) {
         step.status = 'completed';
         // Compute and store content hash for change detection on re-runs
-        const crypto = require('crypto');
         const content = `${step.title}|${step.description || ''}`;
         step.contentHash = crypto.createHash('md5').update(content).digest('hex').substring(0, 12);
         // Store summary in metadata

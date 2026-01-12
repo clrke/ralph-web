@@ -1,4 +1,5 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import { ZodSchema, ZodError } from 'zod';
 import { FileStorageService } from './data/FileStorageService';
 import { SessionManager } from './services/SessionManager';
@@ -558,7 +559,6 @@ async function spawnStage3Implementation(
  * Used to skip re-implementation of steps that haven't changed.
  */
 function computeStepContentHash(step: PlanStep): string {
-  const crypto = require('crypto');
   const content = `${step.title}|${step.description || ''}`;
   return crypto.createHash('md5').update(content).digest('hex').substring(0, 12);
 }
