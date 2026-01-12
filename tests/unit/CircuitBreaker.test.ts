@@ -112,7 +112,7 @@ describe('CircuitBreaker', () => {
     it('should transition CLOSED -> HALF_OPEN after threshold no-progress loops', async () => {
       // CB_HALF_OPEN_THRESHOLD is 2
       await circuitBreaker.recordLoopResult(0, false);
-      let state = await circuitBreaker.recordLoopResult(0, false);
+      const state = await circuitBreaker.recordLoopResult(0, false);
 
       expect(state.state).toBe('HALF_OPEN');
       expect(state.consecutiveNoProgress).toBe(CB_HALF_OPEN_THRESHOLD);

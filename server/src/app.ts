@@ -1897,7 +1897,7 @@ After creating all steps, write the plan to a file and output:
           }
 
           // Update session.updatedAt to reflect the resume
-          const updatedSession = await sessionManager.updateSession(session.projectId, session.featureId, {});
+          await sessionManager.updateSession(session.projectId, session.featureId, {});
 
           const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
 
