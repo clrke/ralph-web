@@ -30,6 +30,7 @@ export default function SessionView() {
     questions,
     isLoading,
     error,
+    executionStatus,
     fetchSession,
     fetchConversations,
     setSession,
@@ -200,12 +201,12 @@ export default function SessionView() {
 
           {/* Stage 4: PR Creation */}
           {currentStage === 4 && (
-            <PRCreationSection plan={plan} />
+            <PRCreationSection plan={plan} isRunning={executionStatus?.status === 'running'} />
           )}
 
           {/* Stage 5: PR Review */}
           {currentStage === 5 && (
-            <PRReviewSection plan={plan} />
+            <PRReviewSection plan={plan} isRunning={executionStatus?.status === 'running'} />
           )}
 
           {/* Conversation Panel */}
@@ -641,7 +642,7 @@ function ImplementationSection({
   );
 }
 
-function PRCreationSection({ plan }: { plan: Plan | null }) {
+function PRCreationSection({ plan, isRunning }: { plan: Plan | null; isRunning?: boolean }) {
   const completedSteps = plan?.steps.filter(s => s.status === 'completed').length ?? 0;
   const totalSteps = plan?.steps.length ?? 0;
 
@@ -664,19 +665,33 @@ function PRCreationSection({ plan }: { plan: Plan | null }) {
         </div>
 
         {/* PR creation status */}
-        <div className="flex items-center gap-3 p-4 bg-gray-700/50 rounded-lg">
-          <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-          <div>
-            <p className="font-medium">Creating Pull Request</p>
-            <p className="text-gray-400 text-sm">Claude is preparing your changes for review...</p>
-          </div>
+        <div className={`flex items-center gap-3 p-4 rounded-lg ${isRunning ? 'bg-gray-700/50' : 'bg-yellow-900/20'}`}>
+          {isRunning ? (
+            <>
+              <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+              <div>
+                <p className="font-medium">Creating Pull Request</p>
+                <p className="text-gray-400 text-sm">Claude is preparing your changes for review...</p>
+              </div>
+            </>
+          ) : (
+            <>
+              <svg className="w-8 h-8 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <div>
+                <p className="font-medium text-yellow-400">PR Creation Incomplete</p>
+                <p className="text-gray-400 text-sm">Check the conversation panel for details.</p>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function PRReviewSection({ plan }: { plan: Plan | null }) {
+function PRReviewSection({ plan, isRunning }: { plan: Plan | null; isRunning?: boolean }) {
   const completedSteps = plan?.steps.filter(s => s.status === 'completed').length ?? 0;
   const totalSteps = plan?.steps.length ?? 0;
   const needsReviewSteps = plan?.steps.filter(s => s.status === 'needs_review').length ?? 0;
@@ -701,12 +716,26 @@ function PRReviewSection({ plan }: { plan: Plan | null }) {
         </div>
 
         {/* PR review status */}
-        <div className="flex items-center gap-3 p-4 bg-gray-700/50 rounded-lg">
-          <div className="w-8 h-8 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
-          <div>
-            <p className="font-medium">Reviewing Changes</p>
-            <p className="text-gray-400 text-sm">Claude is checking CI status and reviewing the PR...</p>
-          </div>
+        <div className={`flex items-center gap-3 p-4 rounded-lg ${isRunning ? 'bg-gray-700/50' : 'bg-blue-900/20'}`}>
+          {isRunning ? (
+            <>
+              <div className="w-8 h-8 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
+              <div>
+                <p className="font-medium">Reviewing Changes</p>
+                <p className="text-gray-400 text-sm">Claude is checking CI status and reviewing the PR...</p>
+              </div>
+            </>
+          ) : (
+            <>
+              <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div>
+                <p className="font-medium text-blue-400">Review Complete</p>
+                <p className="text-gray-400 text-sm">Check the conversation panel for review results.</p>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Steps that need review */}
