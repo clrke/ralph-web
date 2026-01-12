@@ -185,9 +185,19 @@ export default function SessionView() {
             <PlanReviewSection plan={plan} />
           )}
 
-          {/* Stage 3+: Implementation Progress */}
-          {currentStage >= 3 && (
+          {/* Stage 3: Implementation Progress */}
+          {currentStage === 3 && (
             <ImplementationSection plan={plan} />
+          )}
+
+          {/* Stage 4: PR Creation */}
+          {currentStage === 4 && (
+            <PRCreationSection plan={plan} />
+          )}
+
+          {/* Stage 5: PR Review */}
+          {currentStage === 5 && (
+            <PRReviewSection plan={plan} />
           )}
 
           {/* Conversation Panel */}
@@ -604,6 +614,95 @@ function ImplementationSection({
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function PRCreationSection({ plan }: { plan: Plan | null }) {
+  const completedSteps = plan?.steps.filter(s => s.status === 'completed').length ?? 0;
+  const totalSteps = plan?.steps.length ?? 0;
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-gray-800 rounded-lg p-6">
+        <h2 className="text-xl font-semibold mb-4">PR Creation</h2>
+
+        {/* Implementation summary */}
+        <div className="mb-6 p-4 bg-green-900/20 rounded-lg">
+          <div className="flex items-center gap-2 text-green-400 mb-2">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            <span className="font-medium">Implementation Complete</span>
+          </div>
+          <p className="text-gray-400 text-sm">
+            {completedSteps} of {totalSteps} steps completed successfully.
+          </p>
+        </div>
+
+        {/* PR creation status */}
+        <div className="flex items-center gap-3 p-4 bg-gray-700/50 rounded-lg">
+          <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+          <div>
+            <p className="font-medium">Creating Pull Request</p>
+            <p className="text-gray-400 text-sm">Claude is preparing your changes for review...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PRReviewSection({ plan }: { plan: Plan | null }) {
+  const completedSteps = plan?.steps.filter(s => s.status === 'completed').length ?? 0;
+  const totalSteps = plan?.steps.length ?? 0;
+  const needsReviewSteps = plan?.steps.filter(s => s.status === 'needs_review').length ?? 0;
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-gray-800 rounded-lg p-6">
+        <h2 className="text-xl font-semibold mb-4">PR Review</h2>
+
+        {/* Implementation summary */}
+        <div className="mb-6 p-4 bg-green-900/20 rounded-lg">
+          <div className="flex items-center gap-2 text-green-400 mb-2">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            <span className="font-medium">Pull Request Created</span>
+          </div>
+          <p className="text-gray-400 text-sm">
+            {completedSteps} of {totalSteps} steps completed.
+            {needsReviewSteps > 0 && ` ${needsReviewSteps} step(s) need review.`}
+          </p>
+        </div>
+
+        {/* PR review status */}
+        <div className="flex items-center gap-3 p-4 bg-gray-700/50 rounded-lg">
+          <div className="w-8 h-8 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
+          <div>
+            <p className="font-medium">Reviewing Changes</p>
+            <p className="text-gray-400 text-sm">Claude is checking CI status and reviewing the PR...</p>
+          </div>
+        </div>
+
+        {/* Steps that need review */}
+        {needsReviewSteps > 0 && plan && (
+          <div className="mt-4">
+            <h3 className="text-sm font-medium text-yellow-400 mb-2">Steps Needing Review:</h3>
+            <div className="space-y-2">
+              {plan.steps.filter(s => s.status === 'needs_review').map((step) => (
+                <div key={step.id} className="flex items-center gap-2 p-2 bg-yellow-900/20 rounded">
+                  <svg className="w-4 h-4 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  <span className="text-sm">{step.title}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -29,6 +29,7 @@ interface ConversationEntry {
   isError: boolean;
   error?: string;
   parsed: ClaudeResult['parsed'];
+  status?: 'started' | 'completed';
 }
 
 interface ConversationsFile {
@@ -322,13 +323,54 @@ export class ClaudeResultHandler {
     return status?.stepRetries?.[stepId] || 0;
   }
 
+  /**
+   * Save a "started" conversation entry when spawning begins.
+   * This allows the frontend to show progress before Claude responds.
+   */
+  async saveConversationStart(sessionDir: string, stage: number, prompt: string): Promise<void> {
+    const conversationPath = `${sessionDir}/conversations.json`;
+    const conversations = await this.storage.readJson<ConversationsFile>(conversationPath) || { entries: [] };
+    conversations.entries.push({
+      stage,
+      timestamp: new Date().toISOString(),
+      prompt,
+      output: '',
+      sessionId: null,
+      costUsd: 0,
+      isError: false,
+      parsed: {
+        decisions: [],
+        planSteps: [],
+        stepCompleted: null,
+        stepsCompleted: [],
+        planModeEntered: false,
+        planModeExited: false,
+        planFilePath: null,
+        implementationComplete: false,
+        implementationSummary: null,
+        implementationStatus: null,
+        allTestsPassing: false,
+        testsAdded: [],
+        prCreated: null,
+        planApproved: false,
+        ciStatus: null,
+        ciFailed: false,
+        prApproved: false,
+        returnToStage2: null,
+      },
+      status: 'started',
+    });
+    await this.storage.writeJson(conversationPath, conversations);
+  }
+
   private async saveConversation(
     sessionDir: string,
     entry: ConversationEntry
   ): Promise<void> {
     const conversationPath = `${sessionDir}/conversations.json`;
     const conversations = await this.storage.readJson<ConversationsFile>(conversationPath) || { entries: [] };
-    conversations.entries.push(entry);
+    // Add status: 'completed' if not already set
+    conversations.entries.push({ ...entry, status: entry.status || 'completed' });
     await this.storage.writeJson(conversationPath, conversations);
   }
 

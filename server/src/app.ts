@@ -93,6 +93,9 @@ async function spawnStage2Review(
   // Broadcast execution started
   eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage2_started');
 
+  // Save "started" conversation entry immediately
+  await resultHandler.saveConversationStart(sessionDir, 2, prompt);
+
   // Spawn Claude with --resume if we have a session ID
   orchestrator.spawn({
     prompt,
@@ -221,6 +224,9 @@ async function spawnStage3Implementation(
 
   // Broadcast execution started
   eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage3_started');
+
+  // Save "started" conversation entry immediately
+  await resultHandler.saveConversationStart(sessionDir, 3, prompt);
 
   // Track current step for real-time broadcasting
   let currentStepId: string | null = null;
@@ -400,6 +406,9 @@ async function spawnStage4PRCreation(
   // Broadcast execution started
   eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage4_started');
 
+  // Save "started" conversation entry immediately
+  await resultHandler.saveConversationStart(sessionDir, 4, prompt);
+
   // Spawn Claude with Stage 4 tools (git and gh commands)
   orchestrator.spawn({
     prompt,
@@ -514,6 +523,9 @@ async function spawnStage5PRReview(
 
   // Broadcast execution started
   eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage5_started');
+
+  // Save "started" conversation entry immediately
+  await resultHandler.saveConversationStart(sessionDir, 5, prompt);
 
   // Spawn Claude with Stage 5 tools
   orchestrator.spawn({
@@ -792,6 +804,10 @@ export function createApp(
 
       // Broadcast execution started
       eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage1_started');
+
+      // Save "started" conversation entry immediately
+      const sessionDir = `${session.projectId}/${session.featureId}`;
+      await resultHandler.saveConversationStart(sessionDir, 1, prompt);
 
       // Spawn Claude (fire and forget, errors logged)
       orchestrator.spawn({
