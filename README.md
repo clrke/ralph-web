@@ -119,11 +119,17 @@ flowchart TB
         REPLAN --> G
         CHECK -->|CI failing| CIFIX["Present CI failures<br/>as decisions"]
         CIFIX --> AG
-        CHECK -->|All clear| AI["PR approved"]
-        AI --> AJ{"User chooses action"}
-        AJ -->|Open in GitHub| AK["User merges via GitHub web"]
-        AJ -->|Keep open| AL["PR stays open, session complete"]
-        AJ -->|Start new feature| AM["Begin new session"]
+        CHECK -->|All clear| AI["PR approved by Claude"]
+    end
+
+    subgraph Stage6["Stage 6: Final Approval"]
+        AI --> FA["User reviews PR"]
+        FA --> DECIDE{"User decision"}
+        DECIDE -->|Complete| DONE["Session completed<br/>(ready to merge)"]
+        DECIDE -->|Request changes| PLAN["Return to Stage 2"]
+        PLAN --> G
+        DECIDE -->|Re-review| REVIEW["Return to Stage 5"]
+        REVIEW --> AC
     end
 
     style Stage1 fill:#334155,color:#fff
@@ -131,6 +137,7 @@ flowchart TB
     style Stage3 fill:#1e3a5f,color:#fff
     style Stage4 fill:#374151,color:#fff
     style Stage5 fill:#1f2937,color:#fff
+    style Stage6 fill:#065f46,color:#fff
 ```
 
 ## System Architecture
@@ -1060,6 +1067,7 @@ flowchart LR
         D["stage.implementation"]
         E["stage.pr_creation"]
         F["stage.pr_review"]
+        G2["stage.final_approval"]
     end
 
     subgraph QuestionEvents["Questions"]
@@ -1224,6 +1232,7 @@ sequenceDiagram
 | Stage 3: Implementation | `Read,Write,Edit,Bash,Glob,Grep,Task` | `--dangerously-skip-permissions` | Full access for uninterrupted implementation |
 | Stage 4: PR Creation | `Read,Bash(git:*),Bash(gh:*)` | Normal | Git operations and PR creation only |
 | Stage 5: PR Review | `Read,Glob,Grep,Task,Bash(git:diff*),Bash(gh:pr*)` | Normal | Read-only review with diff and CI status access |
+| Stage 6: Final Approval | N/A | N/A | User decision stage - no Claude execution |
 
 **Stage 3 Permission Bypass:**
 
@@ -1460,13 +1469,13 @@ This prevents false negatives when Claude outputs JSON with error-related field 
 
 **Decision Validation (LLM Post-Processing):**
 
-Before presenting any `[DECISION_NEEDED]` to the user, the server spawns validation subagents to investigate and confirm the concern is valid:
+Before presenting any `[DECISION_NEEDED]` to the user, the server spawns validation subagents to investigate and confirm the concern is valid by reading both the **plan** and the **codebase**:
 
 ```mermaid
 flowchart LR
     A["Claude outputs<br/>[DECISION_NEEDED]"] --> B["Server parses marker"]
     B --> C["Spawn validation subagent"]
-    C --> D["Subagent investigates<br/>codebase"]
+    C --> D["Subagent reads<br/>plan + codebase"]
     D --> E{"Concern valid?"}
     E -->|Yes| F["Present to user"]
     E -->|No| G["Filter out silently"]
@@ -1477,35 +1486,48 @@ flowchart LR
 1. Claude outputs `[DECISION_NEEDED]` marker during any stage
 2. Server parses the marker and extracts the concern
 3. Server spawns a Claude subagent (via Task tool) to investigate
-4. Subagent reads relevant code to verify the concern
-5. If valid, decision is presented to user; if false positive, filtered silently
+4. Subagent reads the **current plan** to understand intended implementation
+5. Subagent reads **relevant code** to verify actual implementation
+6. Subagent compares plan intent vs. code reality to validate concern
+7. If valid, decision is presented to user; if false positive, filtered silently
 
 | Validation Type | Subagent Task | Example False Positive |
 |-----------------|---------------|------------------------|
-| **Missing dependency** | Check if dependency actually exists in codebase | "Need auth middleware" but it exists in `src/middleware/auth.ts` |
-| **Security concern** | Verify vulnerability is exploitable in context | "SQL injection risk" but query uses parameterized statements |
-| **Performance issue** | Confirm bottleneck exists via code analysis | "N+1 query" but ORM has eager loading configured |
-| **Missing test** | Check if test coverage already exists | "No tests for auth" but tests exist in `__tests__/auth.spec.ts` |
+| **Missing dependency** | Check plan for dependency mention, then verify in codebase | "Need auth middleware" but it's in plan step 2 and exists in `src/middleware/auth.ts` |
+| **Security concern** | Check if plan addresses this, then verify in code | "SQL injection risk" but plan specifies parameterized queries and code uses them |
+| **Performance issue** | Check plan optimization steps, then verify implementation | "N+1 query" but plan includes eager loading and ORM is configured correctly |
+| **Missing test** | Check plan test requirements, then verify coverage | "No tests for auth" but plan step 5 covers this and tests exist |
+| **Integration mismatch** | Check plan API contracts, then verify frontend/backend alignment | "API shape mismatch" but plan specifies the contract and both sides implement it |
 
 **Validation Prompt Template:**
 ```
-Investigate this concern and determine if it's valid:
+Investigate this concern and determine if it's valid.
 
+## Current Plan
+{{planSteps}}
+
+## Concern Details
 Concern: {{concernText}}
 Category: {{category}}
 File: {{file}} (if applicable)
 
-Instructions:
-1. Read the relevant code files
-2. Check if the concern is actually valid
-3. Look for existing solutions that may have been missed
-4. Return: { "valid": true/false, "reason": "explanation" }
+## Instructions
+1. Read the current plan to understand the intended implementation
+2. Read the relevant code files to see actual implementation
+3. Compare: Does the code implement what the plan specifies?
+4. Check if the concern is actually valid given plan + code context
+5. Look for existing solutions that may have been missed
+6. Return: { "valid": true/false, "reason": "explanation" }
 
-Only mark as invalid if you can confirm the concern is a false positive.
+Only mark as invalid if you can confirm the concern is a false positive
+by verifying against both the plan and the codebase.
 When in doubt, mark as valid to surface for user review.
 ```
 
-This prevents unnecessary user interruptions from false positives while ensuring real concerns are surfaced.
+This prevents unnecessary user interruptions from false positives while ensuring real concerns are surfaced. By reading both plan and code, the validator can catch:
+- Concerns about things that are intentionally deferred per the plan
+- Concerns about implementations that match plan specifications
+- Actual gaps between plan intent and code reality
 
 **Response Confidence Scoring:**
 
@@ -1597,16 +1619,22 @@ Question here?
 
 5. After all questions are answered, generate an implementation plan within plan mode.
 
-6. Format plan steps as:
-[PLAN_STEP id="1" parent="null" status="pending"]
+6. **IMPORTANT: The first step MUST be creating the feature branch:**
+[PLAN_STEP id="step-1" parent="null" status="pending"]
+Create feature branch
+Create and checkout feature branch: git checkout -b {{featureBranch}} from {{baseBranch}}
+[/PLAN_STEP]
+
+7. Format subsequent implementation steps as:
+[PLAN_STEP id="step-2" parent="step-1" status="pending"]
 Step title here
 Description of what this step accomplishes.
 [/PLAN_STEP]
 
-7. Exit plan mode with ExitPlanMode when ready for user approval. Output:
+8. Exit plan mode with ExitPlanMode when ready for user approval. Output:
 [PLAN_MODE_EXITED]
 
-8. When you create a plan file, output the file path so the server can track it:
+9. When you create a plan file, output the file path so the server can track it:
 [PLAN_FILE path="/path/to/plan/file.md"]
 ```
 
@@ -1622,17 +1650,24 @@ You are reviewing an implementation plan. Find issues and present them as decisi
 This is review {{currentIteration}} of {{targetIterations}} recommended.
 
 ## Instructions
-1. Use the Task tool to spawn domain-specific subagents for parallel review:
-   - Frontend Agent: Review UI-related steps
-   - Backend Agent: Review API-related steps
-   - Database Agent: Review data-related steps
-   - Test Agent: Review test coverage
+1. Use the Task tool to spawn domain-specific subagents for parallel review.
+   IMPORTANT: Each subagent must first read the current plan above, then explore
+   the codebase to validate the plan against actual code structure.
+
+   Spawn these subagents:
+   - Frontend Agent: Review UI-related steps against existing components
+   - Backend Agent: Review API-related steps against existing endpoints
+   - Database Agent: Review data-related steps against existing schema
+   - Test Agent: Review test coverage requirements
+   - Frontend-Backend Agent: Review API contracts and data flow between layers
+   - Backend-ThirdParty Agent: Review external service integrations
 
 2. Check for issues in these categories:
    - Code Quality: Missing error handling, hardcoded values, missing tests
    - Architecture: Tight coupling, unclear separation of concerns
    - Security: Injection risks, exposed secrets, missing auth checks
    - Performance: N+1 queries, missing indexes, large bundle size
+   - Integration: API contract mismatches, missing error handling at boundaries
 
 3. Present issues as progressive decisions for the user:
    - Priority 1: Fundamental issues (architecture, security) - ask first
@@ -1640,7 +1675,7 @@ This is review {{currentIteration}} of {{targetIterations}} recommended.
    - Priority 3: Refinements (style, optimization) - ask last
 
 4. Format each issue as a decision with fix options:
-[DECISION_NEEDED priority="1|2|3" category="code_quality|architecture|security|performance"]
+[DECISION_NEEDED priority="1|2|3" category="code_quality|architecture|security|performance|integration"]
 Issue: Description of the problem found.
 Impact: What could go wrong if not addressed.
 
@@ -1655,6 +1690,10 @@ How should we address this?
 6. If no issues found or all decisions resolved:
 [PLAN_APPROVED]
 ```
+
+**Stage 2 is the only stage that can update the plan.** Stages 3 and 5 may discover
+issues or design decisions during execution, but these must be sent back to Stage 2
+for plan updates. This ensures the plan remains the single source of truth.
 
 #### Stage 3: Implementation
 
@@ -1713,14 +1752,22 @@ Summary of all changes made.
 [/IMPLEMENTATION_COMPLETE]
 ```
 
-**Plan Updates in Stage 3+:**
+**Design Decisions Return to Stage 2:**
 
-`[DECISION_NEEDED]` answers continue to update the plan even after Stage 2:
-- User answers a blocker → Claude updates plan steps if needed
-- Discovered dependencies → Added as new steps to the plan
-- Scope changes → Plan reflects current reality
+Stage 3 cannot directly update the plan. When blockers or design decisions arise:
 
-The plan is a living document throughout the session, not frozen after approval.
+1. User answers a `[DECISION_NEEDED]` blocker in Stage 3
+2. The decision and context are sent back to Stage 2
+3. Stage 2 updates the plan with the new information
+4. Implementation resumes with the updated plan
+
+This ensures the plan remains the single source of truth and all changes are properly reviewed.
+
+| Stage 3 Discovery | Action |
+|-------------------|--------|
+| Critical blocker | Present `[DECISION_NEEDED]`, send answer to Stage 2 for plan update |
+| Discovered dependency | Add as comment, Stage 2 reviews and adds to plan |
+| Scope change needed | Return to Stage 2 for plan revision |
 
 #### Stage 4: PR Creation
 
@@ -1740,14 +1787,35 @@ You are creating a pull request for completed implementation.
 {{testResults}}
 
 ## Instructions
-1. Use the Task tool to spawn subagents to review changes from different perspectives.
 
-2. Create a pull request with:
-   - Clear, descriptive title
-   - Summary of changes (what and why)
-   - Test plan for reviewers
+### Phase 1: Review Changes
+Use the Task tool to spawn subagents to review changes from different perspectives.
 
-3. Output PR details as:
+### Phase 2: Prepare PR Content
+Based on the review, prepare:
+- Clear, descriptive title (under 72 chars)
+- Summary of changes (what and why)
+- Test plan for reviewers
+
+### Phase 3: Prepare Git State (MANDATORY)
+Before creating the PR, ensure the repository is in the correct state:
+
+1. **Verify branch**: Check current branch with `git branch --show-current`
+   - If NOT on {{featureBranch}}, checkout: `git checkout {{featureBranch}}`
+   - If branch doesn't exist, create it: `git checkout -b {{featureBranch}}`
+
+2. **Commit any uncommitted changes**: Run `git status`
+   - If there are staged/unstaged changes, commit them
+   - Use: `git add -A && git commit -m "feat: <description>"`
+
+3. **Push to remote**: `git push -u origin {{featureBranch}}`
+
+### Phase 4: Create or Update the PR
+1. Check if PR already exists: `gh pr list --head {{featureBranch}}`
+2. If PR exists, update it: `gh pr edit <number> --title "..." --body "..."`
+3. If no PR exists, create it: `gh pr create --base {{baseBranch}} --head {{featureBranch}} --title "..." --body "..."`
+
+### Output
 [PR_CREATED]
 Title: {{prTitle}}
 Branch: {{featureBranch}} → {{baseBranch}}
@@ -1759,7 +1827,11 @@ Branch: {{featureBranch}} → {{baseBranch}}
 {{testPlan}}
 [/PR_CREATED]
 
-4. Use `gh pr create` to create the actual PR.
+### Important Rules
+1. ALWAYS verify you're on the correct feature branch before any git operations
+2. ALWAYS commit and push changes before creating/updating the PR
+3. Update existing PR if one exists, otherwise create new
+4. Return the PR URL in the output
 ```
 
 #### Stage 5: PR Review
@@ -1770,6 +1842,9 @@ After compact, recontextualized with: PR description, git diff, changed files co
 You are reviewing a pull request. Be objective and thorough.
 
 IMPORTANT: You are reviewing this code with fresh eyes. Evaluate it as if you did not write it.
+
+## Implementation Plan
+{{planSteps}}
 
 ## PR Details
 Title: {{prTitle}}
@@ -1786,20 +1861,28 @@ Description: {{prDescription}}
 {{testResults}}
 
 ## Instructions
-1. Use the Task tool to spawn domain-specific subagents for parallel review:
-   - Frontend Agent: Review UI changes
-   - Backend Agent: Review API changes
-   - Database Agent: Review schema changes
-   - Test Agent: Review test coverage
+1. Use the Task tool to spawn domain-specific subagents for parallel review.
+   IMPORTANT: Each subagent must first read the implementation plan and PR details above,
+   then explore the codebase to verify the implementation matches the plan.
+
+   Spawn these subagents:
+   - Frontend Agent: Review UI changes against plan
+   - Backend Agent: Review API changes against plan
+   - Database Agent: Review schema changes against plan
+   - Test Agent: Review test coverage against plan requirements
+   - Frontend-Backend Agent: Review API contracts match between UI and backend
+   - Backend-ThirdParty Agent: Review external service integrations
    - CI Agent: Poll CI status via `gh pr checks {{prNumber}} --watch`
 
 2. Review for:
+   - Plan Alignment: Does the code implement what the plan specified?
    - Correctness: Does the code do what it's supposed to?
    - Edge cases: Are boundary conditions handled?
    - Error handling: Are failures handled gracefully?
    - Security: Any vulnerabilities introduced?
    - Performance: Any obvious bottlenecks?
    - Tests: Is coverage adequate?
+   - Integration: Do API contracts match between layers?
 
 3. Batch all findings and present as prioritized decisions:
 
@@ -1852,6 +1935,49 @@ Would you like to address this?
 The PR is ready to merge. All CI checks passing.
 [/PR_APPROVED]
 ```
+
+When `[PR_APPROVED]` is detected, the session automatically transitions to Stage 6 (Final Approval) for user review.
+
+**Design Decisions Return to Stage 2:**
+
+Stage 5 cannot directly update the plan. When review issues require plan changes:
+
+1. User answers a `[DECISION_NEEDED]` issue in Stage 5
+2. The decision and context are sent back to Stage 2
+3. Stage 2 updates the plan with the fix requirements
+4. Flow returns to Stage 3 for re-implementation, then new PR
+
+This ensures all plan changes go through proper review before implementation.
+
+#### Stage 6: Final Approval
+
+After Claude approves the PR in Stage 5, the session transitions to Stage 6 for user final review. This stage gives the user control over the final decision rather than auto-completing.
+
+**User Options:**
+
+| Action | Description | Result |
+|--------|-------------|--------|
+| **Complete Session** | User approves the implementation | Session marked as `completed`, PR ready to merge |
+| **Request Changes** | User wants plan modifications | Returns to Stage 2 with user's feedback for plan revision |
+| **Re-Review PR** | User wants another automated review | Returns to Stage 5 with user's focus areas |
+
+**API Endpoint:**
+```
+POST /api/sessions/:projectId/:featureId/final-approval
+{
+  "action": "merge" | "plan_changes" | "re_review",
+  "feedback": "Optional user feedback or focus areas"
+}
+```
+
+**Stage Transitions from Stage 6:**
+- `merge` → Session status changes to `completed`
+- `plan_changes` → Transitions to Stage 2 (requires feedback)
+- `re_review` → Transitions to Stage 5 (requires feedback)
+
+**Auto-Approval Behavior:**
+
+When all questions raised during Stage 2 Plan Review are filtered as false positives by the validation system, the plan is automatically approved and the session transitions to Stage 3. This prevents sessions from getting stuck when the validator determines all concerns are already addressed in the codebase.
 
 #### Recontextualization Prompt (After Compact)
 
@@ -2025,6 +2151,8 @@ When prompting Claude Code, instruct it to spawn these specialized subagents:
 | **DevOps Agent** | CI/CD, Docker, infra | Pipeline review, deployment analysis, config checks |
 | **Test Agent** | Jest, Playwright, testing patterns | Test coverage analysis, test strategy review |
 | **CI Agent** | GitHub Actions, CI status | Poll CI status, wait for checks to complete (Stage 5 only) |
+| **Frontend-Backend Agent** | API contracts, data flow, request/response shapes | Review integration between UI and API layers |
+| **Backend-ThirdParty Agent** | External APIs, SDKs, webhooks, OAuth | Review integrations with external services and APIs |
 
 ### Usage by Workflow Stage
 
@@ -2049,6 +2177,11 @@ subagents for parallel analysis:
 - Database Agent: Schema design, queries, data modeling
 - DevOps Agent: CI/CD, deployment, infrastructure
 - Test Agent: Test coverage, testing strategies
+- Frontend-Backend Agent: API contracts, data flow between UI and backend
+- Backend-ThirdParty Agent: External API integrations, SDKs, webhooks
+
+IMPORTANT: Each subagent must first read the current plan (if available),
+then explore the codebase to validate plan against actual code structure.
 
 Subagents should focus on read-only exploration and analysis.
 Implementation is handled by the main Claude instance.

@@ -1,0 +1,35 @@
+{
+  "name": "claude-code-web",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "client",
+    "server",
+    "shared"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "npm run dev -w server",
+    "dev:client": "npm run dev -w client",
+    "build": "npm run build -w shared && npm run build -w server && npm run build -w client",
+    "test": "jest",
+    "test:client": "npm test -w client",
+    "test:all": "npm test && npm test -w client",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint . --ext .ts,.tsx"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.11.0",
+    "@types/supertest": "^6.0.3",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "concurrently": "^8.2.2",
+    "eslint": "^8.56.0",
+    "jest": "^29.7.0",
+    "supertest": "^7.2.2",
+    "ts-jest": "^29.4.6",
+    "typescript": "^5.3.3"
+  }
+}
