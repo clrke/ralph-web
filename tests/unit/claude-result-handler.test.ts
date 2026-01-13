@@ -3,7 +3,9 @@ import { FileStorageService } from '../../server/src/data/FileStorageService';
 import { SessionManager } from '../../server/src/services/SessionManager';
 import { ClaudeResult } from '../../server/src/services/ClaudeOrchestrator';
 import { DecisionValidator, ValidationLog, ValidationResult } from '../../server/src/services/DecisionValidator';
-import { Session } from '@claude-code-web/shared';
+import { PlanCompletionChecker, PlanCompletenessResult } from '../../server/src/services/PlanCompletionChecker';
+import { PlanValidationResult } from '../../server/src/services/PlanValidator';
+import { Session, ComposablePlan, PlanStep } from '@claude-code-web/shared';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as os from 'os';
@@ -73,6 +75,8 @@ describe('ClaudeResultHandler', () => {
     claudeSessionId: null,
     claudePlanFilePath: null,
     currentPlanVersion: 0,
+    claudeStage3SessionId: null,
+    prUrl: null,
     sessionExpiresAt: '2026-01-12T00:00:00Z',
     createdAt: '2026-01-11T00:00:00Z',
     updatedAt: '2026-01-11T00:00:00Z',
@@ -1718,6 +1722,354 @@ describe('ClaudeResultHandler', () => {
       expect(validationEntry).toBeDefined();
       expect(validationEntry!.validationAction).toBe('repurpose');
       expect(validationEntry!.questionIndex).toBe(1);
+    });
+  });
+
+  describe('handleStage2Result with plan validation', () => {
+    const stage2Session: Session = {
+      ...mockSession,
+      currentStage: 2,
+      status: 'planning',
+    };
+
+    const baseResult = (): ClaudeResult => ({
+      output: 'Stage 2 review output',
+      sessionId: 'claude-session-stage2',
+      costUsd: 0.10,
+      isError: false,
+      parsed: {
+        decisions: [],
+        planSteps: [],
+        stepCompleted: null,
+        stepsCompleted: [],
+        planModeEntered: false,
+        planModeExited: false,
+        planFilePath: null,
+        implementationComplete: false,
+        implementationSummary: null,
+        implementationStatus: null,
+        prCreated: null,
+        planApproved: false,
+        allTestsPassing: false,
+        testsAdded: [],
+        ciStatus: null,
+        ciFailed: false,
+        prApproved: false,
+        returnToStage2: null,
+      },
+    });
+
+    // Helper to create a valid composable plan step
+    const createValidStep = (id: string, parentId: string | null = null): PlanStep => ({
+      id,
+      parentId,
+      orderIndex: 0,
+      title: `Step ${id} Title`,
+      description: 'This is a sufficiently detailed description that is more than 50 characters long for validation purposes.',
+      status: 'pending',
+      complexity: 'medium',
+      acceptanceCriteriaIds: [],
+      estimatedFiles: [],
+      metadata: {},
+    });
+
+    // Helper to create a valid composable plan
+    const createValidComposablePlan = (): ComposablePlan => ({
+      meta: {
+        version: '1.0.0',
+        sessionId: 'test-session',
+        createdAt: '2024-01-15T10:00:00Z',
+        updatedAt: '2024-01-15T10:00:00Z',
+        isApproved: false,
+        reviewCount: 1,
+      },
+      steps: [
+        createValidStep('step-1'),
+        createValidStep('step-2', 'step-1'),
+      ],
+      dependencies: {
+        stepDependencies: [
+          { stepId: 'step-2', dependsOn: 'step-1' },
+        ],
+        externalDependencies: [],
+      },
+      testCoverage: {
+        framework: 'vitest',
+        requiredTestTypes: ['unit'],
+        stepCoverage: [
+          { stepId: 'step-1', requiredTestTypes: ['unit'] },
+        ],
+      },
+      acceptanceMapping: {
+        mappings: [
+          {
+            criterionId: 'ac-1',
+            criterionText: 'Feature works',
+            implementingStepIds: ['step-1'],
+            isFullyCovered: true,
+          },
+        ],
+        updatedAt: '2024-01-15T10:00:00Z',
+      },
+      validationStatus: {
+        meta: true,
+        steps: true,
+        dependencies: true,
+        testCoverage: true,
+        acceptanceMapping: true,
+        overall: true,
+      },
+    });
+
+    it('should return planValidation result from handleStage2Result', async () => {
+      const result = baseResult();
+      const response = await handler.handleStage2Result(stage2Session, result, 'Stage 2 prompt');
+
+      expect(response.planValidation).toBeDefined();
+      expect(response.planValidation!.validationResult).toBeDefined();
+    });
+
+    it('should set planValidationContext in session when plan is incomplete', async () => {
+      // Create an incomplete plan (missing proper structure)
+      const sessionDir = `${stage2Session.projectId}/${stage2Session.featureId}`;
+      await storage.writeJson(`${sessionDir}/plan.json`, {
+        version: '1.0',
+        planVersion: 1,
+        sessionId: stage2Session.id,
+        isApproved: false,
+        reviewCount: 1,
+        steps: [
+          { id: 'step-1', parentId: null, orderIndex: 0, title: 'Test', description: 'Short', status: 'pending', metadata: {} },
+        ],
+        createdAt: '2024-01-15T10:00:00Z',
+      });
+
+      const result = baseResult();
+      const response = await handler.handleStage2Result(stage2Session, result, 'Stage 2 prompt');
+
+      // Plan should be incomplete (no composable structure)
+      expect(response.planValidation!.complete).toBe(false);
+
+      // Session should have validation context set
+      const session = await storage.readJson<Session>(`${sessionDir}/session.json`);
+      expect(session!.planValidationContext).toBeDefined();
+      expect(session!.planValidationContext).not.toBeNull();
+    });
+
+    it('should clear planValidationContext when plan is complete', async () => {
+      const sessionDir = `${stage2Session.projectId}/${stage2Session.featureId}`;
+
+      // First set up session with existing validation context
+      await storage.writeJson(`${sessionDir}/session.json`, {
+        ...stage2Session,
+        planValidationContext: 'Previous validation error',
+      });
+
+      // Create a complete composable plan
+      await storage.writeJson(`${sessionDir}/plan.json`, createValidComposablePlan());
+
+      const result = baseResult();
+      const response = await handler.handleStage2Result(stage2Session, result, 'Stage 2 prompt');
+
+      // Plan should be complete
+      expect(response.planValidation!.complete).toBe(true);
+
+      // Session should have validation context cleared
+      const session = await storage.readJson<Session>(`${sessionDir}/session.json`);
+      expect(session!.planValidationContext).toBeNull();
+    });
+
+    it('should handle plan.json not existing gracefully', async () => {
+      const sessionDir = `${stage2Session.projectId}/${stage2Session.featureId}`;
+
+      // Remove plan.json
+      const planPath = path.join(testDir, sessionDir, 'plan.json');
+      await fs.remove(planPath);
+
+      const result = baseResult();
+      const response = await handler.handleStage2Result(stage2Session, result, 'Stage 2 prompt');
+
+      // Should return validation result with complete=false
+      expect(response.planValidation!.complete).toBe(false);
+      expect(response.planValidation!.missingContext).toContain('No plan found');
+    });
+
+    it('should use injected PlanCompletionChecker if provided', async () => {
+      const mockChecker = new PlanCompletionChecker();
+      const checkSpy = jest.spyOn(mockChecker, 'checkPlanCompleteness');
+      checkSpy.mockResolvedValue({
+        complete: true,
+        missingContext: '',
+        validationResult: {
+          meta: { valid: true, errors: [] },
+          steps: { valid: true, errors: [] },
+          dependencies: { valid: true, errors: [] },
+          testCoverage: { valid: true, errors: [] },
+          acceptanceMapping: { valid: true, errors: [] },
+          overall: true,
+        },
+      });
+
+      const customHandler = new ClaudeResultHandler(storage, sessionManager, undefined, mockChecker);
+      const result = baseResult();
+      await customHandler.handleStage2Result(stage2Session, result, 'Stage 2 prompt');
+
+      expect(checkSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('savePlanSteps with composable plan attributes', () => {
+    it('should save complexity attribute when present', async () => {
+      const result: ClaudeResult = {
+        output: 'Response with plan',
+        sessionId: 'claude-123',
+        costUsd: 0.05,
+        isError: false,
+        parsed: {
+          decisions: [],
+          planSteps: [
+            {
+              id: '1',
+              parentId: null,
+              status: 'pending',
+              title: 'Create auth middleware',
+              description: 'Set up JWT validation middleware',
+              complexity: 'high',
+              acceptanceCriteriaIds: ['ac-1', 'ac-2'],
+              estimatedFiles: ['src/middleware/auth.ts'],
+            },
+          ],
+          stepCompleted: null,
+          stepsCompleted: [],
+          planModeEntered: true,
+          planModeExited: true,
+          planFilePath: null,
+          implementationComplete: false,
+          implementationSummary: null,
+          implementationStatus: null,
+          prCreated: null,
+          planApproved: false,
+        },
+      };
+
+      await handler.handleStage1Result(mockSession, result, 'Test prompt');
+
+      const plan = await storage.readJson<{
+        steps: Array<{
+          id: string;
+          complexity?: string;
+          acceptanceCriteriaIds?: string[];
+          estimatedFiles?: string[];
+        }>;
+      }>(`${mockSession.projectId}/${mockSession.featureId}/plan.json`);
+
+      expect(plan!.steps[0].complexity).toBe('high');
+      expect(plan!.steps[0].acceptanceCriteriaIds).toEqual(['ac-1', 'ac-2']);
+      expect(plan!.steps[0].estimatedFiles).toEqual(['src/middleware/auth.ts']);
+    });
+
+    it('should handle steps without composable attributes', async () => {
+      const result: ClaudeResult = {
+        output: 'Response with plan',
+        sessionId: 'claude-123',
+        costUsd: 0.05,
+        isError: false,
+        parsed: {
+          decisions: [],
+          planSteps: [
+            {
+              id: '1',
+              parentId: null,
+              status: 'pending',
+              title: 'Simple step',
+              description: 'A simple step without complexity',
+              // No complexity, acceptanceCriteriaIds, or estimatedFiles
+            },
+          ],
+          stepCompleted: null,
+          stepsCompleted: [],
+          planModeEntered: true,
+          planModeExited: true,
+          planFilePath: null,
+          implementationComplete: false,
+          implementationSummary: null,
+          implementationStatus: null,
+          prCreated: null,
+          planApproved: false,
+        },
+      };
+
+      await handler.handleStage1Result(mockSession, result, 'Test prompt');
+
+      const plan = await storage.readJson<{
+        steps: Array<{
+          id: string;
+          complexity?: string;
+        }>;
+      }>(`${mockSession.projectId}/${mockSession.featureId}/plan.json`);
+
+      expect(plan!.steps[0].id).toBe('1');
+      expect(plan!.steps[0].complexity).toBeUndefined();
+    });
+  });
+
+  describe('saveComposablePlan', () => {
+    // Helper to create a valid composable plan step
+    const createValidStep = (id: string, parentId: string | null = null): PlanStep => ({
+      id,
+      parentId,
+      orderIndex: 0,
+      title: `Step ${id} Title`,
+      description: 'This is a sufficiently detailed description that is more than 50 characters long for validation purposes.',
+      status: 'pending',
+      complexity: 'medium',
+      acceptanceCriteriaIds: [],
+      estimatedFiles: [],
+      metadata: {},
+    });
+
+    it('should save a complete composable plan structure', async () => {
+      const composablePlan: ComposablePlan = {
+        meta: {
+          version: '1.0.0',
+          sessionId: mockSession.id,
+          createdAt: '2024-01-15T10:00:00Z',
+          updatedAt: '2024-01-15T10:00:00Z',
+          isApproved: false,
+          reviewCount: 1,
+        },
+        steps: [createValidStep('step-1')],
+        dependencies: {
+          stepDependencies: [],
+          externalDependencies: [],
+        },
+        testCoverage: {
+          framework: 'vitest',
+          requiredTestTypes: ['unit'],
+          stepCoverage: [],
+        },
+        acceptanceMapping: {
+          mappings: [],
+          updatedAt: '2024-01-15T10:00:00Z',
+        },
+        validationStatus: {
+          meta: true,
+          steps: true,
+          dependencies: true,
+          testCoverage: true,
+          acceptanceMapping: true,
+          overall: true,
+        },
+      };
+
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+      await handler.saveComposablePlan(sessionDir, composablePlan);
+
+      const saved = await storage.readJson<ComposablePlan>(`${sessionDir}/plan.json`);
+      expect(saved).toMatchObject(composablePlan);
+      expect(saved!.meta.version).toBe('1.0.0');
+      expect(saved!.steps).toHaveLength(1);
+      expect(saved!.dependencies.stepDependencies).toHaveLength(0);
     });
   });
 });

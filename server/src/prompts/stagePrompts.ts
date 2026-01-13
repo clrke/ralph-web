@@ -124,13 +124,17 @@ Description referencing specific files/modules found during exploration.
 /**
  * Build Stage 2: Plan Review prompt
  * Reviews implementation plan and finds issues to present as decisions.
+ * If planValidationContext exists, prepends validation issues to be addressed.
  * Per README lines 1613-1657
  */
 export function buildStage2Prompt(session: Session, plan: Plan, currentIteration: number): string {
   const planStepsText = plan.steps.length > 0
     ? plan.steps.map((step, i) => {
         const parentInfo = step.parentId ? ` (depends on: ${step.parentId})` : '';
-        return `${i + 1}. [${step.id}] ${step.title}${parentInfo}\n   ${step.description || 'No description'}`;
+        const complexityInfo = (step as { complexity?: string }).complexity
+          ? ` [${(step as { complexity?: string }).complexity} complexity]`
+          : '';
+        return `${i + 1}. [${step.id}] ${step.title}${parentInfo}${complexityInfo}\n   ${step.description || 'No description'}`;
       }).join('\n\n')
     : 'No plan steps defined.';
 
@@ -141,14 +145,88 @@ export function buildStage2Prompt(session: Session, plan: Plan, currentIteration
     ? `\n\n## Full Plan Reference\nFor complete plan details, read: ${session.claudePlanFilePath}`
     : '';
 
-  return `You are reviewing an implementation plan. Find issues and present them as decisions for the user.
+  // Build validation context section if plan was previously incomplete
+  const validationContextSection = session.planValidationContext
+    ? `
+## ⚠️ Plan Validation Issues (MUST ADDRESS FIRST)
+The previous plan submission was incomplete. Please address the following issues before proceeding:
 
+${session.planValidationContext}
+
+**Instructions for fixing validation issues:**
+1. Review each validation issue listed above
+2. Update your plan to address all issues
+3. Ensure all required sections are complete
+4. Re-output the updated plan markers
+
+---
+
+`
+    : '';
+
+  // Build composable plan structure documentation
+  const composablePlanDocs = `
+## Composable Plan Structure
+Your plan should include these sections with structured markers:
+
+### Required Plan Sections:
+1. **Plan Steps** - Each step with complexity rating
+   \`\`\`
+   [PLAN_STEP id="step-X" parent="null|step-Y" status="pending" complexity="low|medium|high"]
+   Step Title
+   Detailed description (minimum 50 characters)
+   [/PLAN_STEP]
+   \`\`\`
+
+2. **Plan Meta** - Plan metadata
+   \`\`\`
+   [PLAN_META]
+   version: 1.0.0
+   isApproved: false
+   [/PLAN_META]
+   \`\`\`
+
+3. **Dependencies** - Step and external dependencies
+   \`\`\`
+   [PLAN_DEPENDENCIES]
+   Step Dependencies:
+   - step-2 -> step-1: Must complete auth before routes
+
+   External Dependencies:
+   - npm:jsonwebtoken@9.0.0: JWT library
+   [/PLAN_DEPENDENCIES]
+   \`\`\`
+
+4. **Test Coverage** - Testing requirements
+   \`\`\`
+   [PLAN_TEST_COVERAGE]
+   Framework: vitest
+   Required Types: unit, integration
+
+   Step Coverage:
+   - step-1: unit (required)
+   - step-2: unit, integration (required)
+   [/PLAN_TEST_COVERAGE]
+   \`\`\`
+
+5. **Acceptance Mapping** - Link criteria to steps
+   \`\`\`
+   [PLAN_ACCEPTANCE_MAPPING]
+   - AC-1: "Users can login" -> step-2, step-3
+   - AC-2: "JWT tokens issued" -> step-1
+   [/PLAN_ACCEPTANCE_MAPPING]
+   \`\`\`
+
+`;
+
+  return `You are reviewing an implementation plan. Find issues and present them as decisions for the user.
+${validationContextSection}
 ## Current Plan (v${plan.planVersion})
 ${planStepsText}${planFileReference}
 
 ## Review Iteration
 This is review ${currentIteration} of ${targetIterations} recommended.
-
+${composablePlanDocs}
 ## Instructions
 1. Use the Task tool to spawn domain-specific subagents for parallel review:
    - Frontend Agent: Review UI-related steps
@@ -161,14 +239,15 @@ This is review ${currentIteration} of ${targetIterations} recommended.
    - Architecture: Tight coupling, unclear separation of concerns
    - Security: Injection risks, exposed secrets, missing auth checks
    - Performance: N+1 queries, missing indexes, large bundle size
+   - **Plan Structure**: Missing complexity ratings, insufficient descriptions, unmapped acceptance criteria
 
 3. Present issues as progressive decisions for the user:
-   - Priority 1: Fundamental issues (architecture, security) - ask first
+   - Priority 1: Fundamental issues (architecture, security, plan structure) - ask first
    - Priority 2: Important issues (code quality, performance) - ask after P1 resolved
    - Priority 3: Refinements (style, optimization) - ask last
 
 4. Format each issue as a decision with fix options:
-[DECISION_NEEDED priority="1|2|3" category="code_quality|architecture|security|performance"]
+[DECISION_NEEDED priority="1|2|3" category="code_quality|architecture|security|performance|plan_structure"]
 Issue: Description of the problem found.
 Impact: What could go wrong if not addressed.
 

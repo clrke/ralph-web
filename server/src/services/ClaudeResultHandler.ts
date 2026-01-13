@@ -7,7 +7,12 @@ import { ClaudeResult } from './ClaudeOrchestrator';
 import { DecisionValidator, ValidationLog } from './DecisionValidator';
 import { OutputParser, ParsedPlanStep } from './OutputParser';
 import { PostProcessingType } from './HaikuPostProcessor';
-import { Session, Plan, Question, QuestionStage, QuestionCategory, ValidationAction } from '@claude-code-web/shared';
+import {
+  PlanCompletionChecker,
+  planCompletionChecker,
+  PlanCompletenessResult,
+} from './PlanCompletionChecker';
+import { Session, Plan, Question, QuestionStage, QuestionCategory, ComposablePlan, ValidationAction } from '@claude-code-web/shared';
 import { isImplementationComplete, hasNewCommitSince } from '../utils/stateVerification';
 
 const STAGE_TO_QUESTION_STAGE: Record<number, QuestionStage> = {
@@ -74,11 +79,16 @@ interface StatusFile {
 }
 
 export class ClaudeResultHandler {
+  private readonly completionChecker: PlanCompletionChecker;
+
   constructor(
     private readonly storage: FileStorageService,
     private readonly sessionManager: SessionManager,
-    private readonly validator?: DecisionValidator
-  ) {}
+    private readonly validator?: DecisionValidator,
+    completionChecker?: PlanCompletionChecker
+  ) {
+    this.completionChecker = completionChecker || planCompletionChecker;
+  }
 
   /**
    * Handle Stage 1 (Discovery) result from Claude.
@@ -149,12 +159,13 @@ export class ClaudeResultHandler {
 
   /**
    * Handle Stage 2 (Plan Review) result from Claude.
+   * After saving plan updates, validates plan completeness and sets validation context if incomplete.
    */
   async handleStage2Result(
     session: Session,
     result: ClaudeResult,
     prompt: string
-  ): Promise<{ allFiltered: boolean }> {
+  ): Promise<{ allFiltered: boolean; planValidation?: PlanCompletenessResult }> {
     const sessionDir = `${session.projectId}/${session.featureId}`;
     const now = new Date().toISOString();
 
@@ -183,7 +194,44 @@ export class ClaudeResultHandler {
     // Update status.json
     await this.updateStatus(sessionDir, result, 2);
 
-    return { allFiltered };
+    // Validate plan completeness after Stage 2 session
+    const planValidation = await this.validatePlanCompleteness(session, sessionDir);
+
+    return { allFiltered, planValidation };
+  }
+
+  /**
+   * Validate plan completeness and update session with validation context if incomplete.
+   * This is called after Stage 2 saves plan updates.
+   */
+  private async validatePlanCompleteness(
+    session: Session,
+    sessionDir: string
+  ): Promise<PlanCompletenessResult> {
+    // Check plan completeness - use the absolute path for the session directory
+    const absoluteSessionDir = this.storage.getAbsolutePath(sessionDir);
+    const planValidation = await this.completionChecker.checkPlanCompleteness(absoluteSessionDir);
+
+    // Update session with validation context
+    if (!planValidation.complete) {
+      // Set validation context for re-prompting Claude
+      await this.sessionManager.updateSession(
+        session.projectId,
+        session.featureId,
+        { planValidationContext: planValidation.missingContext }
+      );
+      console.log(`Plan validation incomplete for ${session.featureId}. Context: ${planValidation.missingContext.substring(0, 100)}...`);
+    } else {
+      // Clear validation context if plan is complete
+      await this.sessionManager.updateSession(
+        session.projectId,
+        session.featureId,
+        { planValidationContext: null }
+      );
+      console.log(`Plan validation complete for ${session.featureId}`);
+    }
+
+    return planValidation;
   }
 
   /**
@@ -696,6 +744,7 @@ export class ClaudeResultHandler {
 
     if (!plan) return;
 
+    // Map plan steps, including new composable plan attributes if available
     plan.steps = planSteps.map((step, index) => ({
       id: step.id,
       parentId: step.parentId,
@@ -704,6 +753,10 @@ export class ClaudeResultHandler {
       description: step.description,
       status: step.status as 'pending' | 'in_progress' | 'completed' | 'blocked',
       metadata: {},
+      // Include composable plan attributes if present
+      complexity: step.complexity,
+      acceptanceCriteriaIds: step.acceptanceCriteriaIds,
+      estimatedFiles: step.estimatedFiles,
     }));
 
     plan.planVersion = (plan.planVersion || 0) + 1;
@@ -712,6 +765,18 @@ export class ClaudeResultHandler {
     plan.isApproved = false;
 
     await this.storage.writeJson(planPath, plan);
+  }
+
+  /**
+   * Save a composable plan structure to plan.json.
+   * This is the new plan format with separate sections for meta, dependencies, etc.
+   */
+  async saveComposablePlan(
+    sessionDir: string,
+    composablePlan: ComposablePlan
+  ): Promise<void> {
+    const planPath = `${sessionDir}/plan.json`;
+    await this.storage.writeJson(planPath, composablePlan);
   }
 
   /**
