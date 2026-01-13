@@ -462,4 +462,407 @@ Issue in file
       expect(Number.isNaN(result.decisions[0].line)).toBe(false);
     });
   });
+
+  // =========================================================================
+  // Composable Plan Parsing Tests
+  // =========================================================================
+
+  describe('parsePlanSteps with complexity', () => {
+    it('should parse complexity attribute from PLAN_STEP', () => {
+      const input = `
+[PLAN_STEP id="step-1" parent="null" status="pending" complexity="low"]
+Create feature branch
+Simple git checkout operation.
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-2" parent="step-1" status="pending" complexity="high"]
+Implement core logic
+Complex implementation requiring significant work.
+[/PLAN_STEP]
+`;
+      const result = parser.parsePlanSteps(input);
+
+      expect(result).toHaveLength(2);
+      expect(result[0].complexity).toBe('low');
+      expect(result[1].complexity).toBe('high');
+    });
+
+    it('should handle missing complexity attribute', () => {
+      const input = `
+[PLAN_STEP id="step-1" parent="null" status="pending"]
+Step without complexity
+Description here.
+[/PLAN_STEP]
+`;
+      const result = parser.parsePlanSteps(input);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].complexity).toBeUndefined();
+    });
+
+    it('should parse acceptanceCriteria attribute', () => {
+      const input = `
+[PLAN_STEP id="step-1" parent="null" status="pending" acceptanceCriteria="ac-1, ac-2, ac-3"]
+Step with acceptance criteria
+Description here.
+[/PLAN_STEP]
+`;
+      const result = parser.parsePlanSteps(input);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].acceptanceCriteriaIds).toEqual(['ac-1', 'ac-2', 'ac-3']);
+    });
+
+    it('should parse estimatedFiles attribute', () => {
+      const input = `
+[PLAN_STEP id="step-1" parent="null" status="pending" estimatedFiles="src/auth.ts, src/utils.ts"]
+Step with estimated files
+Description here.
+[/PLAN_STEP]
+`;
+      const result = parser.parsePlanSteps(input);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].estimatedFiles).toEqual(['src/auth.ts', 'src/utils.ts']);
+    });
+  });
+
+  describe('parsePlanMeta', () => {
+    it('should parse PLAN_META marker', () => {
+      const input = `
+[PLAN_META]
+version: 1.0.0
+sessionId: session-123
+createdAt: 2024-01-15T10:00:00Z
+updatedAt: 2024-01-15T11:00:00Z
+isApproved: false
+reviewCount: 2
+[/PLAN_META]
+`;
+      const result = parser.parsePlanMeta(input);
+
+      expect(result).not.toBeNull();
+      expect(result!.version).toBe('1.0.0');
+      expect(result!.sessionId).toBe('session-123');
+      expect(result!.isApproved).toBe(false);
+      expect(result!.reviewCount).toBe(2);
+    });
+
+    it('should handle snake_case keys', () => {
+      const input = `
+[PLAN_META]
+version: 2.0.0
+session_id: session-456
+created_at: 2024-01-15T10:00:00Z
+updated_at: 2024-01-15T11:00:00Z
+is_approved: true
+review_count: 5
+[/PLAN_META]
+`;
+      const result = parser.parsePlanMeta(input);
+
+      expect(result).not.toBeNull();
+      expect(result!.sessionId).toBe('session-456');
+      expect(result!.isApproved).toBe(true);
+      expect(result!.reviewCount).toBe(5);
+    });
+
+    it('should return null when no PLAN_META marker', () => {
+      const result = parser.parsePlanMeta('No plan meta here');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('parsePlanDependencies', () => {
+    it('should parse step dependencies with arrow format', () => {
+      const input = `
+[PLAN_DEPENDENCIES]
+step-2 -> step-1
+step-3 -> step-2
+step-4 -> step-1: Must complete setup first
+[/PLAN_DEPENDENCIES]
+`;
+      const result = parser.parsePlanDependencies(input);
+
+      expect(result).not.toBeNull();
+      expect(result!.stepDependencies).toHaveLength(3);
+      expect(result!.stepDependencies[0]).toEqual({
+        stepId: 'step-2',
+        dependsOn: 'step-1',
+        reason: undefined,
+      });
+      expect(result!.stepDependencies[2].reason).toBe('Must complete setup first');
+    });
+
+    it('should parse "depends on" format', () => {
+      const input = `
+[PLAN_DEPENDENCIES]
+step-2 depends on step-1
+step-3 depends on step-2
+[/PLAN_DEPENDENCIES]
+`;
+      const result = parser.parsePlanDependencies(input);
+
+      expect(result).not.toBeNull();
+      expect(result!.stepDependencies).toHaveLength(2);
+    });
+
+    it('should parse external dependencies', () => {
+      const input = `
+[PLAN_DEPENDENCIES]
+External dependencies:
+- zod (npm) @ ^3.22.0: Schema validation [required by: step-3, step-4]
+- express (npm): Web framework [required by: step-2]
+[/PLAN_DEPENDENCIES]
+`;
+      const result = parser.parsePlanDependencies(input);
+
+      expect(result).not.toBeNull();
+      expect(result!.externalDependencies).toHaveLength(2);
+      expect(result!.externalDependencies[0]).toMatchObject({
+        name: 'zod',
+        type: 'npm',
+        version: '^3.22.0',
+        reason: 'Schema validation',
+        requiredBy: ['step-3', 'step-4'],
+      });
+    });
+
+    it('should return null when no PLAN_DEPENDENCIES marker', () => {
+      const result = parser.parsePlanDependencies('No dependencies here');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('parsePlanTestCoverage', () => {
+    it('should parse test coverage configuration', () => {
+      const input = `
+[PLAN_TEST_COVERAGE]
+framework: vitest
+requiredTestTypes: unit, integration
+globalCoverageTarget: 80
+- step-3: unit, integration
+- step-5: unit
+[/PLAN_TEST_COVERAGE]
+`;
+      const result = parser.parsePlanTestCoverage(input);
+
+      expect(result).not.toBeNull();
+      expect(result!.framework).toBe('vitest');
+      expect(result!.requiredTestTypes).toEqual(['unit', 'integration']);
+      expect(result!.globalCoverageTarget).toBe(80);
+      expect(result!.stepCoverage).toHaveLength(2);
+      expect(result!.stepCoverage[0]).toMatchObject({
+        stepId: 'step-3',
+        requiredTestTypes: ['unit', 'integration'],
+      });
+    });
+
+    it('should handle snake_case keys', () => {
+      const input = `
+[PLAN_TEST_COVERAGE]
+framework: jest
+required_test_types: unit, e2e
+coverage_target: 90
+[/PLAN_TEST_COVERAGE]
+`;
+      const result = parser.parsePlanTestCoverage(input);
+
+      expect(result).not.toBeNull();
+      expect(result!.framework).toBe('jest');
+      expect(result!.requiredTestTypes).toEqual(['unit', 'e2e']);
+      expect(result!.globalCoverageTarget).toBe(90);
+    });
+
+    it('should return null when no PLAN_TEST_COVERAGE marker', () => {
+      const result = parser.parsePlanTestCoverage('No test coverage here');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('parsePlanAcceptanceMapping', () => {
+    it('should parse acceptance criteria mappings', () => {
+      const input = `
+[PLAN_ACCEPTANCE_MAPPING]
+AC-1: 'Feature works correctly' -> step-3, step-4 [fully covered]
+AC-2: 'Tests pass' -> step-5 [partial]
+[/PLAN_ACCEPTANCE_MAPPING]
+`;
+      const result = parser.parsePlanAcceptanceMapping(input);
+
+      expect(result).not.toBeNull();
+      expect(result!.mappings).toHaveLength(2);
+      expect(result!.mappings[0]).toMatchObject({
+        criterionId: 'AC-1',
+        criterionText: 'Feature works correctly',
+        implementingStepIds: ['step-3', 'step-4'],
+        isFullyCovered: true,
+      });
+      expect(result!.mappings[1].isFullyCovered).toBe(false);
+    });
+
+    it('should parse mappings without quotes', () => {
+      const input = `
+[PLAN_ACCEPTANCE_MAPPING]
+ac-1: Feature works -> step-1, step-2
+[/PLAN_ACCEPTANCE_MAPPING]
+`;
+      const result = parser.parsePlanAcceptanceMapping(input);
+
+      expect(result).not.toBeNull();
+      expect(result!.mappings).toHaveLength(1);
+      expect(result!.mappings[0].criterionText).toBe('Feature works');
+    });
+
+    it('should return null when no PLAN_ACCEPTANCE_MAPPING marker', () => {
+      const result = parser.parsePlanAcceptanceMapping('No mapping here');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('parseComposablePlan', () => {
+    it('should parse a complete composable plan', () => {
+      const input = `
+[PLAN_META]
+version: 1.0.0
+sessionId: session-123
+isApproved: false
+reviewCount: 1
+[/PLAN_META]
+
+[PLAN_STEP id="step-1" parent="null" status="pending" complexity="low"]
+Create feature branch
+Create and checkout a new feature branch from main.
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-2" parent="step-1" status="pending" complexity="medium"]
+Implement core logic
+Build the main functionality with proper error handling.
+[/PLAN_STEP]
+
+[PLAN_DEPENDENCIES]
+step-2 -> step-1
+[/PLAN_DEPENDENCIES]
+
+[PLAN_TEST_COVERAGE]
+framework: vitest
+requiredTestTypes: unit
+[/PLAN_TEST_COVERAGE]
+
+[PLAN_ACCEPTANCE_MAPPING]
+AC-1: 'Feature complete' -> step-2 [fully covered]
+[/PLAN_ACCEPTANCE_MAPPING]
+`;
+      const result = parser.parseComposablePlan(input, 'session-123');
+
+      expect(result).not.toBeNull();
+      expect(result!.meta!.version).toBe('1.0.0');
+      expect(result!.steps).toHaveLength(2);
+      expect(result!.steps![0].complexity).toBe('low');
+      expect(result!.steps![1].complexity).toBe('medium');
+      expect(result!.dependencies!.stepDependencies).toHaveLength(1);
+      expect(result!.testCoverage!.framework).toBe('vitest');
+      expect(result!.acceptanceMapping!.mappings).toHaveLength(1);
+    });
+
+    it('should return null when no plan steps found', () => {
+      const input = `
+[PLAN_META]
+version: 1.0.0
+[/PLAN_META]
+
+No plan steps here, just some text.
+`;
+      const result = parser.parseComposablePlan(input);
+      expect(result).toBeNull();
+    });
+
+    it('should provide defaults for missing sections', () => {
+      const input = `
+[PLAN_STEP id="step-1" parent="null" status="pending"]
+Just a step
+With a description that spans multiple lines.
+[/PLAN_STEP]
+`;
+      const result = parser.parseComposablePlan(input, 'session-456');
+
+      expect(result).not.toBeNull();
+      expect(result!.meta!.sessionId).toBe('session-456');
+      expect(result!.dependencies!.stepDependencies).toEqual([]);
+      expect(result!.testCoverage!.framework).toBe('unknown');
+      expect(result!.acceptanceMapping!.mappings).toEqual([]);
+    });
+
+    it('should set correct validation status based on parsed sections', () => {
+      const inputWithAllSections = `
+[PLAN_META]
+version: 1.0.0
+[/PLAN_META]
+
+[PLAN_STEP id="step-1" parent="null" status="pending"]
+Step title
+Step description here.
+[/PLAN_STEP]
+
+[PLAN_DEPENDENCIES]
+[/PLAN_DEPENDENCIES]
+
+[PLAN_TEST_COVERAGE]
+framework: vitest
+[/PLAN_TEST_COVERAGE]
+
+[PLAN_ACCEPTANCE_MAPPING]
+[/PLAN_ACCEPTANCE_MAPPING]
+`;
+      const result = parser.parseComposablePlan(inputWithAllSections);
+
+      expect(result).not.toBeNull();
+      expect(result!.validationStatus!.meta).toBe(true);
+      expect(result!.validationStatus!.steps).toBe(true);
+      expect(result!.validationStatus!.dependencies).toBe(true);
+      expect(result!.validationStatus!.testCoverage).toBe(true);
+      expect(result!.validationStatus!.acceptanceMapping).toBe(true);
+    });
+  });
+
+  describe('hasComposablePlanMarkers', () => {
+    it('should detect PLAN_META marker', () => {
+      expect(parser.hasComposablePlanMarkers('[PLAN_META]')).toBe(true);
+    });
+
+    it('should detect PLAN_DEPENDENCIES marker', () => {
+      expect(parser.hasComposablePlanMarkers('Some text [PLAN_DEPENDENCIES] more text')).toBe(true);
+    });
+
+    it('should detect PLAN_TEST_COVERAGE marker', () => {
+      expect(parser.hasComposablePlanMarkers('[PLAN_TEST_COVERAGE]')).toBe(true);
+    });
+
+    it('should detect PLAN_ACCEPTANCE_MAPPING marker', () => {
+      expect(parser.hasComposablePlanMarkers('[PLAN_ACCEPTANCE_MAPPING]')).toBe(true);
+    });
+
+    it('should return false for text without composable plan markers', () => {
+      expect(parser.hasComposablePlanMarkers('Just regular text')).toBe(false);
+      expect(parser.hasComposablePlanMarkers('[PLAN_STEP id="1"]')).toBe(false);
+    });
+  });
+
+  describe('backward compatibility', () => {
+    it('should still parse old format PLAN_STEP markers without new attributes', () => {
+      const input = `
+[PLAN_STEP id="1" parent="null" status="pending"]
+Old format step
+Description without complexity or other new attributes.
+[/PLAN_STEP]
+`;
+      const result = parser.parse(input);
+
+      expect(result.planSteps).toHaveLength(1);
+      expect(result.planSteps[0].id).toBe('1');
+      expect(result.planSteps[0].complexity).toBeUndefined();
+      expect(result.planSteps[0].acceptanceCriteriaIds).toBeUndefined();
+      expect(result.planSteps[0].estimatedFiles).toBeUndefined();
+    });
+  });
 });

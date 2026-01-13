@@ -1,3 +1,18 @@
+import type {
+  StepComplexity,
+  PlanMeta,
+  PlanDependencies,
+  StepDependency,
+  ExternalDependency,
+  PlanTestCoverage,
+  StepTestCoverage,
+  PlanAcceptanceCriteriaMapping,
+  AcceptanceCriteriaStepMapping,
+  ComposablePlan,
+  PlanValidationStatus,
+  PlanStep,
+} from '@claude-code-web/shared';
+
 export interface DecisionOption {
   label: string;
   recommended: boolean;
@@ -19,6 +34,12 @@ export interface ParsedPlanStep {
   status: string;
   title: string;
   description: string;
+  /** Complexity rating extracted from marker attributes */
+  complexity?: StepComplexity;
+  /** Acceptance criteria IDs this step addresses */
+  acceptanceCriteriaIds?: string[];
+  /** Estimated files to be modified */
+  estimatedFiles?: string[];
 }
 
 export interface ParsedStepComplete {
@@ -182,16 +203,44 @@ export class OutputParser {
       const content = match[2].trim();
       const lines = content.split('\n');
 
+      // Parse complexity from attributes
+      const complexity = this.parseComplexity(attrs.complexity);
+
+      // Parse acceptance criteria IDs (comma-separated)
+      const acceptanceCriteriaIds = attrs.acceptanceCriteria
+        ? attrs.acceptanceCriteria.split(',').map(s => s.trim()).filter(Boolean)
+        : undefined;
+
+      // Parse estimated files (comma-separated)
+      const estimatedFiles = attrs.estimatedFiles
+        ? attrs.estimatedFiles.split(',').map(s => s.trim()).filter(Boolean)
+        : undefined;
+
       steps.push({
         id: attrs.id || '',
         parentId: attrs.parent === 'null' ? null : (attrs.parent || null),
         status: attrs.status || 'pending',
         title: lines[0] || '',
         description: lines.slice(1).join('\n').trim(),
+        complexity,
+        acceptanceCriteriaIds,
+        estimatedFiles,
       });
     }
 
     return steps;
+  }
+
+  /**
+   * Parse complexity rating from attribute value.
+   */
+  private parseComplexity(value: string | undefined): StepComplexity | undefined {
+    if (!value) return undefined;
+    const normalized = value.toLowerCase().trim();
+    if (normalized === 'low' || normalized === 'medium' || normalized === 'high') {
+      return normalized;
+    }
+    return undefined;
   }
 
   private parseAllStepsComplete(input: string): ParsedStepComplete[] {
@@ -374,5 +423,265 @@ export class OutputParser {
     return {
       reason: reasonMatch ? reasonMatch[1].trim() : content,
     };
+  }
+
+  // =========================================================================
+  // Composable Plan Parsing Methods
+  // =========================================================================
+
+  /**
+   * Parse [PLAN_META] marker to extract plan metadata.
+   */
+  parsePlanMeta(input: string): PlanMeta | null {
+    const regex = /\[PLAN_META\]([\s\S]*?)\[\/PLAN_META\]/;
+    const match = input.match(regex);
+
+    if (!match) return null;
+
+    const content = match[1].trim();
+    const getValue = (key: string): string => {
+      const lineMatch = content.match(new RegExp(`${key}:\\s*(.+)`, 'i'));
+      return lineMatch ? lineMatch[1].trim() : '';
+    };
+
+    const now = new Date().toISOString();
+
+    return {
+      version: getValue('version') || '1.0.0',
+      sessionId: getValue('sessionId') || getValue('session_id') || '',
+      createdAt: getValue('createdAt') || getValue('created_at') || now,
+      updatedAt: getValue('updatedAt') || getValue('updated_at') || now,
+      isApproved: getValue('isApproved')?.toLowerCase() === 'true' ||
+                  getValue('is_approved')?.toLowerCase() === 'true' ||
+                  false,
+      reviewCount: this.safeParseInt(getValue('reviewCount') || getValue('review_count'), 0),
+    };
+  }
+
+  /**
+   * Parse [PLAN_DEPENDENCIES] marker to extract dependencies.
+   */
+  parsePlanDependencies(input: string): PlanDependencies | null {
+    const regex = /\[PLAN_DEPENDENCIES\]([\s\S]*?)\[\/PLAN_DEPENDENCIES\]/;
+    const match = input.match(regex);
+
+    if (!match) return null;
+
+    const content = match[1].trim();
+    const stepDependencies: StepDependency[] = [];
+    const externalDependencies: ExternalDependency[] = [];
+
+    // Parse step dependencies: "step-2 -> step-1" or "step-2 depends on step-1"
+    // The second capture uses [^\s:] to avoid capturing the colon that precedes the reason
+    const stepDepRegex = /(?:^|\n)\s*[-*]?\s*(\S+)\s+(?:->|depends\s+on)\s+([^\s:]+)(?:\s*:\s*(.+))?/gi;
+    let depMatch;
+    while ((depMatch = stepDepRegex.exec(content)) !== null) {
+      stepDependencies.push({
+        stepId: depMatch[1],
+        dependsOn: depMatch[2],
+        reason: depMatch[3]?.trim(),
+      });
+    }
+
+    // Parse external dependencies section
+    const extDepSection = content.match(/external(?:\s+dependencies)?:([\s\S]*?)(?:$|\n\n)/i);
+    if (extDepSection) {
+      const extLines = extDepSection[1].split('\n');
+      for (const line of extLines) {
+        // Format: "- name (type): reason [required by: step-1, step-2]"
+        const extMatch = line.match(/[-*]\s*(\S+)\s*\((\w+)\)(?:\s*@\s*([^\s:]+))?\s*:\s*(.+?)(?:\s*\[required\s*by:\s*([^\]]+)\])?$/i);
+        if (extMatch) {
+          externalDependencies.push({
+            name: extMatch[1],
+            type: extMatch[2] as ExternalDependency['type'],
+            version: extMatch[3],
+            reason: extMatch[4].trim(),
+            requiredBy: extMatch[5]
+              ? extMatch[5].split(',').map(s => s.trim()).filter(Boolean)
+              : [],
+          });
+        }
+      }
+    }
+
+    return {
+      stepDependencies,
+      externalDependencies,
+    };
+  }
+
+  /**
+   * Parse [PLAN_TEST_COVERAGE] marker to extract test coverage requirements.
+   */
+  parsePlanTestCoverage(input: string): PlanTestCoverage | null {
+    const regex = /\[PLAN_TEST_COVERAGE\]([\s\S]*?)\[\/PLAN_TEST_COVERAGE\]/;
+    const match = input.match(regex);
+
+    if (!match) return null;
+
+    const content = match[1].trim();
+    const getValue = (key: string): string => {
+      const lineMatch = content.match(new RegExp(`${key}:\\s*(.+)`, 'i'));
+      return lineMatch ? lineMatch[1].trim() : '';
+    };
+
+    // Parse framework
+    const framework = getValue('framework') || 'unknown';
+
+    // Parse required test types (comma-separated)
+    const requiredTestTypesStr = getValue('requiredTestTypes') || getValue('required_test_types') || getValue('testTypes');
+    const requiredTestTypes = requiredTestTypesStr
+      ? requiredTestTypesStr.split(',').map(s => s.trim()).filter(Boolean)
+      : ['unit'];
+
+    // Parse global coverage target
+    const globalCoverageTarget = this.safeParseInt(
+      getValue('globalCoverageTarget') || getValue('coverage_target'),
+      undefined
+    );
+
+    // Parse step-specific coverage
+    const stepCoverage: StepTestCoverage[] = [];
+    const stepCoverageRegex = /(?:^|\n)\s*[-*]\s*(\S+)\s*:\s*(.+)/g;
+    let stepMatch;
+    while ((stepMatch = stepCoverageRegex.exec(content)) !== null) {
+      const stepId = stepMatch[1];
+      const testTypesStr = stepMatch[2];
+      // Skip if it looks like a key-value pair we already parsed
+      if (['framework', 'requiredtesttypes', 'required_test_types', 'testtypes', 'globalcoveragetarget', 'coverage_target'].includes(stepId.toLowerCase())) {
+        continue;
+      }
+      stepCoverage.push({
+        stepId,
+        requiredTestTypes: testTypesStr.split(',').map(s => s.trim()).filter(Boolean),
+      });
+    }
+
+    return {
+      framework,
+      requiredTestTypes,
+      stepCoverage,
+      globalCoverageTarget,
+    };
+  }
+
+  /**
+   * Parse [PLAN_ACCEPTANCE_MAPPING] marker to extract acceptance criteria mappings.
+   */
+  parsePlanAcceptanceMapping(input: string): PlanAcceptanceCriteriaMapping | null {
+    const regex = /\[PLAN_ACCEPTANCE_MAPPING\]([\s\S]*?)\[\/PLAN_ACCEPTANCE_MAPPING\]/;
+    const match = input.match(regex);
+
+    if (!match) return null;
+
+    const content = match[1].trim();
+    const mappings: AcceptanceCriteriaStepMapping[] = [];
+
+    // Parse each mapping line
+    // Format: "AC-1: 'Criterion text' -> step-1, step-2 [fully covered]"
+    // Or: "- criterion_id: text -> steps [status]"
+    const mappingRegex = /(?:^|\n)\s*[-*]?\s*(\S+)\s*:\s*(?:['"]([^'"]+)['"]|([^->]+))\s*->\s*([^[\n]+)(?:\s*\[(fully\s*covered|partial)\])?/gi;
+    let mappingMatch;
+    while ((mappingMatch = mappingRegex.exec(content)) !== null) {
+      const criterionId = mappingMatch[1];
+      const criterionText = (mappingMatch[2] || mappingMatch[3] || '').trim();
+      const stepsStr = mappingMatch[4];
+      const coverageStatus = mappingMatch[5]?.toLowerCase();
+
+      mappings.push({
+        criterionId,
+        criterionText,
+        implementingStepIds: stepsStr.split(',').map(s => s.trim()).filter(Boolean),
+        isFullyCovered: coverageStatus === 'fully covered' || coverageStatus === 'fully',
+      });
+    }
+
+    return {
+      mappings,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Parse a complete composable plan from Claude output.
+   * This combines all section parsers and plan steps into a structured ComposablePlan.
+   */
+  parseComposablePlan(input: string, sessionId?: string): Partial<ComposablePlan> | null {
+    const planSteps = this.parsePlanSteps(input);
+
+    // If no plan steps found, return null
+    if (planSteps.length === 0) {
+      return null;
+    }
+
+    // Parse all sections
+    const meta = this.parsePlanMeta(input);
+    const dependencies = this.parsePlanDependencies(input);
+    const testCoverage = this.parsePlanTestCoverage(input);
+    const acceptanceMapping = this.parsePlanAcceptanceMapping(input);
+
+    // Convert ParsedPlanStep to PlanStep format
+    const steps: PlanStep[] = planSteps.map((step, index) => ({
+      id: step.id,
+      parentId: step.parentId,
+      orderIndex: index,
+      title: step.title,
+      description: step.description,
+      status: step.status as PlanStep['status'],
+      metadata: {},
+      complexity: step.complexity,
+      acceptanceCriteriaIds: step.acceptanceCriteriaIds,
+      estimatedFiles: step.estimatedFiles,
+    }));
+
+    // Build the partial plan (caller is responsible for validation)
+    const now = new Date().toISOString();
+    const plan: Partial<ComposablePlan> = {
+      meta: meta || {
+        version: '1.0.0',
+        sessionId: sessionId || '',
+        createdAt: now,
+        updatedAt: now,
+        isApproved: false,
+        reviewCount: 0,
+      },
+      steps,
+      dependencies: dependencies || {
+        stepDependencies: [],
+        externalDependencies: [],
+      },
+      testCoverage: testCoverage || {
+        framework: 'unknown',
+        requiredTestTypes: ['unit'],
+        stepCoverage: [],
+      },
+      acceptanceMapping: acceptanceMapping || {
+        mappings: [],
+        updatedAt: now,
+      },
+      // Validation status is determined by the caller using PlanValidator
+      validationStatus: {
+        meta: meta !== null,
+        steps: steps.length > 0,
+        dependencies: dependencies !== null,
+        testCoverage: testCoverage !== null,
+        acceptanceMapping: acceptanceMapping !== null,
+        overall: false, // Caller should validate and update
+      },
+    };
+
+    return plan;
+  }
+
+  /**
+   * Check if the input contains any composable plan markers.
+   */
+  hasComposablePlanMarkers(input: string): boolean {
+    return (
+      input.includes('[PLAN_META]') ||
+      input.includes('[PLAN_DEPENDENCIES]') ||
+      input.includes('[PLAN_TEST_COVERAGE]') ||
+      input.includes('[PLAN_ACCEPTANCE_MAPPING]')
+    );
   }
 }
