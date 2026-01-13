@@ -1187,4 +1187,211 @@ describe('ClaudeResultHandler', () => {
       });
     });
   });
+
+  describe('savePostProcessingConversation', () => {
+    it('should save post-processing conversation without validation metadata', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+
+      await handler.savePostProcessingConversation(
+        sessionDir,
+        1,
+        'decision_validation',
+        'Validate this decision',
+        '{"result": "pass"}',
+        100,
+        false
+      );
+
+      const conversations = await storage.readJson<{ entries: Array<{
+        stage: number;
+        postProcessingType: string;
+        questionId?: string;
+        validationAction?: string;
+        questionIndex?: number;
+      }> }>(
+        `${sessionDir}/conversations.json`
+      );
+
+      expect(conversations!.entries).toHaveLength(1);
+      expect(conversations!.entries[0].stage).toBe(1);
+      expect(conversations!.entries[0].postProcessingType).toBe('decision_validation');
+      expect(conversations!.entries[0].questionId).toBeUndefined();
+      expect(conversations!.entries[0].validationAction).toBeUndefined();
+      expect(conversations!.entries[0].questionIndex).toBeUndefined();
+    });
+
+    it('should save post-processing conversation with validation metadata', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+
+      await handler.savePostProcessingConversation(
+        sessionDir,
+        1,
+        'decision_validation',
+        'Validate question about auth',
+        '{"result": "pass"}',
+        150,
+        false,
+        undefined,
+        {
+          questionId: 'question-abc-123',
+          validationAction: 'pass',
+          questionIndex: 1,
+        }
+      );
+
+      const conversations = await storage.readJson<{ entries: Array<{
+        stage: number;
+        postProcessingType: string;
+        questionId?: string;
+        validationAction?: string;
+        questionIndex?: number;
+        output: string;
+      }> }>(
+        `${sessionDir}/conversations.json`
+      );
+
+      expect(conversations!.entries).toHaveLength(1);
+      expect(conversations!.entries[0].questionId).toBe('question-abc-123');
+      expect(conversations!.entries[0].validationAction).toBe('pass');
+      expect(conversations!.entries[0].questionIndex).toBe(1);
+      expect(conversations!.entries[0].output).toBe('pass'); // extracted from result
+    });
+
+    it('should save filter validation action', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+
+      await handler.savePostProcessingConversation(
+        sessionDir,
+        1,
+        'decision_validation',
+        'Validate duplicate question',
+        '{"result": "filter"}',
+        100,
+        false,
+        undefined,
+        {
+          questionId: 'question-duplicate',
+          validationAction: 'filter',
+          questionIndex: 2,
+        }
+      );
+
+      const conversations = await storage.readJson<{ entries: Array<{
+        validationAction?: string;
+        questionIndex?: number;
+      }> }>(
+        `${sessionDir}/conversations.json`
+      );
+
+      expect(conversations!.entries[0].validationAction).toBe('filter');
+      expect(conversations!.entries[0].questionIndex).toBe(2);
+    });
+
+    it('should save repurpose validation action', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+
+      await handler.savePostProcessingConversation(
+        sessionDir,
+        2,
+        'decision_validation',
+        'Validate question for repurposing',
+        '{"result": "repurpose"}',
+        120,
+        false,
+        undefined,
+        {
+          questionId: 'question-xyz',
+          validationAction: 'repurpose',
+          questionIndex: 3,
+        }
+      );
+
+      const conversations = await storage.readJson<{ entries: Array<{
+        stage: number;
+        validationAction?: string;
+        questionIndex?: number;
+      }> }>(
+        `${sessionDir}/conversations.json`
+      );
+
+      expect(conversations!.entries[0].stage).toBe(2);
+      expect(conversations!.entries[0].validationAction).toBe('repurpose');
+      expect(conversations!.entries[0].questionIndex).toBe(3);
+    });
+
+    it('should append multiple validation entries preserving metadata', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+
+      // Save first validation
+      await handler.savePostProcessingConversation(
+        sessionDir,
+        1,
+        'decision_validation',
+        'First validation',
+        '{"result": "pass"}',
+        100,
+        false,
+        undefined,
+        { questionId: 'q1', validationAction: 'pass', questionIndex: 1 }
+      );
+
+      // Save second validation
+      await handler.savePostProcessingConversation(
+        sessionDir,
+        1,
+        'decision_validation',
+        'Second validation',
+        '{"result": "filter"}',
+        100,
+        false,
+        undefined,
+        { questionId: 'q2', validationAction: 'filter', questionIndex: 2 }
+      );
+
+      const conversations = await storage.readJson<{ entries: Array<{
+        questionId?: string;
+        validationAction?: string;
+        questionIndex?: number;
+      }> }>(
+        `${sessionDir}/conversations.json`
+      );
+
+      expect(conversations!.entries).toHaveLength(2);
+      expect(conversations!.entries[0].questionId).toBe('q1');
+      expect(conversations!.entries[0].validationAction).toBe('pass');
+      expect(conversations!.entries[0].questionIndex).toBe(1);
+      expect(conversations!.entries[1].questionId).toBe('q2');
+      expect(conversations!.entries[1].validationAction).toBe('filter');
+      expect(conversations!.entries[1].questionIndex).toBe(2);
+    });
+
+    it('should handle partial validation metadata', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+
+      // Only questionId, no action or index
+      await handler.savePostProcessingConversation(
+        sessionDir,
+        1,
+        'decision_validation',
+        'Partial validation',
+        '{"result": "pass"}',
+        100,
+        false,
+        undefined,
+        { questionId: 'q-partial' }
+      );
+
+      const conversations = await storage.readJson<{ entries: Array<{
+        questionId?: string;
+        validationAction?: string;
+        questionIndex?: number;
+      }> }>(
+        `${sessionDir}/conversations.json`
+      );
+
+      expect(conversations!.entries[0].questionId).toBe('q-partial');
+      expect(conversations!.entries[0].validationAction).toBeUndefined();
+      expect(conversations!.entries[0].questionIndex).toBeUndefined();
+    });
+  });
 });
