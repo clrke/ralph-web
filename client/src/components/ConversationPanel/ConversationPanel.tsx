@@ -1,6 +1,9 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import type { PlanStep } from '@claude-code-web/shared';
 import { useSessionStore, ConversationEntry, ExecutionStatus } from '../../stores/sessionStore';
+import { generateConversationLabel, getStageColor, truncateText } from './labelUtils';
+import { ValidationActionBadge } from './StatusBadges';
 
 interface ConversationPanelProps {
   projectId: string;
@@ -16,6 +19,7 @@ export function ConversationPanel({ projectId, featureId }: ConversationPanelPro
     liveOutput,
     isOutputComplete,
     fetchConversations,
+    plan,
   } = useSessionStore();
 
   const [currentPage, setCurrentPage] = useState(0);
@@ -102,6 +106,7 @@ export function ConversationPanel({ projectId, featureId }: ConversationPanelPro
                 key={currentPage * PAGE_SIZE + index}
                 entry={entry}
                 index={conversations.length - 1 - (currentPage * PAGE_SIZE + index)}
+                planSteps={plan?.steps}
               />
             ))
           )}
@@ -161,33 +166,17 @@ function StatusIndicator({ status }: { status: ExecutionStatus | null }) {
   }
 }
 
-function ConversationEntryCard({ entry, index }: { entry: ConversationEntry; index: number }) {
+interface ConversationEntryCardProps {
+  entry: ConversationEntry;
+  index: number;
+  planSteps?: PlanStep[];
+}
+
+function ConversationEntryCard({ entry, index, planSteps }: ConversationEntryCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [modalContent, setModalContent] = useState<{ title: string; content: string } | null>(null);
 
-  const postProcessingLabels: Record<string, string> = {
-    decision_validation: 'Validation',
-    test_assessment: 'Test Assessment',
-    incomplete_steps: 'Step Assessment',
-    question_extraction: 'Question Extraction',
-    plan_step_extraction: 'Plan Extraction',
-    pr_info_extraction: 'PR Extraction',
-    implementation_status_extraction: 'Status Extraction',
-    test_results_extraction: 'Test Extraction',
-    review_findings_extraction: 'Review Extraction',
-    commit_message_generation: 'Commit Message',
-    summary_generation: 'Summary',
-  };
-
-  const stageLabel = entry.postProcessingType
-    ? postProcessingLabels[entry.postProcessingType] || entry.postProcessingType
-    : {
-        1: 'Discovery',
-        2: 'Plan Review',
-        3: 'Implementation',
-        4: 'PR Creation',
-        5: 'PR Review',
-      }[entry.stage] || `Stage ${entry.stage}`;
+  const stageLabel = generateConversationLabel(entry, planSteps);
 
   return (
     <div className={`border-b border-gray-700 last:border-b-0 ${entry.isError ? 'bg-red-900/10' : ''}`}>
@@ -200,6 +189,9 @@ function ConversationEntryCard({ entry, index }: { entry: ConversationEntry; ind
           <span className={`px-2 py-0.5 text-xs rounded ${getStageColor(entry.stage, entry.postProcessingType)}`}>
             {stageLabel}
           </span>
+          {entry.validationAction && (
+            <ValidationActionBadge action={entry.validationAction} />
+          )}
           {entry.isError && (
             <span className="text-xs text-red-400">Error</span>
           )}
@@ -290,29 +282,9 @@ function ConversationEntryCard({ entry, index }: { entry: ConversationEntry; ind
   );
 }
 
-function getStageColor(stage: number, postProcessingType?: string): string {
-  // Post-processing entries get a distinct color
-  if (postProcessingType) {
-    return 'bg-cyan-600';
-  }
-  const colors: Record<number, string> = {
-    1: 'bg-purple-600',
-    2: 'bg-blue-600',
-    3: 'bg-green-600',
-    4: 'bg-yellow-600',
-    5: 'bg-orange-600',
-  };
-  return colors[stage] || 'bg-gray-600';
-}
-
 function formatTimestamp(timestamp: string): string {
   const date = new Date(timestamp);
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function truncateText(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text;
-  return text.substring(0, maxLength) + '...';
 }
 
 interface FullContentModalProps {

@@ -298,3 +298,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 }));
+
+/**
+ * Selector hook to get a specific plan step by ID.
+ * Returns undefined if step or plan not found.
+ */
+export const usePlanStep = (stepId: string | undefined) => {
+  return useSessionStore((state) => {
+    if (!stepId || !state.plan) return undefined;
+    return state.plan.steps.find((step) => step.id === stepId);
+  });
+};
+
+/**
+ * Selector hook to get a specific question by ID.
+ * Returns undefined if question not found.
+ */
+export const useQuestion = (questionId: string | undefined) => {
+  return useSessionStore((state) => {
+    if (!questionId) return undefined;
+    return state.questions.find((q) => q.id === questionId);
+  });
+};
