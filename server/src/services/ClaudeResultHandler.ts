@@ -7,7 +7,7 @@ import { ClaudeResult } from './ClaudeOrchestrator';
 import { DecisionValidator, ValidationLog } from './DecisionValidator';
 import { OutputParser, ParsedPlanStep } from './OutputParser';
 import { PostProcessingType } from './HaikuPostProcessor';
-import { Session, Plan, Question, QuestionStage, QuestionCategory } from '@claude-code-web/shared';
+import { Session, Plan, Question, QuestionStage, QuestionCategory, ValidationAction } from '@claude-code-web/shared';
 import { isImplementationComplete, hasNewCommitSince } from '../utils/stateVerification';
 
 const STAGE_TO_QUESTION_STAGE: Record<number, QuestionStage> = {
@@ -36,6 +36,12 @@ interface ConversationEntry {
   status?: 'started' | 'completed' | 'interrupted';
   /** Post-processing type (if this is a Haiku post-processing call) */
   postProcessingType?: PostProcessingType;
+  /** ID of the question this validation is for (for decision_validation entries) */
+  questionId?: string;
+  /** Validation result action (pass/filter/repurpose) */
+  validationAction?: ValidationAction;
+  /** 1-based index of the question for display purposes */
+  questionIndex?: number;
 }
 
 interface ConversationsFile {

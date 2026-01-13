@@ -1,8 +1,12 @@
 import { create } from 'zustand';
-import type { Session, Plan, Question, PlanStepStatus, ImplementationProgressEvent } from '@claude-code-web/shared';
+import type { Session, Plan, Question, PlanStepStatus, ImplementationProgressEvent, ValidationAction } from '@claude-code-web/shared';
+
+export type { ValidationAction } from '@claude-code-web/shared';
 
 export interface ConversationEntry {
   stage: number;
+  /** Plan step this conversation is for (Stage 3) */
+  stepId?: string;
   timestamp: string;
   prompt: string;
   output: string;
@@ -24,6 +28,12 @@ export interface ConversationEntry {
     | 'review_findings_extraction'
     | 'commit_message_generation'
     | 'summary_generation';
+  /** ID of the question this validation is for (for decision_validation entries) */
+  questionId?: string;
+  /** Validation result action (pass/filter/repurpose) */
+  validationAction?: ValidationAction;
+  /** 1-based index of the question for display purposes */
+  questionIndex?: number;
 }
 
 export interface ExecutionStatus {
