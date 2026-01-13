@@ -2,10 +2,50 @@ import { ClaudeResultHandler } from '../../server/src/services/ClaudeResultHandl
 import { FileStorageService } from '../../server/src/data/FileStorageService';
 import { SessionManager } from '../../server/src/services/SessionManager';
 import { ClaudeResult } from '../../server/src/services/ClaudeOrchestrator';
+import { DecisionValidator, ValidationLog, ValidationResult } from '../../server/src/services/DecisionValidator';
 import { Session } from '@claude-code-web/shared';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as os from 'os';
+
+// Mock DecisionValidator for testing validation metadata flow
+class MockDecisionValidator {
+  private mockResults: ValidationResult[] = [];
+
+  setMockResults(results: ValidationResult[]) {
+    this.mockResults = results;
+  }
+
+  async validateDecisions(
+    decisions: Array<{ questionText: string; category: string; priority: number; options: Array<{ label: string; recommended: boolean }> }>,
+    _plan: unknown,
+    _projectPath: string
+  ): Promise<{ validDecisions: typeof decisions; log: ValidationLog }> {
+    const log: ValidationLog = {
+      timestamp: new Date().toISOString(),
+      totalDecisions: decisions.length,
+      passedCount: this.mockResults.filter(r => r.action === 'pass').length,
+      filteredCount: this.mockResults.filter(r => r.action === 'filter').length,
+      repurposedCount: this.mockResults.filter(r => r.action === 'repurpose').length,
+      results: this.mockResults.length > 0 ? this.mockResults : decisions.map((d, i) => ({
+        decision: d,
+        action: 'pass' as const,
+        reason: 'Valid decision',
+        validatedAt: new Date().toISOString(),
+        durationMs: 100,
+        prompt: `Validate: ${d.questionText}`,
+        output: '{"action": "pass", "reason": "Valid decision"}',
+      })),
+    };
+
+    const validDecisions = decisions.filter((_, i) => {
+      const result = log.results[i];
+      return result?.action === 'pass' || result?.action === 'repurpose';
+    });
+
+    return { validDecisions, log };
+  }
+}
 
 describe('ClaudeResultHandler', () => {
   let handler: ClaudeResultHandler;
@@ -1392,6 +1432,292 @@ describe('ClaudeResultHandler', () => {
       expect(conversations!.entries[0].questionId).toBe('q-partial');
       expect(conversations!.entries[0].validationAction).toBeUndefined();
       expect(conversations!.entries[0].questionIndex).toBeUndefined();
+    });
+  });
+
+  describe('validation metadata flow in saveQuestions', () => {
+    let handlerWithValidator: ClaudeResultHandler;
+    let mockValidator: MockDecisionValidator;
+
+    beforeEach(async () => {
+      mockValidator = new MockDecisionValidator();
+      handlerWithValidator = new ClaudeResultHandler(
+        storage,
+        sessionManager,
+        mockValidator as unknown as DecisionValidator
+      );
+
+      // Set up a plan so validation is triggered
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+      await storage.writeJson(`${sessionDir}/plan.json`, {
+        version: '1.0',
+        planVersion: 1,
+        sessionId: mockSession.id,
+        isApproved: true,
+        reviewCount: 1,
+        steps: [
+          { id: 'step-1', title: 'Setup', description: 'Initial setup', status: 'pending', order: 0, dependencies: [] },
+        ],
+      });
+    });
+
+    it('should save validation conversations with questionIndex metadata', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+      const decision = {
+        questionText: 'Which database to use?',
+        category: 'technical',
+        priority: 1,
+        options: [
+          { label: 'PostgreSQL', recommended: true },
+          { label: 'MongoDB', recommended: false },
+        ],
+      };
+
+      mockValidator.setMockResults([{
+        decision,
+        action: 'pass',
+        reason: 'Valid architectural decision',
+        validatedAt: new Date().toISOString(),
+        durationMs: 150,
+        prompt: 'Validate: Which database to use?',
+        output: '{"action": "pass", "reason": "Valid architectural decision"}',
+      }]);
+
+      const result: ClaudeResult = {
+        output: 'Here are my questions',
+        sessionId: 'claude-123',
+        costUsd: 0.05,
+        isError: false,
+        parsed: {
+          decisions: [decision],
+          planSteps: [],
+          stepCompleted: null,
+          stepsCompleted: [],
+          planModeEntered: false,
+          planModeExited: false,
+          planFilePath: null,
+          implementationComplete: false,
+          implementationSummary: null,
+          implementationStatus: null,
+          prCreated: null,
+          planApproved: false,
+        },
+      };
+
+      await handlerWithValidator.handleStage1Result(mockSession, result, 'Test prompt');
+
+      const conversations = await storage.readJson<{ entries: Array<{
+        postProcessingType?: string;
+        validationAction?: string;
+        questionIndex?: number;
+      }> }>(`${sessionDir}/conversations.json`);
+
+      // Find the validation conversation entry
+      const validationEntry = conversations!.entries.find(
+        e => e.postProcessingType === 'decision_validation'
+      );
+
+      expect(validationEntry).toBeDefined();
+      expect(validationEntry!.validationAction).toBe('pass');
+      expect(validationEntry!.questionIndex).toBe(1);
+    });
+
+    it('should save multiple validation conversations with correct indices', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+      const decisions = [
+        {
+          questionText: 'Which database?',
+          category: 'technical',
+          priority: 1,
+          options: [{ label: 'PostgreSQL', recommended: true }],
+        },
+        {
+          questionText: 'Which auth method?',
+          category: 'technical',
+          priority: 2,
+          options: [{ label: 'JWT', recommended: true }],
+        },
+      ];
+
+      mockValidator.setMockResults([
+        {
+          decision: decisions[0],
+          action: 'pass',
+          reason: 'Valid',
+          validatedAt: new Date().toISOString(),
+          durationMs: 100,
+          prompt: 'Validate: Which database?',
+          output: '{"action": "pass"}',
+        },
+        {
+          decision: decisions[1],
+          action: 'filter',
+          reason: 'Already decided',
+          validatedAt: new Date().toISOString(),
+          durationMs: 100,
+          prompt: 'Validate: Which auth method?',
+          output: '{"action": "filter"}',
+        },
+      ]);
+
+      const result: ClaudeResult = {
+        output: 'Questions',
+        sessionId: 'claude-123',
+        costUsd: 0.05,
+        isError: false,
+        parsed: {
+          decisions,
+          planSteps: [],
+          stepCompleted: null,
+          stepsCompleted: [],
+          planModeEntered: false,
+          planModeExited: false,
+          planFilePath: null,
+          implementationComplete: false,
+          implementationSummary: null,
+          implementationStatus: null,
+          prCreated: null,
+          planApproved: false,
+        },
+      };
+
+      await handlerWithValidator.handleStage1Result(mockSession, result, 'Test prompt');
+
+      const conversations = await storage.readJson<{ entries: Array<{
+        postProcessingType?: string;
+        validationAction?: string;
+        questionIndex?: number;
+      }> }>(`${sessionDir}/conversations.json`);
+
+      const validationEntries = conversations!.entries.filter(
+        e => e.postProcessingType === 'decision_validation'
+      );
+
+      expect(validationEntries).toHaveLength(2);
+      expect(validationEntries[0].validationAction).toBe('pass');
+      expect(validationEntries[0].questionIndex).toBe(1);
+      expect(validationEntries[1].validationAction).toBe('filter');
+      expect(validationEntries[1].questionIndex).toBe(2);
+    });
+
+    it('should save filter validation action with correct metadata', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+      const decision = {
+        questionText: 'Duplicate question?',
+        category: 'scope',
+        priority: 1,
+        options: [{ label: 'Yes', recommended: true }],
+      };
+
+      mockValidator.setMockResults([{
+        decision,
+        action: 'filter',
+        reason: 'This is a duplicate question',
+        validatedAt: new Date().toISOString(),
+        durationMs: 80,
+        prompt: 'Validate: Duplicate question?',
+        output: '{"action": "filter", "reason": "Duplicate"}',
+      }]);
+
+      const result: ClaudeResult = {
+        output: 'Question',
+        sessionId: 'claude-123',
+        costUsd: 0.05,
+        isError: false,
+        parsed: {
+          decisions: [decision],
+          planSteps: [],
+          stepCompleted: null,
+          stepsCompleted: [],
+          planModeEntered: false,
+          planModeExited: false,
+          planFilePath: null,
+          implementationComplete: false,
+          implementationSummary: null,
+          implementationStatus: null,
+          prCreated: null,
+          planApproved: false,
+        },
+      };
+
+      await handlerWithValidator.handleStage1Result(mockSession, result, 'Test prompt');
+
+      const conversations = await storage.readJson<{ entries: Array<{
+        postProcessingType?: string;
+        validationAction?: string;
+        questionIndex?: number;
+      }> }>(`${sessionDir}/conversations.json`);
+
+      const validationEntry = conversations!.entries.find(
+        e => e.postProcessingType === 'decision_validation'
+      );
+
+      expect(validationEntry).toBeDefined();
+      expect(validationEntry!.validationAction).toBe('filter');
+      expect(validationEntry!.questionIndex).toBe(1);
+    });
+
+    it('should save repurpose validation action with correct metadata', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+      const decision = {
+        questionText: 'Vague question?',
+        category: 'approach',
+        priority: 2,
+        options: [{ label: 'Option A', recommended: true }],
+      };
+
+      mockValidator.setMockResults([{
+        decision,
+        action: 'repurpose',
+        reason: 'Question needs rephrasing',
+        repurposedQuestions: [{
+          questionText: 'Better phrased question?',
+          category: 'approach',
+          priority: 2,
+          options: [{ label: 'Better Option', recommended: true }],
+        }],
+        validatedAt: new Date().toISOString(),
+        durationMs: 200,
+        prompt: 'Validate: Vague question?',
+        output: '{"action": "repurpose", "reason": "Needs rephrasing"}',
+      }]);
+
+      const result: ClaudeResult = {
+        output: 'Question',
+        sessionId: 'claude-123',
+        costUsd: 0.05,
+        isError: false,
+        parsed: {
+          decisions: [decision],
+          planSteps: [],
+          stepCompleted: null,
+          stepsCompleted: [],
+          planModeEntered: false,
+          planModeExited: false,
+          planFilePath: null,
+          implementationComplete: false,
+          implementationSummary: null,
+          implementationStatus: null,
+          prCreated: null,
+          planApproved: false,
+        },
+      };
+
+      await handlerWithValidator.handleStage1Result(mockSession, result, 'Test prompt');
+
+      const conversations = await storage.readJson<{ entries: Array<{
+        postProcessingType?: string;
+        validationAction?: string;
+        questionIndex?: number;
+      }> }>(`${sessionDir}/conversations.json`);
+
+      const validationEntry = conversations!.entries.find(
+        e => e.postProcessingType === 'decision_validation'
+      );
+
+      expect(validationEntry).toBeDefined();
+      expect(validationEntry!.validationAction).toBe('repurpose');
+      expect(validationEntry!.questionIndex).toBe(1);
     });
   });
 });
