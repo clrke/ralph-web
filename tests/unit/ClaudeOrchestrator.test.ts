@@ -1,4 +1,9 @@
-import { ClaudeOrchestrator, ClaudeResult, SpawnOptions } from '../../server/src/services/ClaudeOrchestrator';
+import {
+  ClaudeOrchestrator,
+  ClaudeResult,
+  SpawnOptions,
+  MAX_PLAN_VALIDATION_ATTEMPTS,
+} from '../../server/src/services/ClaudeOrchestrator';
 import { OutputParser } from '../../server/src/services/OutputParser';
 import { EventEmitter } from 'events';
 
@@ -502,6 +507,158 @@ Create authentication
 
       const result = await spawnPromise;
       expect(result.output).toBe('Response');
+    });
+  });
+
+  describe('MAX_PLAN_VALIDATION_ATTEMPTS', () => {
+    it('should be exported and have default value of 3', () => {
+      expect(MAX_PLAN_VALIDATION_ATTEMPTS).toBe(3);
+    });
+  });
+
+  describe('shouldContinueValidation', () => {
+    it('should return true when current attempts is less than max', () => {
+      expect(orchestrator.shouldContinueValidation(0)).toBe(true);
+      expect(orchestrator.shouldContinueValidation(1)).toBe(true);
+      expect(orchestrator.shouldContinueValidation(2)).toBe(true);
+    });
+
+    it('should return false when current attempts equals max', () => {
+      expect(orchestrator.shouldContinueValidation(3)).toBe(false);
+    });
+
+    it('should return false when current attempts exceeds max', () => {
+      expect(orchestrator.shouldContinueValidation(4)).toBe(false);
+      expect(orchestrator.shouldContinueValidation(10)).toBe(false);
+    });
+
+    it('should use default max attempts of MAX_PLAN_VALIDATION_ATTEMPTS', () => {
+      // At 2 attempts (less than default 3), should continue
+      expect(orchestrator.shouldContinueValidation(2)).toBe(true);
+      // At 3 attempts (equals default 3), should stop
+      expect(orchestrator.shouldContinueValidation(3)).toBe(false);
+    });
+
+    it('should respect custom max attempts', () => {
+      // Custom max of 5
+      expect(orchestrator.shouldContinueValidation(4, 5)).toBe(true);
+      expect(orchestrator.shouldContinueValidation(5, 5)).toBe(false);
+
+      // Custom max of 1
+      expect(orchestrator.shouldContinueValidation(0, 1)).toBe(true);
+      expect(orchestrator.shouldContinueValidation(1, 1)).toBe(false);
+    });
+  });
+
+  describe('logValidationAttempt', () => {
+    let consoleSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+    });
+
+    afterEach(() => {
+      consoleSpy.mockRestore();
+    });
+
+    it('should log validation attempt with feature ID and attempt number', () => {
+      orchestrator.logValidationAttempt('feature-123', 1, 3);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[Plan Validation]')
+      );
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('feature-123')
+      );
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('1/3')
+      );
+    });
+
+    it('should include truncated context when provided', () => {
+      const longContext = 'A'.repeat(150);
+      orchestrator.logValidationAttempt('feature-123', 2, 3, longContext);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('...')
+      );
+    });
+
+    it('should show full context when under 100 chars', () => {
+      const shortContext = 'Missing steps section';
+      orchestrator.logValidationAttempt('feature-123', 1, 3, shortContext);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Missing steps section')
+      );
+    });
+
+    it('should show "No context" when context is not provided', () => {
+      orchestrator.logValidationAttempt('feature-123', 1, 3);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('No context')
+      );
+    });
+  });
+
+  describe('logValidationMaxAttemptsReached', () => {
+    let consoleWarnSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation();
+    });
+
+    afterEach(() => {
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should log warning with feature ID and max attempts', () => {
+      orchestrator.logValidationMaxAttemptsReached('feature-456', 3);
+
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[Plan Validation]')
+      );
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('feature-456')
+      );
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Max attempts (3) reached')
+      );
+    });
+  });
+
+  describe('logValidationSuccess', () => {
+    let consoleSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+    });
+
+    afterEach(() => {
+      consoleSpy.mockRestore();
+    });
+
+    it('should log success with feature ID and attempt count', () => {
+      orchestrator.logValidationSuccess('feature-789', 2);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[Plan Validation]')
+      );
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('feature-789')
+      );
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('succeeded after 2 attempt(s)')
+      );
+    });
+
+    it('should handle single attempt', () => {
+      orchestrator.logValidationSuccess('feature-success', 1);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('succeeded after 1 attempt(s)')
+      );
     });
   });
 });

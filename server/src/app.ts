@@ -3,10 +3,11 @@ import crypto from 'crypto';
 import { ZodSchema, ZodError } from 'zod';
 import { FileStorageService } from './data/FileStorageService';
 import { SessionManager } from './services/SessionManager';
-import { ClaudeOrchestrator, hasActionableContent } from './services/ClaudeOrchestrator';
+import { ClaudeOrchestrator, hasActionableContent, MAX_PLAN_VALIDATION_ATTEMPTS } from './services/ClaudeOrchestrator';
 import { OutputParser } from './services/OutputParser';
 import { HaikuPostProcessor } from './services/HaikuPostProcessor';
 import { ClaudeResultHandler } from './services/ClaudeResultHandler';
+import { PlanCompletenessResult } from './services/PlanCompletionChecker';
 import { DecisionValidator } from './services/DecisionValidator';
 import { TestRequirementAssessor } from './services/TestRequirementAssessor';
 import { IncompleteStepsAssessor } from './services/IncompleteStepsAssessor';
@@ -301,7 +302,7 @@ async function spawnStage2Review(
       eventBroadcaster?.claudeOutput(session.projectId, session.featureId, output, isComplete);
     },
   }).then(async (result) => {
-    const { allFiltered } = await resultHandler.handleStage2Result(session, result, prompt);
+    const { allFiltered, planValidation } = await resultHandler.handleStage2Result(session, result, prompt);
 
     // Apply Haiku fallback if no decisions were parsed but output looks like questions
     const extractedCount = await applyHaikuPostProcessing(result, session.projectPath, storage, session, resultHandler);
@@ -342,8 +343,8 @@ async function spawnStage2Review(
       result.parsed.planApproved = true;
     }
 
-    // Check for auto Stage 2→3 transition
-    await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster);
+    // Check for auto Stage 2→3 transition (pass planValidation for structure check)
+    await handleStage2Completion(session, result, sessionDir, storage, sessionManager, resultHandler, eventBroadcaster, planValidation);
 
     console.log(`Stage 2 review ${result.isError ? 'failed' : 'completed'} for ${session.featureId}${extractedCount > 0 ? ` (${extractedCount} questions via Haiku)` : ''}`);
   }).catch((error) => {
@@ -353,11 +354,15 @@ async function spawnStage2Review(
 }
 
 /**
- * Handle Stage 2 completion - auto-transition to Stage 3 when plan is approved.
+ * Handle Stage 2 completion - auto-transition to Stage 3 when plan is approved AND valid.
  *
  * Uses state-based verification as primary check (all planning questions answered),
  * with [PLAN_APPROVED] marker as secondary signal. This reduces dependency on
  * indeterministic Claude markers.
+ *
+ * Additionally validates plan structure completeness. If plan is approved but
+ * structure is incomplete (missing sections), re-spawns Stage 2 with validation
+ * context to fix the plan. This prevents transitioning to Stage 3 with incomplete plans.
  */
 async function handleStage2Completion(
   session: Session,
@@ -366,7 +371,8 @@ async function handleStage2Completion(
   storage: FileStorageService,
   sessionManager: SessionManager,
   resultHandler: ClaudeResultHandler,
-  eventBroadcaster: EventBroadcaster | undefined
+  eventBroadcaster: EventBroadcaster | undefined,
+  planValidation?: PlanCompletenessResult
 ): Promise<void> {
   // Re-fetch current session state to avoid stale data
   const currentSession = await sessionManager.getSession(session.projectId, session.featureId);
@@ -391,7 +397,68 @@ async function handleStage2Completion(
   const approvalMethod = stateApproved
     ? (markerApproved ? 'state+marker' : 'state (all questions answered)')
     : 'marker only';
-  console.log(`Plan approved via ${approvalMethod}, auto-transitioning to Stage 3 for ${session.featureId}`);
+  console.log(`Plan approved via ${approvalMethod} for ${session.featureId}`);
+
+  // Check if plan structure is complete before transitioning to Stage 3
+  if (planValidation && !planValidation.complete) {
+    // Get current validation attempts from session
+    const currentAttempts = currentSession?.planValidationAttempts ?? 0;
+    const nextAttempt = currentAttempts + 1;
+
+    // Check if we should continue validation attempts
+    if (orchestrator.shouldContinueValidation(currentAttempts)) {
+      orchestrator.logValidationAttempt(
+        session.featureId,
+        nextAttempt,
+        MAX_PLAN_VALIDATION_ATTEMPTS,
+        planValidation.missingContext
+      );
+
+      // Update session with incremented attempt count
+      await sessionManager.updateSession(
+        session.projectId,
+        session.featureId,
+        { planValidationAttempts: nextAttempt }
+      );
+
+      // Build validation context prompt and re-spawn Stage 2
+      const validationPrompt = buildPlanValidationPrompt(planValidation.missingContext);
+
+      // Re-spawn Stage 2 with validation context (don't transition to Stage 3)
+      console.log(`Re-spawning Stage 2 for ${session.featureId} to fix incomplete plan structure (attempt ${nextAttempt}/${MAX_PLAN_VALIDATION_ATTEMPTS})`);
+
+      // Re-fetch updated session before re-spawning
+      const updatedSession = await sessionManager.getSession(session.projectId, session.featureId);
+      if (updatedSession) {
+        await spawnStage2Review(
+          updatedSession,
+          storage,
+          sessionManager,
+          resultHandler,
+          eventBroadcaster,
+          validationPrompt
+        );
+      }
+      return; // Don't transition to Stage 3
+    } else {
+      // Max attempts reached - log warning and proceed anyway
+      orchestrator.logValidationMaxAttemptsReached(session.featureId, MAX_PLAN_VALIDATION_ATTEMPTS);
+      console.warn(`Proceeding to Stage 3 for ${session.featureId} despite incomplete plan structure`);
+    }
+  } else if (planValidation?.complete) {
+    // Plan structure is complete - log success
+    const attempts = currentSession?.planValidationAttempts ?? 0;
+    orchestrator.logValidationSuccess(session.featureId, attempts + 1);
+
+    // Clear validation attempts on success
+    await sessionManager.updateSession(
+      session.projectId,
+      session.featureId,
+      { planValidationAttempts: 0, planValidationContext: null }
+    );
+  }
+
+  console.log(`Auto-transitioning to Stage 3 for ${session.featureId}`);
 
   // Mark plan as approved (plan already loaded above for state verification)
   if (plan) {
@@ -418,6 +485,25 @@ async function handleStage2Completion(
       eventBroadcaster?.executionStatus(updatedSession.projectId, updatedSession.featureId, 'error', 'stage3_error');
     });
   }
+}
+
+/**
+ * Build a prompt for Stage 2 re-spawn with plan validation context.
+ * This prompt asks Claude to complete the missing sections of the plan.
+ */
+function buildPlanValidationPrompt(missingContext: string): string {
+  return `The plan structure is incomplete and needs additional sections before we can proceed to implementation.
+
+${missingContext}
+
+Please review and complete the plan file with all missing sections. Ensure all required sections are properly filled out:
+- Meta section with title, description, status, and completedSteps tracking
+- Steps array with all implementation steps (id, title, description, status, orderIndex, parentId, complexity, testStrategy)
+- Dependencies array mapping step relationships
+- TestCoverage section with coverage strategy and target percentage
+- AcceptanceMapping linking acceptance criteria to implementing steps
+
+After completing the plan, output [PLAN_APPROVED] to indicate readiness for implementation.`;
 }
 
 /**

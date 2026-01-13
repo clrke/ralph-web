@@ -55,6 +55,12 @@ const STAGE_TOOLS: Record<number, string[]> = {
 };
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
+/**
+ * Maximum number of plan validation attempts before giving up.
+ * Each attempt re-spawns Stage 2 with validation context to fix incomplete plans.
+ */
+export const MAX_PLAN_VALIDATION_ATTEMPTS = 3;
 const HAIKU_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes for Haiku post-processing
 const MIN_OUTPUT_LENGTH_FOR_POSTPROCESS = 100; // Minimum output length to consider for post-processing
 
@@ -340,5 +346,67 @@ export class ClaudeOrchestrator {
 
   shouldSkipPermissions(stage: number): boolean {
     return stage === 3;
+  }
+
+  /**
+   * Check if plan validation should continue or give up.
+   * Returns true if more attempts are allowed, false if max attempts reached.
+   *
+   * @param currentAttempts - Current number of validation attempts
+   * @param maxAttempts - Maximum allowed attempts (default: MAX_PLAN_VALIDATION_ATTEMPTS)
+   */
+  shouldContinueValidation(
+    currentAttempts: number,
+    maxAttempts: number = MAX_PLAN_VALIDATION_ATTEMPTS
+  ): boolean {
+    return currentAttempts < maxAttempts;
+  }
+
+  /**
+   * Log plan validation attempt for debugging.
+   * Call this when starting a validation re-attempt.
+   *
+   * @param featureId - Feature/session identifier
+   * @param attempt - Current attempt number (1-based)
+   * @param maxAttempts - Maximum allowed attempts
+   * @param context - Brief description of validation issues
+   */
+  logValidationAttempt(
+    featureId: string,
+    attempt: number,
+    maxAttempts: number,
+    context?: string
+  ): void {
+    const contextPreview = context
+      ? context.substring(0, 100) + (context.length > 100 ? '...' : '')
+      : 'No context';
+    console.log(
+      `[Plan Validation] ${featureId}: Attempt ${attempt}/${maxAttempts} - ${contextPreview}`
+    );
+  }
+
+  /**
+   * Log when plan validation gives up after max attempts.
+   *
+   * @param featureId - Feature/session identifier
+   * @param maxAttempts - Maximum allowed attempts that were reached
+   */
+  logValidationMaxAttemptsReached(featureId: string, maxAttempts: number): void {
+    console.warn(
+      `[Plan Validation] ${featureId}: Max attempts (${maxAttempts}) reached. ` +
+      `Plan validation incomplete - proceeding anyway or user intervention required.`
+    );
+  }
+
+  /**
+   * Log when plan validation succeeds.
+   *
+   * @param featureId - Feature/session identifier
+   * @param attempts - Number of attempts it took
+   */
+  logValidationSuccess(featureId: string, attempts: number): void {
+    console.log(
+      `[Plan Validation] ${featureId}: Plan validation succeeded after ${attempts} attempt(s)`
+    );
   }
 }
