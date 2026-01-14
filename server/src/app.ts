@@ -12,7 +12,19 @@ import { DecisionValidator } from './services/DecisionValidator';
 import { TestRequirementAssessor } from './services/TestRequirementAssessor';
 import { IncompleteStepsAssessor } from './services/IncompleteStepsAssessor';
 import { EventBroadcaster } from './services/EventBroadcaster';
-import { buildStage1Prompt, buildStage2Prompt, buildStage4Prompt, buildStage5Prompt, buildPlanRevisionPrompt, buildBatchAnswersContinuationPrompt, buildSingleStepPrompt } from './prompts/stagePrompts';
+import {
+  buildStage1Prompt,
+  buildStage2Prompt,
+  buildStage2PromptLean,
+  buildStage4Prompt,
+  buildStage4PromptLean,
+  buildStage5Prompt,
+  buildStage5PromptLean,
+  buildPlanRevisionPrompt,
+  buildBatchAnswersContinuationPrompt,
+  buildSingleStepPrompt,
+  buildSingleStepPromptLean,
+} from './prompts/stagePrompts';
 import { Session, PlanStep } from '@claude-code-web/shared';
 import { ClaudeResult } from './services/ClaudeOrchestrator';
 import { Plan, Question } from '@claude-code-web/shared';
@@ -727,8 +739,14 @@ async function executeSingleStep(
   }
 
   // Build prompt for this single step
+  // Use lean prompt for steps 2+ (when we have a Stage 3 session to resume)
   const completedSteps = getCompletedStepsSummary(plan);
-  let prompt = buildSingleStepPrompt(session, plan, step, completedSteps);
+  const testsRequired = plan.testRequirement?.required ?? true;
+  const useLeanPrompt = session.claudeStage3SessionId !== null && completedSteps.length > 0;
+
+  let prompt = useLeanPrompt
+    ? buildSingleStepPromptLean(step, completedSteps, testsRequired)
+    : buildSingleStepPrompt(session, plan, step, completedSteps);
 
   // Add resume context if this is a resume after blocker answer
   if (resumeContext) {
@@ -1158,7 +1176,11 @@ async function handleStage3Completion(
   eventBroadcaster?.stageChanged(updatedSession, previousStage);
 
   // Auto-start Stage 4 PR creation
-  const stage4Prompt = buildStage4Prompt(updatedSession, plan);
+  // Use lean prompt when we have existing session context
+  const completedStepsCount = plan.steps.filter(s => s.status === 'completed').length;
+  const stage4Prompt = updatedSession.claudeSessionId
+    ? buildStage4PromptLean(updatedSession, completedStepsCount)
+    : buildStage4Prompt(updatedSession, plan);
   await spawnStage4PRCreation(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, stage4Prompt);
 }
 
@@ -1368,7 +1390,9 @@ async function spawnStage4PRCreation(
       // Read plan for Stage 5 prompt and auto-start review
       const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
       if (plan) {
-        const stage5Prompt = buildStage5Prompt(updatedSession, plan, prInfo);
+        const stage5Prompt = updatedSession.claudeSessionId
+          ? buildStage5PromptLean(prInfo)
+          : buildStage5Prompt(updatedSession, plan, prInfo);
         await spawnStage5PRReview(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, stage5Prompt);
       }
     } else {
@@ -1626,8 +1650,12 @@ async function handleStage1Completion(
   }
 
   // Build Stage 2 prompt and spawn review
+  // Use lean prompt for iteration 2+ when resuming an existing session
   const currentIteration = (plan.reviewCount || 0) + 1;
-  const prompt = buildStage2Prompt(updatedSession, plan, currentIteration);
+  const useLean = updatedSession.claudeSessionId && currentIteration > 1;
+  const prompt = useLean
+    ? buildStage2PromptLean(plan, currentIteration, updatedSession.planValidationContext, updatedSession.claudePlanFilePath)
+    : buildStage2Prompt(updatedSession, plan, currentIteration);
   await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
 }
 
@@ -1872,7 +1900,10 @@ export function createApp(
 
         // Build Stage 2 prompt and spawn review using helper function
         const currentIteration = (plan.reviewCount || 0) + 1;
-        const prompt = buildStage2Prompt(session, plan, currentIteration);
+        const useLean = session.claudeSessionId && currentIteration > 1;
+        const prompt = useLean
+          ? buildStage2PromptLean(plan, currentIteration, session.planValidationContext, session.claudePlanFilePath)
+          : buildStage2Prompt(session, plan, currentIteration);
         await spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
       } else if (targetStage === 3) {
         // If transitioning to Stage 3, verify plan is approved and spawn implementation
@@ -1909,7 +1940,10 @@ export function createApp(
         }
 
         // Build Stage 4 prompt and spawn PR creation
-        const prompt = buildStage4Prompt(session, plan);
+        const completedCount = plan.steps.filter(s => s.status === 'completed').length;
+        const prompt = session.claudeSessionId
+          ? buildStage4PromptLean(session, completedCount)
+          : buildStage4Prompt(session, plan);
         await spawnStage4PRCreation(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
       } else if (targetStage === 5) {
         // If transitioning to Stage 5, spawn PR review
@@ -1930,7 +1964,9 @@ export function createApp(
         }
 
         // Build Stage 5 prompt and spawn PR review
-        const prompt = buildStage5Prompt(session, plan, prInfo);
+        const prompt = session.claudeSessionId
+          ? buildStage5PromptLean(prInfo)
+          : buildStage5Prompt(session, plan, prInfo);
         await spawnStage5PRReview(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
       }
     } catch (error) {
@@ -2029,7 +2065,10 @@ export function createApp(
           branch: updatedSession.featureBranch,
         };
 
-        const prompt = buildStage5Prompt(updatedSession, plan, prInfo) + `
+        const basePrompt = updatedSession.claudeSessionId
+          ? buildStage5PromptLean(prInfo)
+          : buildStage5Prompt(updatedSession, plan, prInfo);
+        const prompt = basePrompt + `
 
 ## Additional Focus Areas (User Request)
 ${feedback}
@@ -2948,7 +2987,9 @@ After creating all steps, write the plan to a file and output:
       res.json({ success: true, remarks: remarks || null });
 
       // Build Stage 5 prompt with user remarks
-      let prompt = buildStage5Prompt(session, plan, prInfo);
+      let prompt = session.claudeSessionId
+        ? buildStage5PromptLean(prInfo)
+        : buildStage5Prompt(session, plan, prInfo);
       if (remarks && remarks.trim()) {
         prompt = `${prompt}\n\n## User Remarks for Re-Review\nThe user has requested a re-review with the following additional remarks:\n\n${remarks.trim()}`;
       }
@@ -3024,8 +3065,11 @@ After creating all steps, write the plan to a file and output:
               // Stage 2: Plan Review - resume with stage 2 prompt
               if (!plan) break;
               const currentIteration = (plan.reviewCount || 0) + 1;
-              const prompt = buildStage2Prompt(session, plan, currentIteration);
-              await spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
+              const useLean2 = session.claudeSessionId && currentIteration > 1;
+              const prompt2 = useLean2
+                ? buildStage2PromptLean(plan, currentIteration, session.planValidationContext, session.claudePlanFilePath)
+                : buildStage2Prompt(session, plan, currentIteration);
+              await spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt2);
               break;
             }
             case 3: {
@@ -3041,8 +3085,11 @@ After creating all steps, write the plan to a file and output:
             case 4: {
               // Stage 4: PR Creation - resume with stage 4 prompt
               if (!plan) break;
-              const prompt = buildStage4Prompt(session, plan);
-              await spawnStage4PRCreation(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
+              const completedCount4 = plan.steps.filter(s => s.status === 'completed').length;
+              const prompt4 = session.claudeSessionId
+                ? buildStage4PromptLean(session, completedCount4)
+                : buildStage4Prompt(session, plan);
+              await spawnStage4PRCreation(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt4);
               break;
             }
             case 5: {
@@ -3050,7 +3097,9 @@ After creating all steps, write the plan to a file and output:
               if (!plan) break;
               const prInfo = await storage.readJson<{ title: string; branch: string; url: string }>(`${sessionDir}/pr.json`);
               if (!prInfo) break;
-              const prompt = buildStage5Prompt(session, plan, prInfo);
+              const prompt = session.claudeSessionId
+                ? buildStage5PromptLean(prInfo)
+                : buildStage5Prompt(session, plan, prInfo);
               await spawnStage5PRReview(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
               break;
             }

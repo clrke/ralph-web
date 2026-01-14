@@ -990,3 +990,116 @@ Summary:
 4. CI failures MUST return to Stage 2
 5. Only output PR_APPROVED when CI passes AND no blocking issues`;
 }
+
+// ============================================================================
+// LEAN PROMPTS - For subsequent calls that leverage --resume context
+// ============================================================================
+
+/**
+ * Lean Stage 2 prompt for iterations 2+.
+ * Claude already knows the plan structure and marker formats from Stage 1.
+ */
+export function buildStage2PromptLean(
+  plan: Plan,
+  currentIteration: number,
+  validationContext?: string | null,
+  claudePlanFilePath?: string | null
+): string {
+  const validation = validationContext
+    ? `⚠️ **Fix these validation issues first:**\n${validationContext}\n\n`
+    : '';
+
+  const planFile = claudePlanFilePath
+    ? `Plan file: ${claudePlanFilePath}\n`
+    : '';
+
+  return `${validation}${planFile}Continue plan review (iteration ${currentIteration}/10).
+
+Review the plan for issues. Present findings as [DECISION_NEEDED] markers.
+When satisfied with the plan, output [PLAN_APPROVED].`;
+}
+
+/**
+ * Lean single-step prompt for Stage 3 steps 2+.
+ * Claude already knows the marker formats and process from the first step.
+ */
+export function buildSingleStepPromptLean(
+  step: PlanStep,
+  completedSteps: Array<{ id: string; title: string; summary: string }>,
+  testsRequired: boolean
+): string {
+  const completedSummary = completedSteps.length > 0
+    ? completedSteps.map(s => `- [${s.id}] ${s.title}`).join('\n')
+    : 'None yet.';
+
+  const testNote = testsRequired
+    ? 'Write tests before marking complete.'
+    : 'Tests not required for this change.';
+
+  return `## Completed Steps
+${completedSummary}
+
+## Current Step: [${step.id}] ${step.title}
+${step.description || 'No description provided.'}
+
+${testNote}
+Commit when done. Output [STEP_COMPLETE id="${step.id}"] with summary.
+If blocked, use [DECISION_NEEDED category="blocker"].`;
+}
+
+/**
+ * Lean Stage 4 prompt.
+ * Claude knows the PR format from context.
+ */
+export function buildStage4PromptLean(
+  session: Session,
+  completedStepsCount: number
+): string {
+  return `Create PR for the completed implementation (${completedStepsCount} steps).
+
+1. Review: git diff ${session.baseBranch}...HEAD
+2. Create PR: gh pr create --base ${session.baseBranch} --head ${session.featureBranch}
+3. Output [PR_CREATED] with title, URL, summary, and test plan.
+
+Note: Git push already done. Check if PR exists first with gh pr list.`;
+}
+
+/**
+ * Lean Stage 5 prompt.
+ * Claude knows the review format from context.
+ */
+export function buildStage5PromptLean(
+  prInfo: { title: string; url: string }
+): string {
+  return `Review PR: ${prInfo.url}
+Title: ${prInfo.title}
+
+1. Run parallel review agents (code, security, tests, integration)
+2. Check CI: gh pr checks
+3. Report findings as [DECISION_NEEDED] with priority/category
+4. CI failing → [CI_FAILED]
+5. Issues to fix → [RETURN_TO_STAGE_2]
+6. All good → [PR_APPROVED]`;
+}
+
+/**
+ * Lean batch answers continuation prompt.
+ * Claude knows the marker formats already.
+ */
+export function buildBatchAnswersContinuationPromptLean(
+  answeredQuestions: Question[],
+  currentStage: number
+): string {
+  const answers = answeredQuestions.map(q => {
+    const answerText = typeof q.answer?.value === 'string'
+      ? escapeMarkers(q.answer.value)
+      : escapeMarkers(JSON.stringify(q.answer?.value));
+    return `**Q:** ${q.questionText}\n**A:** ${answerText}`;
+  }).join('\n\n');
+
+  if (currentStage === 1) {
+    return `User answers:\n\n${answers}\n\nContinue discovery. More questions → [DECISION_NEEDED]. Ready → generate plan with [PLAN_STEP] markers.`;
+  }
+
+  return `User answers:\n\n${answers}\n\nContinue review. More issues → [DECISION_NEEDED]. All resolved → [PLAN_APPROVED].`;
+}
