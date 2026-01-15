@@ -7,6 +7,7 @@ import { ClaudeResult } from './ClaudeOrchestrator';
 import { DecisionValidator, ValidationLog } from './DecisionValidator';
 import { OutputParser, ParsedPlanStep } from './OutputParser';
 import { PostProcessingType } from './HaikuPostProcessor';
+import { buildDecisionValidationPrompt } from '../prompts/validationPrompts';
 import {
   PlanCompletionChecker,
   planCompletionChecker,
@@ -522,9 +523,105 @@ export class ClaudeResultHandler {
   }
 
   /**
-   * Save a "started" conversation entry when spawning begins.
-   * This allows the frontend to show progress before Claude responds.
+   * Save a "started" validation entry for each decision before validation begins.
+   * This allows the frontend to show validation progress immediately.
    */
+  async saveValidationStarts(
+    sessionDir: string,
+    stage: number,
+    decisions: Array<{ questionText: string }>,
+    prompts: string[]
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    const conversationPath = `${sessionDir}/conversations.json`;
+    const conversations = await this.storage.readJson<ConversationsFile>(conversationPath) || { entries: [] };
+
+    for (let i = 0; i < decisions.length; i++) {
+      conversations.entries.push({
+        stage,
+        timestamp: now,
+        prompt: prompts[i] || `Validating: ${decisions[i].questionText.substring(0, 100)}...`,
+        output: '',
+        sessionId: null,
+        costUsd: 0,
+        isError: false,
+        parsed: {
+          decisions: [],
+          planSteps: [],
+          stepCompleted: null,
+          stepsCompleted: [],
+          planModeEntered: false,
+          planModeExited: false,
+          planFilePath: null,
+          implementationComplete: false,
+          implementationSummary: null,
+          implementationStatus: null,
+          allTestsPassing: false,
+          testsAdded: [],
+          prCreated: null,
+          planApproved: false,
+          ciStatus: null,
+          ciFailed: false,
+          prApproved: false,
+          returnToStage2: null,
+        },
+        status: 'started',
+        postProcessingType: 'decision_validation',
+        questionIndex: i + 1,
+      });
+    }
+
+    await this.storage.writeJson(conversationPath, conversations);
+  }
+
+  /**
+   * Update a "started" validation entry with completion data.
+   * Finds the entry by questionIndex and status="started".
+   */
+  async updateValidationEntry(
+    sessionDir: string,
+    stage: number,
+    questionIndex: number,
+    prompt: string,
+    output: string,
+    durationMs: number,
+    validationAction: ValidationAction
+  ): Promise<void> {
+    // Extract just the result field from Haiku JSON output
+    let cleanOutput = output;
+    try {
+      const parsed = JSON.parse(output);
+      if (parsed.result !== undefined) {
+        cleanOutput = parsed.result;
+      }
+    } catch {
+      // Not valid JSON, use as-is
+    }
+
+    const conversationPath = `${sessionDir}/conversations.json`;
+    const conversations = await this.storage.readJson<ConversationsFile>(conversationPath);
+    if (!conversations) return;
+
+    // Find the started validation entry for this question
+    for (let i = conversations.entries.length - 1; i >= 0; i--) {
+      const entry = conversations.entries[i];
+      if (
+        entry.stage === stage &&
+        entry.status === 'started' &&
+        entry.postProcessingType === 'decision_validation' &&
+        entry.questionIndex === questionIndex
+      ) {
+        entry.prompt = prompt;
+        entry.output = cleanOutput;
+        entry.status = 'completed';
+        entry.validationAction = validationAction;
+        break;
+      }
+    }
+
+    await this.storage.writeJson(conversationPath, conversations);
+  }
+
   /**
    * Mark any incomplete "started" conversation entries as "interrupted".
    * Called before resuming a stuck session to clean up orphaned entries.
@@ -632,6 +729,14 @@ export class ClaudeResultHandler {
     // Validate decisions if we have a validator and a plan
     let validatedDecisions = decisions;
     if (this.validator && plan && decisions.length > 0) {
+      // Build prompts upfront so we can save "started" entries immediately
+      const prompts = decisions.map(d => buildDecisionValidationPrompt(d, plan));
+
+      // Save "started" entries for all validations immediately
+      // This allows frontend to show validation progress right away
+      await this.saveValidationStarts(sessionDir, session.currentStage, decisions, prompts);
+
+      // Run validations in parallel
       const { validDecisions, log } = await this.validator.validateDecisions(
         decisions,
         plan,
@@ -642,22 +747,17 @@ export class ClaudeResultHandler {
       // Save validation log for debugging/auditing
       await this.saveValidationLog(sessionDir, log);
 
-      // Save each validation as a post-processing conversation with metadata
+      // Update each validation entry with completion data
       for (let i = 0; i < log.results.length; i++) {
         const result = log.results[i];
-        await this.savePostProcessingConversation(
+        await this.updateValidationEntry(
           sessionDir,
           session.currentStage,
-          'decision_validation',
+          i + 1, // 1-based questionIndex
           result.prompt,
           result.output,
           result.durationMs,
-          false,
-          undefined, // no error
-          {
-            validationAction: result.action,
-            questionIndex: i + 1, // 1-based index
-          }
+          result.action
         );
       }
 
