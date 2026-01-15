@@ -295,8 +295,8 @@ describe('NewSession', () => {
 
       await waitFor(() => {
         // Should NOT have called PUT to save preferences
-        const putCalls = fetchMock.mock.calls.filter(
-          (call: [string, RequestInit?]) => call[1]?.method === 'PUT'
+        const putCalls = (fetchMock.mock.calls as [string, RequestInit?][]).filter(
+          (call) => call[1]?.method === 'PUT'
         );
         expect(putCalls).toHaveLength(0);
       });
@@ -327,8 +327,8 @@ describe('NewSession', () => {
       await user.click(screen.getByRole('button', { name: /start discovery/i }));
 
       await waitFor(() => {
-        const sessionCall = fetchMock.mock.calls.find(
-          (call: [string, RequestInit?]) => call[0] === '/api/sessions' && call[1]?.method === 'POST'
+        const sessionCall = (fetchMock.mock.calls as [string, RequestInit?][]).find(
+          (call) => call[0] === '/api/sessions' && call[1]?.method === 'POST'
         );
         expect(sessionCall).toBeDefined();
         if (sessionCall) {
