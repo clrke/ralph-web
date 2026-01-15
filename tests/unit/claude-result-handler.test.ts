@@ -5,7 +5,7 @@ import { ClaudeResult } from '../../server/src/services/ClaudeOrchestrator';
 import { DecisionValidator, ValidationLog, ValidationResult } from '../../server/src/services/DecisionValidator';
 import { PlanCompletionChecker, PlanCompletenessResult } from '../../server/src/services/PlanCompletionChecker';
 import { PlanValidationResult } from '../../server/src/services/PlanValidator';
-import { Session, ComposablePlan, PlanStep } from '@claude-code-web/shared';
+import { Session, ComposablePlan, PlanStep, UserPreferences } from '@claude-code-web/shared';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as os from 'os';
@@ -13,6 +13,7 @@ import * as os from 'os';
 // Mock DecisionValidator for testing validation metadata flow
 class MockDecisionValidator {
   private mockResults: ValidationResult[] = [];
+  public lastPreferencesReceived: UserPreferences | undefined;
 
   setMockResults(results: ValidationResult[]) {
     this.mockResults = results;
@@ -21,8 +22,12 @@ class MockDecisionValidator {
   async validateDecisions(
     decisions: Array<{ questionText: string; category: string; priority: number; options: Array<{ label: string; recommended: boolean }> }>,
     _plan: unknown,
-    _projectPath: string
+    _projectPath: string,
+    preferences?: UserPreferences
   ): Promise<{ validDecisions: typeof decisions; log: ValidationLog }> {
+    // Track the preferences received for testing
+    this.lastPreferencesReceived = preferences;
+
     const log: ValidationLog = {
       timestamp: new Date().toISOString(),
       totalDecisions: decisions.length,
@@ -1722,6 +1727,115 @@ describe('ClaudeResultHandler', () => {
       expect(validationEntry).toBeDefined();
       expect(validationEntry!.validationAction).toBe('repurpose');
       expect(validationEntry!.questionIndex).toBe(1);
+    });
+
+    it('should pass session.preferences to validateDecisions', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+      const decision = {
+        questionText: 'Which approach?',
+        category: 'technical',
+        priority: 1,
+        options: [{ label: 'Option A', recommended: true }],
+      };
+
+      const testPreferences: UserPreferences = {
+        riskComfort: 'low',
+        speedVsQuality: 'quality',
+        scopeFlexibility: 'fixed',
+        detailLevel: 'minimal',
+        autonomyLevel: 'guided',
+      };
+
+      // Create session with preferences
+      const sessionWithPreferences: Session = {
+        ...mockSession,
+        preferences: testPreferences,
+      };
+      await storage.writeJson(`${sessionDir}/session.json`, sessionWithPreferences);
+
+      mockValidator.setMockResults([{
+        decision,
+        action: 'pass',
+        reason: 'Valid decision',
+        validatedAt: new Date().toISOString(),
+        durationMs: 100,
+        prompt: 'Validate: Which approach?',
+        output: '{"action": "pass", "reason": "Valid decision"}',
+      }]);
+
+      const result: ClaudeResult = {
+        output: 'Questions',
+        sessionId: 'claude-123',
+        costUsd: 0.05,
+        isError: false,
+        parsed: {
+          decisions: [decision],
+          planSteps: [],
+          stepCompleted: null,
+          stepsCompleted: [],
+          planModeEntered: false,
+          planModeExited: false,
+          planFilePath: null,
+          implementationComplete: false,
+          implementationSummary: null,
+          implementationStatus: null,
+          prCreated: null,
+          planApproved: false,
+        },
+      };
+
+      await handlerWithValidator.handleStage1Result(sessionWithPreferences, result, 'Test prompt');
+
+      // Verify that preferences were passed to the validator
+      expect(mockValidator.lastPreferencesReceived).toBeDefined();
+      expect(mockValidator.lastPreferencesReceived).toEqual(testPreferences);
+    });
+
+    it('should pass undefined preferences when session has no preferences', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+      const decision = {
+        questionText: 'Which approach?',
+        category: 'technical',
+        priority: 1,
+        options: [{ label: 'Option A', recommended: true }],
+      };
+
+      // Session without preferences (mockSession doesn't have preferences)
+      mockValidator.setMockResults([{
+        decision,
+        action: 'pass',
+        reason: 'Valid decision',
+        validatedAt: new Date().toISOString(),
+        durationMs: 100,
+        prompt: 'Validate: Which approach?',
+        output: '{"action": "pass", "reason": "Valid decision"}',
+      }]);
+
+      const result: ClaudeResult = {
+        output: 'Questions',
+        sessionId: 'claude-123',
+        costUsd: 0.05,
+        isError: false,
+        parsed: {
+          decisions: [decision],
+          planSteps: [],
+          stepCompleted: null,
+          stepsCompleted: [],
+          planModeEntered: false,
+          planModeExited: false,
+          planFilePath: null,
+          implementationComplete: false,
+          implementationSummary: null,
+          implementationStatus: null,
+          prCreated: null,
+          planApproved: false,
+        },
+      };
+
+      await handlerWithValidator.handleStage1Result(mockSession, result, 'Test prompt');
+
+      // Verify that preferences were undefined (not passed)
+      expect(mockValidator.lastPreferencesReceived).toBeUndefined();
     });
   });
 

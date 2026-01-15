@@ -730,7 +730,7 @@ export class ClaudeResultHandler {
     let validatedDecisions = decisions;
     if (this.validator && plan && decisions.length > 0) {
       // Build prompts upfront so we can save "started" entries immediately
-      const prompts = decisions.map(d => buildDecisionValidationPrompt(d, plan));
+      const prompts = decisions.map(d => buildDecisionValidationPrompt(d, plan, session.preferences));
 
       // Save "started" entries for all validations immediately
       // This allows frontend to show validation progress right away
@@ -740,7 +740,8 @@ export class ClaudeResultHandler {
       const { validDecisions, log } = await this.validator.validateDecisions(
         decisions,
         plan,
-        session.projectPath
+        session.projectPath,
+        session.preferences
       );
       validatedDecisions = validDecisions;
 

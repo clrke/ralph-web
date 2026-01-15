@@ -61,7 +61,9 @@ describe('DecisionValidator', () => {
   afterEach(() => {
     jest.restoreAllMocks();
     jest.useRealTimers();
-    mockSpawn.mockClear();
+    // Use mockReset instead of mockClear to also reset the implementation
+    // This ensures the next test's beforeEach properly sets up mockReturnValue
+    mockSpawn.mockReset();
   });
 
   describe('validateDecision', () => {
