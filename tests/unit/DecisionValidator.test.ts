@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import type { ChildProcess } from 'child_process';
-import type { Plan } from '@claude-code-web/shared';
+import type { Plan, UserPreferences } from '@claude-code-web/shared';
+import { DEFAULT_USER_PREFERENCES } from '@claude-code-web/shared';
 import type { ParsedDecision } from '../../server/src/services/OutputParser';
 
 // Mock child_process.spawn
@@ -60,6 +61,7 @@ describe('DecisionValidator', () => {
   afterEach(() => {
     jest.restoreAllMocks();
     jest.useRealTimers();
+    mockSpawn.mockClear();
   });
 
   describe('validateDecision', () => {
@@ -330,6 +332,156 @@ describe('DecisionValidator', () => {
       expect(validDecisions).toHaveLength(1);
       expect(log.passedCount).toBe(1);
       expect(log.filteredCount).toBe(1);
+    });
+
+    it('should pass preferences to validateDecision for each decision', async () => {
+      const decisions: ParsedDecision[] = [
+        { ...mockDecision, questionText: 'Question 1' },
+      ];
+
+      const customPrefs: UserPreferences = {
+        riskComfort: 'high',
+        speedVsQuality: 'quality',
+        scopeFlexibility: 'open',
+        detailLevel: 'detailed',
+        autonomyLevel: 'autonomous',
+      };
+
+      const mockProcesses: (EventEmitter & Partial<ChildProcess>)[] = [];
+
+      mockSpawn.mockImplementation(() => {
+        const proc = new EventEmitter() as EventEmitter & Partial<ChildProcess>;
+        proc.stdout = new EventEmitter() as any;
+        proc.stderr = new EventEmitter() as any;
+        proc.kill = jest.fn();
+        mockProcesses.push(proc);
+        return proc as ChildProcess;
+      });
+
+      const resultPromise = validator.validateDecisions(decisions, mockPlan, '/project', customPrefs);
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // Respond to process
+      mockProcesses[0].stdout!.emit('data', Buffer.from(JSON.stringify({
+        result: '{"action": "pass", "reason": "Valid question"}',
+      })));
+      mockProcesses[0].emit('close', 0);
+
+      const { validDecisions } = await resultPromise;
+
+      expect(validDecisions).toHaveLength(1);
+
+      // Verify the prompt includes preferences
+      const spawnCall = mockSpawn.mock.calls[0];
+      const promptArg = spawnCall[1].find((arg: string, i: number, arr: string[]) => arr[i - 1] === '-p');
+      expect(promptArg).toContain('## User Preferences');
+      expect(promptArg).toContain('Risk Comfort: high');
+      expect(promptArg).toContain('Scope Flexibility: open');
+    });
+  });
+
+  describe('validateDecision with preferences', () => {
+    it('should include preferences in prompt when provided', async () => {
+      const resultPromise = validator.validateDecision(
+        mockDecision,
+        mockPlan,
+        '/project',
+        DEFAULT_USER_PREFERENCES
+      );
+
+      // Emit valid response
+      const response = JSON.stringify({
+        result: '{"action": "pass", "reason": "Valid decision"}',
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      await resultPromise;
+
+      // Verify spawn was called with prompt containing preferences
+      const spawnCall = mockSpawn.mock.calls[0];
+      const promptArg = spawnCall[1].find((arg: string, i: number, arr: string[]) => arr[i - 1] === '-p');
+      expect(promptArg).toContain('## User Preferences');
+      expect(promptArg).toContain('Risk Comfort: medium');
+      expect(promptArg).toContain('Scope Flexibility: flexible');
+      expect(promptArg).toContain('Detail Level: standard');
+      expect(promptArg).toContain('Autonomy Level: collaborative');
+    });
+
+    it('should include preference-based filtering rules in prompt', async () => {
+      const customPrefs: UserPreferences = {
+        riskComfort: 'low',
+        speedVsQuality: 'speed',
+        scopeFlexibility: 'fixed',
+        detailLevel: 'minimal',
+        autonomyLevel: 'guided',
+      };
+
+      const resultPromise = validator.validateDecision(
+        mockDecision,
+        mockPlan,
+        '/project',
+        customPrefs
+      );
+
+      const response = JSON.stringify({
+        result: '{"action": "filter", "reason": "Filtered by preference"}',
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      await resultPromise;
+
+      const spawnCall = mockSpawn.mock.calls[0];
+      const promptArg = spawnCall[1].find((arg: string, i: number, arr: string[]) => arr[i - 1] === '-p');
+      expect(promptArg).toContain('## Preference-Based Filtering Rules');
+      expect(promptArg).toContain('Scope Flexibility (fixed)');
+      expect(promptArg).toContain('Detail Level (minimal)');
+      expect(promptArg).toContain('FILTER priority 3');
+    });
+
+    it('should not include preferences section when not provided', async () => {
+      const resultPromise = validator.validateDecision(
+        mockDecision,
+        mockPlan,
+        '/project'
+        // No preferences parameter
+      );
+
+      const response = JSON.stringify({
+        result: '{"action": "pass", "reason": "Valid decision"}',
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      await resultPromise;
+
+      const spawnCall = mockSpawn.mock.calls[0];
+      const promptArg = spawnCall[1].find((arg: string, i: number, arr: string[]) => arr[i - 1] === '-p');
+      expect(promptArg).not.toContain('## User Preferences');
+      expect(promptArg).not.toContain('## Preference-Based Filtering Rules');
+    });
+
+    it('should store prompt with preferences in result', async () => {
+      const resultPromise = validator.validateDecision(
+        mockDecision,
+        mockPlan,
+        '/project',
+        DEFAULT_USER_PREFERENCES
+      );
+
+      const response = JSON.stringify({
+        result: '{"action": "pass", "reason": "Valid decision"}',
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      const result = await resultPromise;
+
+      // The prompt stored in result should include preferences
+      expect(result.prompt).toContain('## User Preferences');
+      expect(result.prompt).toContain('Risk Comfort: medium');
     });
   });
 });

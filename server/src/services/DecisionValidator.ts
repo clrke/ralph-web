@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import type { Plan } from '@claude-code-web/shared';
+import type { Plan, UserPreferences } from '@claude-code-web/shared';
 import type { ParsedDecision } from './OutputParser';
 import { buildDecisionValidationPrompt } from '../prompts/validationPrompts';
 
@@ -59,10 +59,11 @@ export class DecisionValidator {
   async validateDecision(
     decision: ParsedDecision,
     plan: Plan,
-    projectPath: string
+    projectPath: string,
+    preferences?: UserPreferences
   ): Promise<ValidationResult> {
     const startTime = Date.now();
-    const prompt = buildDecisionValidationPrompt(decision, plan);
+    const prompt = buildDecisionValidationPrompt(decision, plan, preferences);
 
     return new Promise((resolve) => {
       const childProcess = spawn('claude', [
@@ -327,7 +328,8 @@ export class DecisionValidator {
   async validateDecisions(
     decisions: ParsedDecision[],
     plan: Plan,
-    projectPath: string
+    projectPath: string,
+    preferences?: UserPreferences
   ): Promise<{
     validDecisions: ParsedDecision[];
     log: ValidationLog;
@@ -351,7 +353,7 @@ export class DecisionValidator {
 
     // Validate all decisions in parallel
     const results = await Promise.all(
-      decisions.map(d => this.validateDecision(d, plan, projectPath))
+      decisions.map(d => this.validateDecision(d, plan, projectPath, preferences))
     );
 
     // Collect results by action
