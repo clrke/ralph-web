@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { Session } from '@claude-code-web/shared';
+import type { Session, UserPreferences } from '@claude-code-web/shared';
+import { DEFAULT_USER_PREFERENCES } from '@claude-code-web/shared';
 
 interface FormData {
   projectPath: string;
@@ -25,10 +26,38 @@ export default function NewSession() {
     technicalNotes: '',
     baseBranch: 'main',
   });
+  const [preferences, setPreferences] = useState<UserPreferences>({ ...DEFAULT_USER_PREFERENCES });
+  const [preferencesExpanded, setPreferencesExpanded] = useState(false);
+  const [rememberPreferences, setRememberPreferences] = useState(true);
+  const [loadingPreferences, setLoadingPreferences] = useState(false);
 
   const updateField = <K extends keyof FormData>(field: K, value: FormData[K]) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
+
+  // Load project preferences when project path changes
+  const loadProjectPreferences = useCallback(async (projectPath: string) => {
+    if (!projectPath.trim()) {
+      setPreferences({ ...DEFAULT_USER_PREFERENCES });
+      return;
+    }
+
+    setLoadingPreferences(true);
+    try {
+      const projectId = btoa(projectPath).replace(/[/+=]/g, '_');
+      const response = await fetch(`/api/projects/${projectId}/preferences`);
+      if (response.ok) {
+        const data = await response.json();
+        setPreferences(data);
+      } else {
+        setPreferences({ ...DEFAULT_USER_PREFERENCES });
+      }
+    } catch {
+      setPreferences({ ...DEFAULT_USER_PREFERENCES });
+    } finally {
+      setLoadingPreferences(false);
+    }
+  }, []);
 
   // Check for active sessions when project path changes
   const checkActiveSession = useCallback(async (projectPath: string) => {
@@ -54,13 +83,14 @@ export default function NewSession() {
     }
   }, []);
 
-  // Debounce the active session check
+  // Debounce the active session check and preferences load
   useEffect(() => {
     const timer = setTimeout(() => {
       checkActiveSession(formData.projectPath);
+      loadProjectPreferences(formData.projectPath);
     }, 500);
     return () => clearTimeout(timer);
-  }, [formData.projectPath, checkActiveSession]);
+  }, [formData.projectPath, checkActiveSession, loadProjectPreferences]);
 
   const addCriterion = () => {
     setFormData(prev => ({
@@ -89,11 +119,22 @@ export default function NewSession() {
     setError(null);
 
     try {
+      // Save preferences if checkbox is checked
+      if (rememberPreferences && formData.projectPath.trim()) {
+        const projectId = btoa(formData.projectPath).replace(/[/+=]/g, '_');
+        await fetch(`/api/projects/${projectId}/preferences`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(preferences),
+        });
+      }
+
       const response = await fetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...formData,
+          preferences,
           acceptanceCriteria: formData.acceptanceCriteria
             .filter(c => c.trim())
             .map(text => ({ text, checked: false, type: 'manual' as const })),
@@ -254,6 +295,151 @@ export default function NewSession() {
             placeholder="main"
             className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
+        </div>
+
+        {/* Preferences Section */}
+        <div className="border border-gray-700 rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setPreferencesExpanded(!preferencesExpanded)}
+            className="w-full px-4 py-3 flex items-center justify-between bg-gray-800 hover:bg-gray-750 transition-colors"
+            aria-expanded={preferencesExpanded}
+          >
+            <span className="text-sm font-medium">
+              Preferences {loadingPreferences && <span className="text-gray-400">(loading...)</span>}
+            </span>
+            <svg
+              className={`w-5 h-5 transition-transform ${preferencesExpanded ? 'rotate-180' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {preferencesExpanded && (
+            <div className="px-4 py-4 space-y-5 bg-gray-800/50">
+              {/* Risk Comfort */}
+              <fieldset>
+                <legend className="text-sm font-medium text-gray-300 mb-2">Risk Comfort</legend>
+                <p className="text-xs text-gray-500 mb-2">How comfortable are you with experimental approaches?</p>
+                <div className="flex gap-4">
+                  {(['low', 'medium', 'high'] as const).map((value) => (
+                    <label key={value} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="riskComfort"
+                        value={value}
+                        checked={preferences.riskComfort === value}
+                        onChange={() => setPreferences(p => ({ ...p, riskComfort: value }))}
+                        className="w-4 h-4 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-800"
+                      />
+                      <span className="text-sm capitalize">{value}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              {/* Speed vs Quality */}
+              <fieldset>
+                <legend className="text-sm font-medium text-gray-300 mb-2">Speed vs Quality</legend>
+                <p className="text-xs text-gray-500 mb-2">Trade-off between delivery speed and implementation quality</p>
+                <div className="flex gap-4">
+                  {(['speed', 'balanced', 'quality'] as const).map((value) => (
+                    <label key={value} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="speedVsQuality"
+                        value={value}
+                        checked={preferences.speedVsQuality === value}
+                        onChange={() => setPreferences(p => ({ ...p, speedVsQuality: value }))}
+                        className="w-4 h-4 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-800"
+                      />
+                      <span className="text-sm capitalize">{value}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              {/* Scope Flexibility */}
+              <fieldset>
+                <legend className="text-sm font-medium text-gray-300 mb-2">Scope Flexibility</legend>
+                <p className="text-xs text-gray-500 mb-2">Openness to scope changes beyond original request</p>
+                <div className="flex gap-4">
+                  {(['fixed', 'flexible', 'open'] as const).map((value) => (
+                    <label key={value} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="scopeFlexibility"
+                        value={value}
+                        checked={preferences.scopeFlexibility === value}
+                        onChange={() => setPreferences(p => ({ ...p, scopeFlexibility: value }))}
+                        className="w-4 h-4 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-800"
+                      />
+                      <span className="text-sm capitalize">{value}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              {/* Detail Level */}
+              <fieldset>
+                <legend className="text-sm font-medium text-gray-300 mb-2">Detail Level</legend>
+                <p className="text-xs text-gray-500 mb-2">How many questions/details to surface during review</p>
+                <div className="flex gap-4">
+                  {(['minimal', 'standard', 'detailed'] as const).map((value) => (
+                    <label key={value} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="detailLevel"
+                        value={value}
+                        checked={preferences.detailLevel === value}
+                        onChange={() => setPreferences(p => ({ ...p, detailLevel: value }))}
+                        className="w-4 h-4 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-800"
+                      />
+                      <span className="text-sm capitalize">{value}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              {/* Autonomy Level */}
+              <fieldset>
+                <legend className="text-sm font-medium text-gray-300 mb-2">Autonomy Level</legend>
+                <p className="text-xs text-gray-500 mb-2">How much Claude should decide vs ask for input</p>
+                <div className="flex gap-4">
+                  {(['guided', 'collaborative', 'autonomous'] as const).map((value) => (
+                    <label key={value} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="autonomyLevel"
+                        value={value}
+                        checked={preferences.autonomyLevel === value}
+                        onChange={() => setPreferences(p => ({ ...p, autonomyLevel: value }))}
+                        className="w-4 h-4 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-800"
+                      />
+                      <span className="text-sm capitalize">{value}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              {/* Remember checkbox */}
+              <div className="pt-2 border-t border-gray-700">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={rememberPreferences}
+                    onChange={(e) => setRememberPreferences(e.target.checked)}
+                    className="w-4 h-4 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-800 rounded"
+                  />
+                  <span className="text-sm text-gray-300">Remember for this project</span>
+                </label>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex gap-4 pt-4">
