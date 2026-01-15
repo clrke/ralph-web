@@ -21,6 +21,7 @@ import type {
   PlanValidationStatus,
 } from '@claude-code-web/shared';
 import { ComplexityBadge } from '../components/PlanEditor/PlanNode';
+import { StageStatusBadge } from '../components/StageStatusBadge';
 
 const STAGE_LABELS: Record<number, string> = {
   1: 'Feature Discovery',
@@ -67,6 +68,8 @@ export default function SessionView() {
 
   // Socket.IO event handlers
   const handleExecutionStatus = useCallback((data: ExecutionStatusEvent) => {
+    // Skip intermediate updates to prevent UI flickering from rapid updates
+    if (data.isIntermediate) return;
     setExecutionStatus(data);
   }, [setExecutionStatus]);
 
@@ -213,9 +216,12 @@ export default function SessionView() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
           </Link>
-          <span className={`px-3 py-1 rounded-full text-sm ${STAGE_COLORS[currentStage] || 'bg-gray-600'}`}>
-            Stage {currentStage}: {STAGE_LABELS[currentStage]}
-          </span>
+          <StageStatusBadge
+            stage={currentStage}
+            action={executionStatus?.action}
+            subState={executionStatus?.subState}
+            status={executionStatus?.status ?? 'idle'}
+          />
         </div>
         <h1 className="text-3xl font-bold">{session.title}</h1>
         <p className="text-gray-400 mt-2">{session.featureDescription}</p>
