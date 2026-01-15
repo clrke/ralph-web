@@ -3,19 +3,26 @@ import { Link } from 'react-router-dom';
 import type { Session } from '@claude-code-web/shared';
 
 const STAGE_LABELS: Record<number, string> = {
+  0: 'Queued',
   1: 'Discovery',
   2: 'Planning',
   3: 'Implementing',
   4: 'PR Creation',
   5: 'PR Review',
+  6: 'Final Approval',
 };
 
 const STATUS_COLORS: Record<string, string> = {
+  queued: 'bg-yellow-700',
   discovery: 'bg-blue-600',
   planning: 'bg-yellow-600',
   implementing: 'bg-purple-600',
   pr_creation: 'bg-green-600',
   pr_review: 'bg-teal-600',
+  final_approval: 'bg-emerald-600',
+  completed: 'bg-gray-600',
+  paused: 'bg-orange-600',
+  failed: 'bg-red-600',
 };
 
 function formatRelativeTime(date: Date): string {

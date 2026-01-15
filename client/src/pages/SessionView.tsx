@@ -216,7 +216,15 @@ export default function SessionView() {
     // Skip intermediate updates to prevent UI flickering from rapid updates
     if (data.isIntermediate) return;
     setExecutionStatus(data);
-  }, [setExecutionStatus]);
+
+    // Update session status when session is completed
+    if (data.action === 'session_completed') {
+      const currentSession = useSessionStore.getState().session;
+      if (currentSession) {
+        setSession({ ...currentSession, status: 'completed' });
+      }
+    }
+  }, [setExecutionStatus, setSession]);
 
   const handleClaudeOutput = useCallback((data: ClaudeOutputEvent) => {
     appendLiveOutput(data.output, data.isComplete);
@@ -372,6 +380,13 @@ export default function SessionView() {
                 <span className="text-sm opacity-80">#{session.queuePosition} in queue</span>
               )}
             </div>
+          ) : session.status === 'completed' ? (
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-green-600/20 text-green-300 border-green-500/30">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="font-medium">Completed</span>
+            </div>
           ) : (
             <StageStatusBadge
               stage={currentStage}
@@ -481,8 +496,40 @@ export default function SessionView() {
           )}
 
           {/* Stage 6: Final Approval */}
-          {currentStage === 6 && projectId && featureId && (
+          {currentStage === 6 && session.status !== 'completed' && projectId && featureId && (
             <FinalApprovalSection session={session} projectId={projectId} featureId={featureId} />
+          )}
+
+          {/* Session Completed */}
+          {session.status === 'completed' && (
+            <div className="bg-green-900/20 border border-green-700/50 rounded-lg p-6">
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-green-600/30 rounded-full">
+                  <svg className="w-6 h-6 text-green-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-green-200 text-lg">Session Completed</h3>
+                  <p className="text-green-300/80 mt-1">
+                    This session has been completed. The PR is ready to be merged.
+                  </p>
+                  {session.prUrl && (
+                    <a
+                      href={session.prUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 mt-3 text-green-400 hover:text-green-300 transition-colors"
+                    >
+                      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 16 16">
+                        <path fillRule="evenodd" d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z"/>
+                      </svg>
+                      View Pull Request
+                    </a>
+                  )}
+                </div>
+              </div>
+            </div>
           )}
 
           {/* Conversation Panel */}
