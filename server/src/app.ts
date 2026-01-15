@@ -1,4 +1,5 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
+import path from 'path';
 import crypto from 'crypto';
 import { ZodSchema, ZodError } from 'zod';
 import { FileStorageService } from './data/FileStorageService';
@@ -1692,6 +1693,10 @@ export function createApp(
   // Middleware
   app.use(express.json());
 
+  // Serve built frontend static files
+  const clientDistPath = path.join(__dirname, '../../client/dist');
+  app.use(express.static(clientDistPath));
+
   // Health check endpoint (README lines 651-667)
   app.get('/health', async (_req, res) => {
     const uptime = Math.floor((Date.now() - startTime) / 1000);
@@ -3112,6 +3117,11 @@ After creating all steps, write the plan to a file and output:
       console.error('Error scanning for stuck sessions:', error);
     }
   }
+
+  // SPA fallback: serve index.html for all non-API routes
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(clientDistPath, 'index.html'));
+  });
 
   return { app, resumeStuckSessions };
 }

@@ -13,6 +13,7 @@ interface FormData {
 export default function NewSession() {
   const navigate = useNavigate();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState<FormData>({
     projectPath: '',
     title: '',
@@ -50,6 +51,7 @@ export default function NewSession() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setError(null);
 
     try {
       const response = await fetch('/api/sessions', {
@@ -64,13 +66,15 @@ export default function NewSession() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to create session');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to create session (${response.status})`);
       }
 
       const session = await response.json();
       navigate(`/session/${session.projectId}/${session.featureId}`);
-    } catch (error) {
-      console.error('Error creating session:', error);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+      setError(message);
       setIsSubmitting(false);
     }
   };
@@ -81,6 +85,20 @@ export default function NewSession() {
         <h1 className="text-3xl font-bold">New Feature Session</h1>
         <p className="text-gray-400 mt-2">Define your feature for Claude to implement</p>
       </header>
+
+      {error && (
+        <div className="mb-6 p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-200">
+          <div className="flex items-start gap-3">
+            <svg className="w-5 h-5 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div>
+              <p className="font-medium">Error creating session</p>
+              <p className="text-sm mt-1 text-red-300">{error}</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         <div>

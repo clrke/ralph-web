@@ -32,9 +32,11 @@ export function buildStage1Prompt(session: Session): string {
   // Sanitize user-provided fields to prevent marker injection
   const sanitized = sanitizeSessionFields(session);
 
-  const acceptanceCriteriaText = sanitized.acceptanceCriteria.length > 0
-    ? sanitized.acceptanceCriteria.map((c, i) => `${i + 1}. ${c.text}`).join('\n')
-    : 'No specific criteria provided.';
+  const acceptanceCriteriaSection = sanitized.acceptanceCriteria.length > 0
+    ? `
+## Acceptance Criteria
+${sanitized.acceptanceCriteria.map((c, i) => `${i + 1}. ${c.text}`).join('\n')}`
+    : '';
 
   const affectedFilesSection = sanitized.affectedFiles.length > 0
     ? `
@@ -55,11 +57,7 @@ ${sanitized.technicalNotes}`
 Title: ${sanitized.title}
 Description: ${sanitized.featureDescription}
 Project Path: ${session.projectPath}
-
-## Acceptance Criteria
-${acceptanceCriteriaText}
-${affectedFilesSection}
-${technicalNotesSection}
+${acceptanceCriteriaSection}${affectedFilesSection}${technicalNotesSection}
 
 ## Instructions
 
