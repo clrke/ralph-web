@@ -47,7 +47,7 @@ interface ClaudeJsonOutput {
 }
 
 const STAGE_TOOLS: Record<number, string[]> = {
-  1: ['Read', 'Glob', 'Grep', 'Task', 'WebFetch', 'WebSearch', 'Edit(~/.claude-web/**/plan.md)'],  // Discovery - read-only + web + plan.md edit
+  1: ['Read', 'Glob', 'Grep', 'Task', 'WebFetch', 'WebSearch', 'Edit(~/.claude-web/**/plan.md)', 'Bash(git:*)'],  // Discovery - read-only + web + plan.md edit + git for branch setup
   2: ['Read', 'Glob', 'Grep', 'Task', 'WebFetch', 'WebSearch', 'Edit(~/.claude-web/**/plan.md)'],  // Plan review - read-only + web + plan.md edit
   3: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'Task'],
   4: ['Read', 'Bash(git:*)', 'Bash(gh:*)'],  // Restricted to git and gh commands for PR creation
