@@ -12,6 +12,7 @@ import {
   SessionStatus,
   CreateSessionInput,
   ExitSignals,
+  UserPreferences,
 } from '@claude-code-web/shared';
 
 const STAGE_STATUS_MAP: Record<number, SessionStatus> = {
@@ -158,7 +159,7 @@ export class SessionManager {
     return `${projectId}/${featureId}`;
   }
 
-  async createSession(input: CreateSessionInput): Promise<Session> {
+  async createSession(input: CreateSessionInput, preferences?: UserPreferences): Promise<Session> {
     // Validate required fields
     if (!input.title?.trim()) {
       throw new Error('Title is required');
@@ -231,6 +232,7 @@ export class SessionManager {
       sessionExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       createdAt: now,
       updatedAt: now,
+      preferences,
     };
 
     await this.storage.writeJson(`${sessionPath}/session.json`, session);

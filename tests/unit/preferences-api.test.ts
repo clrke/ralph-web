@@ -297,4 +297,78 @@ describe('Project Preferences API', () => {
       expect(response.body).toEqual(customPrefs);
     });
   });
+
+  describe('Session creation with preferences', () => {
+    it('should create session with default preferences when no project preferences exist', async () => {
+      const response = await request(app)
+        .post('/api/sessions')
+        .send({
+          title: 'Test Feature',
+          featureDescription: 'A test feature',
+          projectPath: '/test/project/path',
+        });
+
+      expect(response.status).toBe(201);
+      expect(response.body.preferences).toEqual(DEFAULT_USER_PREFERENCES);
+    });
+
+    it('should create session with saved project preferences', async () => {
+      const customPrefs: UserPreferences = {
+        riskComfort: 'high',
+        speedVsQuality: 'quality',
+        scopeFlexibility: 'open',
+        detailLevel: 'detailed',
+        autonomyLevel: 'autonomous',
+      };
+
+      // First, save project preferences
+      const projectId = sessionManager.getProjectId('/test/project/with-prefs');
+      await storage.writeJson(`${projectId}/preferences.json`, customPrefs);
+
+      // Create session for that project
+      const response = await request(app)
+        .post('/api/sessions')
+        .send({
+          title: 'Feature With Prefs',
+          featureDescription: 'A feature with custom preferences',
+          projectPath: '/test/project/with-prefs',
+        });
+
+      expect(response.status).toBe(201);
+      expect(response.body.preferences).toEqual(customPrefs);
+    });
+
+    it('should persist preferences in session.json file', async () => {
+      const customPrefs: UserPreferences = {
+        riskComfort: 'low',
+        speedVsQuality: 'speed',
+        scopeFlexibility: 'fixed',
+        detailLevel: 'minimal',
+        autonomyLevel: 'guided',
+      };
+
+      // Save project preferences
+      const projectId = sessionManager.getProjectId('/test/project/persist-test');
+      await storage.writeJson(`${projectId}/preferences.json`, customPrefs);
+
+      // Create session
+      const response = await request(app)
+        .post('/api/sessions')
+        .send({
+          title: 'Persist Test Feature',
+          featureDescription: 'Testing persistence',
+          projectPath: '/test/project/persist-test',
+        });
+
+      expect(response.status).toBe(201);
+
+      // Verify preferences are persisted in session.json
+      const featureId = response.body.featureId;
+      const savedSession = await storage.readJson<{ preferences: UserPreferences }>(
+        `${projectId}/${featureId}/session.json`
+      );
+
+      expect(savedSession?.preferences).toEqual(customPrefs);
+    });
+  });
 });

@@ -1,6 +1,6 @@
 import { SessionManager } from '../../server/src/services/SessionManager';
 import { FileStorageService } from '../../server/src/data/FileStorageService';
-import { CreateSessionInput, Session } from '../../shared/types/session';
+import { CreateSessionInput, Session, UserPreferences, DEFAULT_USER_PREFERENCES } from '../../shared/types/session';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as os from 'os';
@@ -179,6 +179,53 @@ describe('SessionManager', () => {
       await expect(
         manager.createSession({ ...validInput, title: 'ADD USER AUTHENTICATION!' })
       ).rejects.toThrow(/already exists/i);
+    });
+
+    it('should create session with provided preferences', async () => {
+      const customPrefs: UserPreferences = {
+        riskComfort: 'high',
+        speedVsQuality: 'quality',
+        scopeFlexibility: 'open',
+        detailLevel: 'detailed',
+        autonomyLevel: 'autonomous',
+      };
+
+      const session = await manager.createSession(validInput, customPrefs);
+
+      expect(session.preferences).toEqual(customPrefs);
+    });
+
+    it('should create session without preferences when not provided', async () => {
+      const session = await manager.createSession(validInput);
+
+      expect(session.preferences).toBeUndefined();
+    });
+
+    it('should persist preferences in session.json', async () => {
+      const customPrefs: UserPreferences = {
+        riskComfort: 'low',
+        speedVsQuality: 'speed',
+        scopeFlexibility: 'fixed',
+        detailLevel: 'minimal',
+        autonomyLevel: 'guided',
+      };
+
+      const session = await manager.createSession(validInput, customPrefs);
+      const sessionDir = path.join(testDir, session.projectId, session.featureId);
+      const savedSession = await fs.readJson(path.join(sessionDir, 'session.json'));
+
+      expect(savedSession.preferences).toEqual(customPrefs);
+    });
+
+    it('should create session with default preferences when passed explicitly', async () => {
+      const session = await manager.createSession(validInput, DEFAULT_USER_PREFERENCES);
+
+      expect(session.preferences).toEqual(DEFAULT_USER_PREFERENCES);
+      expect(session.preferences?.riskComfort).toBe('medium');
+      expect(session.preferences?.speedVsQuality).toBe('balanced');
+      expect(session.preferences?.scopeFlexibility).toBe('flexible');
+      expect(session.preferences?.detailLevel).toBe('standard');
+      expect(session.preferences?.autonomyLevel).toBe('collaborative');
     });
   });
 

@@ -1980,7 +1980,12 @@ export function createApp(
   // Create session (with Zod validation) - automatically starts Stage 1 (unless queued)
   app.post('/api/sessions', validate(CreateSessionInputSchema), async (req, res) => {
     try {
-      const session = await sessionManager.createSession(req.body);
+      // Load project preferences if they exist, otherwise use defaults
+      const projectId = sessionManager.getProjectId(req.body.projectPath);
+      const savedPreferences = await storage.readJson<UserPreferences>(`${projectId}/preferences.json`);
+      const preferences = savedPreferences || DEFAULT_USER_PREFERENCES;
+
+      const session = await sessionManager.createSession(req.body, preferences);
 
       // Return response immediately
       res.status(201).json(session);
