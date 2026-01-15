@@ -8,6 +8,8 @@ export default defineConfig({
     alias: {
       '@shared': path.resolve(__dirname, '../shared/types'),
       '@shared-utils': path.resolve(__dirname, '../shared/utils'),
+      // Resolve shared package to source for proper ES module handling
+      '@claude-code-web/shared': path.resolve(__dirname, '../shared/index.ts'),
     },
   },
   server: {
