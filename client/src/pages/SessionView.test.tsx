@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import SessionView from './SessionView';
 import { useSessionStore } from '../stores/sessionStore';
-import type { Session } from '@claude-code-web/shared';
+import type { Session, Plan, PlanStep } from '@claude-code-web/shared';
 
 // Mock socket service
 vi.mock('../services/socket', () => ({
@@ -31,7 +31,9 @@ const renderWithRouter = (ui: React.ReactElement, route = '/session/proj1/feat1'
   );
 };
 
-const mockSession: Session = {
+// Helper to create a valid Session object
+const createMockSession = (overrides: Partial<Session> = {}): Session => ({
+  version: '1.0',
   id: 'sess1',
   projectId: 'proj1',
   featureId: 'feat1',
@@ -40,22 +42,46 @@ const mockSession: Session = {
   featureDescription: 'Test feature description',
   baseBranch: 'main',
   featureBranch: 'feature/test',
+  baseCommitSha: 'abc123',
   currentStage: 1,
-  status: 'running',
-  acceptanceCriteria: [{ text: 'Test passes', checked: false }],
+  status: 'discovery',
+  acceptanceCriteria: [{ text: 'Test passes', checked: false, type: 'manual' }],
+  affectedFiles: [],
+  technicalNotes: '',
+  replanningCount: 0,
+  claudeSessionId: null,
+  claudePlanFilePath: null,
+  currentPlanVersion: 0,
+  claudeStage3SessionId: null,
+  prUrl: null,
+  sessionExpiresAt: '2024-01-02T00:00:00Z',
   createdAt: '2024-01-01T00:00:00Z',
   updatedAt: '2024-01-01T00:00:00Z',
-};
+  ...overrides,
+});
+
+// Helper to create a valid PlanStep object
+const createMockStep = (overrides: Partial<PlanStep>): PlanStep => ({
+  id: 'step-1',
+  parentId: null,
+  orderIndex: 0,
+  title: 'Test Step',
+  description: 'Test description',
+  status: 'pending',
+  metadata: {},
+  complexity: 'medium',
+  ...overrides,
+});
+
+const mockSession = createMockSession();
 
 describe('SessionView', () => {
-  // Store the original fetchSession implementation
   const originalFetchSession = useSessionStore.getState().fetchSession;
   const originalFetchConversations = useSessionStore.getState().fetchConversations;
 
   beforeEach(() => {
     vi.restoreAllMocks();
 
-    // Reset store to initial state with mocked async actions
     useSessionStore.setState({
       session: null,
       plan: null,
@@ -67,14 +93,12 @@ describe('SessionView', () => {
       implementationProgress: null,
       isLoading: false,
       error: null,
-      // Mock async actions to prevent API calls
       fetchSession: vi.fn(),
       fetchConversations: vi.fn(),
     });
   });
 
   afterEach(() => {
-    // Restore original implementations
     useSessionStore.setState({
       fetchSession: originalFetchSession,
       fetchConversations: originalFetchConversations,
@@ -84,7 +108,6 @@ describe('SessionView', () => {
 
   describe('StageStatusBadge integration', () => {
     it('renders StageStatusBadge with session stage', async () => {
-      // Pre-populate store with session to avoid fetchSession
       useSessionStore.setState({
         session: mockSession,
         isLoading: false,
@@ -92,8 +115,6 @@ describe('SessionView', () => {
 
       renderWithRouter(<SessionView />);
 
-      // StageStatusBadge should display stage 1 info
-      // Use role="status" which is set on the StageStatusBadge component
       await waitFor(() => {
         const badge = screen.getByRole('status');
         expect(badge).toHaveAttribute('aria-label', expect.stringContaining('Stage 1'));
@@ -115,7 +136,6 @@ describe('SessionView', () => {
 
       renderWithRouter(<SessionView />);
 
-      // Should show running state with stage indicator
       await waitFor(() => {
         expect(screen.getByText(/Stage 1/i)).toBeInTheDocument();
       });
@@ -136,7 +156,6 @@ describe('SessionView', () => {
 
       renderWithRouter(<SessionView />);
 
-      // StageStatusBadge should render with subState info
       await waitFor(() => {
         expect(screen.getByText(/Stage 1/i)).toBeInTheDocument();
       });
@@ -160,9 +179,8 @@ describe('SessionView', () => {
         expect(screen.getByText(/Stage 1/i)).toBeInTheDocument();
       });
 
-      // Update execution status to stage 2
       useSessionStore.setState({
-        session: { ...mockSession, currentStage: 2 },
+        session: createMockSession({ currentStage: 2, status: 'planning' }),
         executionStatus: {
           status: 'running',
           action: 'stage2_started',
@@ -179,7 +197,7 @@ describe('SessionView', () => {
 
     it('renders StageStatusBadge with idle status', async () => {
       useSessionStore.setState({
-        session: { ...mockSession, currentStage: 2 },
+        session: createMockSession({ currentStage: 2, status: 'planning' }),
         isLoading: false,
         executionStatus: {
           status: 'idle',
@@ -210,33 +228,13 @@ describe('SessionView', () => {
 
       renderWithRouter(<SessionView />);
 
-      // Error state should show in StageStatusBadge
       await waitFor(() => {
         expect(screen.getByText(/Stage 1/i)).toBeInTheDocument();
       });
     });
 
-    // Skip: Complex test with Zustand state timing issues in initial render
-    // The 'updates StageStatusBadge when executionStatus changes' test above
-    // demonstrates the component correctly updates when state changes.
-    // StageStatusBadge has 23 comprehensive tests covering all scenarios.
     it.skip('renders StageStatusBadge for stage 3 with progress', async () => {
-      // Create session with stage 3 explicitly
-      const stage3Session: Session = {
-        id: 'sess1',
-        projectId: 'proj1',
-        featureId: 'feat1',
-        projectPath: '/test/project',
-        title: 'Test Feature',
-        featureDescription: 'Test feature description',
-        baseBranch: 'main',
-        featureBranch: 'feature/test',
-        currentStage: 3,
-        status: 'running',
-        acceptanceCriteria: [{ text: 'Test passes', checked: false }],
-        createdAt: '2024-01-01T00:00:00Z',
-        updatedAt: '2024-01-01T00:00:00Z',
-      };
+      const stage3Session = createMockSession({ currentStage: 3, status: 'implementing' });
 
       useSessionStore.setState({
         session: stage3Session,
@@ -263,7 +261,6 @@ describe('SessionView', () => {
         fetchConversations: vi.fn(),
       });
 
-      // Verify state was set correctly
       const storeState = useSessionStore.getState();
       expect(storeState.session?.currentStage).toBe(3);
 
@@ -275,24 +272,8 @@ describe('SessionView', () => {
       });
     });
 
-    // Skip: See comment above - Zustand initial render timing in tests
     it.skip('renders StageStatusBadge without executionStatus', async () => {
-      // Create session with stage 4 explicitly
-      const stage4Session: Session = {
-        id: 'sess1',
-        projectId: 'proj1',
-        featureId: 'feat1',
-        projectPath: '/test/project',
-        title: 'Test Feature',
-        featureDescription: 'Test feature description',
-        baseBranch: 'main',
-        featureBranch: 'feature/test',
-        currentStage: 4,
-        status: 'running',
-        acceptanceCriteria: [{ text: 'Test passes', checked: false }],
-        createdAt: '2024-01-01T00:00:00Z',
-        updatedAt: '2024-01-01T00:00:00Z',
-      };
+      const stage4Session = createMockSession({ currentStage: 4, status: 'pr_creation' });
 
       useSessionStore.setState({
         session: stage4Session,
@@ -302,13 +283,11 @@ describe('SessionView', () => {
         fetchConversations: vi.fn(),
       });
 
-      // Verify state was set correctly
       const storeState = useSessionStore.getState();
       expect(storeState.session?.currentStage).toBe(4);
 
       renderWithRouter(<SessionView />);
 
-      // Should still render badge with stage info from session
       await waitFor(() => {
         expect(screen.getByText(/Stage 4/i)).toBeInTheDocument();
       });
@@ -338,6 +317,173 @@ describe('SessionView', () => {
 
       await waitFor(() => {
         expect(screen.getByText(/Session not found/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('ImplementationSection step progress indicator', () => {
+    const stage3Session = createMockSession({ currentStage: 3, status: 'implementing' });
+
+    const mockPlan: Plan = {
+      version: '1.0',
+      planVersion: 1,
+      sessionId: 'sess1',
+      isApproved: true,
+      reviewCount: 0,
+      createdAt: '2024-01-01T00:00:00Z',
+      steps: [
+        createMockStep({ id: 'step-1', orderIndex: 0, title: 'Setup project structure', description: 'Create folders', status: 'completed', complexity: 'low' }),
+        createMockStep({ id: 'step-2', orderIndex: 1, title: 'Implement core logic', description: 'Write main code', status: 'in_progress', complexity: 'medium' }),
+        createMockStep({ id: 'step-3', orderIndex: 2, title: 'Add tests', description: 'Write tests', status: 'pending', complexity: 'medium' }),
+        createMockStep({ id: 'step-4', orderIndex: 3, title: 'Update documentation', description: 'Add docs', status: 'pending', complexity: 'low' }),
+      ],
+    };
+
+    it('shows step progress indicator when step is active', async () => {
+      useSessionStore.setState({
+        session: stage3Session,
+        plan: mockPlan,
+        isLoading: false,
+        executionStatus: {
+          status: 'running',
+          action: 'stage3_progress',
+          timestamp: '2024-01-01T00:00:00Z',
+          stage: 3,
+          stepId: 'step-2',
+        },
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      // Check for the step progress indicator title - use getAllByText since step title appears in multiple places
+      await waitFor(() => {
+        const stepTexts = screen.getAllByText(/Implement core logic/i);
+        expect(stepTexts.length).toBeGreaterThanOrEqual(1);
+      });
+
+      // Verify the step indicator banner is shown by checking for its parent container class
+      const stepBanner = document.querySelector('.bg-blue-900\\/30.border-blue-500\\/30');
+      expect(stepBanner).toBeInTheDocument();
+    });
+
+    it('shows retry count badge when retryCount > 0', async () => {
+      useSessionStore.setState({
+        session: stage3Session,
+        plan: mockPlan,
+        isLoading: false,
+        executionStatus: {
+          status: 'running',
+          action: 'stage3_progress',
+          timestamp: '2024-01-01T00:00:00Z',
+          stage: 3,
+          stepId: 'step-2',
+        },
+        implementationProgress: {
+          stepId: 'step-2',
+          status: 'in_progress',
+          filesModified: [],
+          testsStatus: null,
+          retryCount: 2,
+          message: 'Retrying...',
+          timestamp: '2024-01-01T00:00:00Z',
+        },
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        // Look for retry badge - find span with yellow styling containing retry info
+        const retryBadge = document.querySelector('.text-yellow-400.bg-yellow-900\\/30');
+        expect(retryBadge).toBeInTheDocument();
+        expect(retryBadge?.textContent).toContain('Retry');
+        expect(retryBadge?.textContent).toContain('2/3');
+      });
+    });
+
+    it('does not show step progress indicator when idle', async () => {
+      useSessionStore.setState({
+        session: stage3Session,
+        plan: mockPlan,
+        isLoading: false,
+        executionStatus: {
+          status: 'idle',
+          action: 'stage3_complete',
+          timestamp: '2024-01-01T00:00:00Z',
+          stage: 3,
+          stepId: 'step-2',
+        },
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      // Wait for component to render - use heading selector to be specific
+      await waitFor(() => {
+        const heading = screen.getByRole('heading', { name: /Implementation Progress/i });
+        expect(heading).toBeInTheDocument();
+      });
+
+      // The step progress indicator banner should not be visible when idle
+      // The banner uses bg-blue-900/30 class and has the step label
+      const stepLabel = document.querySelector('.text-blue-300.font-medium');
+      expect(stepLabel).not.toBeInTheDocument();
+    });
+
+    it('shows sub-task progress when available', async () => {
+      useSessionStore.setState({
+        session: stage3Session,
+        plan: mockPlan,
+        isLoading: false,
+        executionStatus: {
+          status: 'running',
+          action: 'stage3_progress',
+          timestamp: '2024-01-01T00:00:00Z',
+          stage: 3,
+          stepId: 'step-2',
+          progress: { current: 3, total: 5 },
+        },
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        // Check for sub-task progress label
+        expect(screen.getByText(/Sub-task progress/i)).toBeInTheDocument();
+      });
+    });
+
+    it('renders plan steps in timeline view', async () => {
+      useSessionStore.setState({
+        session: stage3Session,
+        plan: mockPlan,
+        isLoading: false,
+        executionStatus: {
+          status: 'running',
+          action: 'stage3_progress',
+          timestamp: '2024-01-01T00:00:00Z',
+          stage: 3,
+          stepId: 'step-2',
+        },
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      // Wait for component to render and check step titles appear
+      // Use getAllByText since some step titles may appear multiple times (in progress banner + timeline)
+      await waitFor(() => {
+        expect(screen.getAllByText(/Setup project structure/i).length).toBeGreaterThanOrEqual(1);
+        expect(screen.getAllByText(/Implement core logic/i).length).toBeGreaterThanOrEqual(1);
+        expect(screen.getAllByText(/Add tests/i).length).toBeGreaterThanOrEqual(1);
+        expect(screen.getAllByText(/Update documentation/i).length).toBeGreaterThanOrEqual(1);
       });
     });
   });
