@@ -511,4 +511,277 @@ describe('SessionManager', () => {
       expect(session.featureBranch).toBe('feature/fix-bug-123-cant-login');
     });
   });
+
+  describe('session queue management', () => {
+    const projectPath = '/test/project';
+
+    describe('getActiveSessionForProject', () => {
+      it('should return null when no sessions exist', async () => {
+        const projectId = manager.getProjectId(projectPath);
+        const active = await manager.getActiveSessionForProject(projectId);
+
+        expect(active).toBeNull();
+      });
+
+      it('should return active session when one exists', async () => {
+        const session = await manager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const projectId = manager.getProjectId(projectPath);
+        const active = await manager.getActiveSessionForProject(projectId);
+
+        expect(active).not.toBeNull();
+        expect(active!.id).toBe(session.id);
+      });
+
+      it('should not return completed sessions', async () => {
+        const session = await manager.createSession({
+          title: 'Completed Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        await manager.updateSession(session.projectId, session.featureId, {
+          status: 'completed',
+        });
+
+        const active = await manager.getActiveSessionForProject(session.projectId);
+        expect(active).toBeNull();
+      });
+
+      it('should not return queued sessions', async () => {
+        const session = await manager.createSession({
+          title: 'Queued Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        await manager.updateSession(session.projectId, session.featureId, {
+          status: 'queued',
+          currentStage: 0,
+        });
+
+        const active = await manager.getActiveSessionForProject(session.projectId);
+        expect(active).toBeNull();
+      });
+    });
+
+    describe('createSession with queue', () => {
+      it('should queue second session when active session exists', async () => {
+        // Create first session
+        const first = await manager.createSession({
+          title: 'First Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        expect(first.status).toBe('discovery');
+        expect(first.currentStage).toBe(1);
+        expect(first.queuePosition).toBeNull();
+
+        // Create second session - should be queued
+        const second = await manager.createSession({
+          title: 'Second Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        expect(second.status).toBe('queued');
+        expect(second.currentStage).toBe(0);
+        expect(second.queuePosition).toBe(1);
+        expect(second.queuedAt).toBeDefined();
+      });
+
+      it('should set correct queue positions for multiple queued sessions', async () => {
+        await manager.createSession({
+          title: 'First Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const second = await manager.createSession({
+          title: 'Second Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const third = await manager.createSession({
+          title: 'Third Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        expect(second.queuePosition).toBe(1);
+        expect(third.queuePosition).toBe(2);
+      });
+    });
+
+    describe('getQueuedSessions', () => {
+      it('should return empty array when no queued sessions', async () => {
+        const projectId = manager.getProjectId(projectPath);
+        const queued = await manager.getQueuedSessions(projectId);
+
+        expect(queued).toEqual([]);
+      });
+
+      it('should return queued sessions sorted by position', async () => {
+        await manager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const second = await manager.createSession({
+          title: 'Second Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const third = await manager.createSession({
+          title: 'Third Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const projectId = manager.getProjectId(projectPath);
+        const queued = await manager.getQueuedSessions(projectId);
+
+        expect(queued).toHaveLength(2);
+        expect(queued[0].id).toBe(second.id);
+        expect(queued[1].id).toBe(third.id);
+      });
+    });
+
+    describe('getNextQueuedSession', () => {
+      it('should return null when no queued sessions', async () => {
+        const projectId = manager.getProjectId(projectPath);
+        const next = await manager.getNextQueuedSession(projectId);
+
+        expect(next).toBeNull();
+      });
+
+      it('should return session with lowest queue position', async () => {
+        await manager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const second = await manager.createSession({
+          title: 'Next in Queue',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        await manager.createSession({
+          title: 'Later in Queue',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const projectId = manager.getProjectId(projectPath);
+        const next = await manager.getNextQueuedSession(projectId);
+
+        expect(next).not.toBeNull();
+        expect(next!.id).toBe(second.id);
+      });
+    });
+
+    describe('startQueuedSession', () => {
+      it('should transition queued session to discovery', async () => {
+        // Create active and queued sessions
+        const first = await manager.createSession({
+          title: 'First Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const second = await manager.createSession({
+          title: 'Second Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        // Complete first session
+        await manager.updateSession(first.projectId, first.featureId, {
+          status: 'completed',
+        });
+
+        // Start second session
+        const started = await manager.startQueuedSession(second.projectId, second.featureId);
+
+        expect(started.status).toBe('discovery');
+        expect(started.currentStage).toBe(1);
+        expect(started.queuePosition).toBeNull();
+        expect(started.queuedAt).toBeNull();
+      });
+
+      it('should throw when session is not queued', async () => {
+        const session = await manager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        await expect(
+          manager.startQueuedSession(session.projectId, session.featureId)
+        ).rejects.toThrow(/not queued/i);
+      });
+
+      it('should throw when another session is still active', async () => {
+        await manager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const second = await manager.createSession({
+          title: 'Queued Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        await expect(
+          manager.startQueuedSession(second.projectId, second.featureId)
+        ).rejects.toThrow(/another session is active/i);
+      });
+    });
+
+    describe('recalculateQueuePositions', () => {
+      it('should recalculate positions after session starts', async () => {
+        const active = await manager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const second = await manager.createSession({
+          title: 'Second Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const third = await manager.createSession({
+          title: 'Third Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        // Complete active and start second
+        await manager.updateSession(active.projectId, active.featureId, {
+          status: 'completed',
+        });
+        await manager.startQueuedSession(second.projectId, second.featureId);
+        await manager.recalculateQueuePositions(active.projectId);
+
+        // Refresh third session
+        const updatedThird = await manager.getSession(third.projectId, third.featureId);
+
+        expect(updatedThird!.queuePosition).toBe(1); // Was 2, now 1
+      });
+    });
+  });
 });
