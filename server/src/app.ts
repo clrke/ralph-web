@@ -888,63 +888,69 @@ async function executeSingleStep(
       // Check if this step was completed
       const stepCompleted = result.parsed.stepsCompleted.some(s => s.id === step.id);
 
-      // If step not completed and no blocker detected, try Haiku post-processing
-      // to extract any implicit blockers from Claude's output
-      if (!stepCompleted && !hasBlocker && result.output.length > 100) {
-        console.log(`Step ${step.id} incomplete without blocker, attempting Haiku extraction for ${session.featureId}`);
+      // If step not completed and no blocker detected, handle incomplete step
+      if (!stepCompleted && !hasBlocker) {
+        // Try Haiku post-processing only if we have meaningful output (> 100 bytes)
+        // Empty output usually means compaction interrupted the response
+        if (result.output.length > 100) {
+          console.log(`Step ${step.id} incomplete without blocker, attempting Haiku extraction for ${session.featureId}`);
 
-        const extractionResult = await haikuPostProcessor.smartExtract(
-          result.output,
-          session.projectPath,
-          {
-            stage: 3,
-            hasDecisions: result.parsed.decisions.length > 0,
-            hasPlanSteps: false,
-            hasImplementationStatus: result.parsed.implementationStatus !== null,
-            hasPRCreated: false,
+          const extractionResult = await haikuPostProcessor.smartExtract(
+            result.output,
+            session.projectPath,
+            {
+              stage: 3,
+              hasDecisions: result.parsed.decisions.length > 0,
+              hasPlanSteps: false,
+              hasImplementationStatus: result.parsed.implementationStatus !== null,
+              hasPRCreated: false,
+            }
+          );
+
+          // If Haiku found blockers, redirect to Stage 2 with blocker context
+          if (extractionResult.questions && extractionResult.questions.length > 0) {
+            console.log(`Haiku extracted ${extractionResult.questions.length} blocker(s) from incomplete step ${step.id}, redirecting to Stage 2`);
+
+            // Build blocker context for Stage 2
+            const blockerSummary = extractionResult.questions
+              .map((q, i) => `${i + 1}. ${q.questionText}`)
+              .join('\n');
+
+            const blockerContext = `Step ${step.id} (${step.title}) encountered the following issue(s) that need to be addressed in the plan:\n\n${blockerSummary}\n\nPlease review and update the plan to address these issues. You may need to:\n1. Add prerequisite steps\n2. Provide more detailed instructions\n3. Break this step into smaller steps\n4. Clarify any ambiguous requirements`;
+
+            // Transition to Stage 2
+            const previousStage = session.currentStage;
+            const updatedSession = await sessionManager.transitionStage(
+              session.projectId, session.featureId, 2
+            );
+            eventBroadcaster?.stageChanged(updatedSession, previousStage);
+            eventBroadcaster?.executionStatus(
+              session.projectId, session.featureId, 'idle', 'stage2_blocker_review', { stage: 2 }
+            );
+
+            // Spawn Stage 2 review with blocker context
+            spawnStage2Review(
+              updatedSession,
+              storage,
+              sessionManager,
+              resultHandler,
+              eventBroadcaster,
+              blockerContext
+            );
+
+            resolve({
+              stepCompleted: false,
+              hasBlocker: true,
+              sessionId: capturedSessionId,
+            });
+            return;
           }
-        );
-
-        // If Haiku found blockers, redirect to Stage 2 with blocker context
-        if (extractionResult.questions && extractionResult.questions.length > 0) {
-          console.log(`Haiku extracted ${extractionResult.questions.length} blocker(s) from incomplete step ${step.id}, redirecting to Stage 2`);
-
-          // Build blocker context for Stage 2
-          const blockerSummary = extractionResult.questions
-            .map((q, i) => `${i + 1}. ${q.questionText}`)
-            .join('\n');
-
-          const blockerContext = `Step ${step.id} (${step.title}) encountered the following issue(s) that need to be addressed in the plan:\n\n${blockerSummary}\n\nPlease review and update the plan to address these issues. You may need to:\n1. Add prerequisite steps\n2. Provide more detailed instructions\n3. Break this step into smaller steps\n4. Clarify any ambiguous requirements`;
-
-          // Transition to Stage 2
-          const previousStage = session.currentStage;
-          const updatedSession = await sessionManager.transitionStage(
-            session.projectId, session.featureId, 2
-          );
-          eventBroadcaster?.stageChanged(updatedSession, previousStage);
-          eventBroadcaster?.executionStatus(
-            session.projectId, session.featureId, 'idle', 'stage2_blocker_review', { stage: 2 }
-          );
-
-          // Spawn Stage 2 review with blocker context
-          spawnStage2Review(
-            updatedSession,
-            storage,
-            sessionManager,
-            resultHandler,
-            eventBroadcaster,
-            blockerContext
-          );
-
-          resolve({
-            stepCompleted: false,
-            hasBlocker: true,
-            sessionId: capturedSessionId,
-          });
-          return;
+        } else {
+          console.log(`Step ${step.id} incomplete with short/empty output (${result.output.length} bytes), likely compaction - auto-retrying for ${session.featureId}`);
         }
 
-        // No blocker found - retry the step with additional context
+        // Always auto-retry if step not completed (regardless of output length)
+        // This handles both: (1) no blocker found after Haiku, (2) empty output from compaction
         console.log(`Step ${step.id} incomplete with no extractable blocker, retrying with context for ${session.featureId}`);
 
         // Track retry count
