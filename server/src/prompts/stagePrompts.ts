@@ -930,10 +930,10 @@ Use the Task tool to spawn review agents in parallel:
    - Run: grep for type definitions in changed files
    - Output: List of contract mismatches with expected vs actual
 
-5. **CI Agent**: Get current CI status.
-   - Run: gh pr checks ${prInfo.url.split('/').pop()}
-   - Report: Each check name with pass/fail/pending status
-   - Output: Summary with overall status (all passing / X failing / Y pending)
+5. **CI Agent**: Wait for CI to complete and report status.
+   - Run: gh pr checks ${prInfo.url.split('/').pop()} --watch
+   - Wait: Until all checks complete (pass or fail)
+   - Output: Final status of each check (all passing / X failing)
 
 Wait for ALL agents to complete before proceeding.
 
