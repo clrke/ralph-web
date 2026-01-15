@@ -1929,7 +1929,7 @@ export function createApp(
       if (!parseResult.success) {
         return res.status(400).json({
           error: 'Invalid preferences',
-          details: parseResult.error.errors
+          details: parseResult.error.issues
         });
       }
 
