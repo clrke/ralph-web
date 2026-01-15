@@ -152,6 +152,13 @@ describe('NewSession', () => {
       expect(screen.getByLabelText(/base branch/i)).toBeInTheDocument();
     });
 
+    it('should have autoComplete="off" on Feature Title input', () => {
+      renderWithRouter(<NewSession />);
+
+      const featureTitleInput = screen.getByLabelText(/feature title/i);
+      expect(featureTitleInput).toHaveAttribute('autocomplete', 'off');
+    });
+
     it('should have aria-label on icon buttons', async () => {
       const user = userEvent.setup();
       renderWithRouter(<NewSession />);
