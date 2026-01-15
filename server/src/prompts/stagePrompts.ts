@@ -61,7 +61,16 @@ ${acceptanceCriteriaSection}${affectedFilesSection}${technicalNotesSection}
 
 ## Instructions
 
-### Phase 1: Codebase Exploration (MANDATORY - Do this FIRST)
+### Phase 0: Git Setup (MANDATORY - Do this IMMEDIATELY)
+Before exploring the codebase, you MUST set up the git branch to ensure you're working with the latest code:
+
+1. **Checkout base branch**: \`git checkout ${session.baseBranch}\`
+2. **Pull latest changes**: \`git pull origin ${session.baseBranch}\`
+3. **Create feature branch**: \`git checkout -b ${session.featureBranch}\`
+
+Run these commands NOW before proceeding to Phase 1. This ensures your codebase exploration reads the most up-to-date code.
+
+### Phase 1: Codebase Exploration (MANDATORY - Do this AFTER Phase 0)
 You MUST explore the codebase before asking any questions. Use the Task tool to spawn parallel exploration agents:
 
 1. **Architecture Agent**: Quick overview of project structure.
@@ -128,15 +137,15 @@ isApproved: false
 \`\`\`
 
 ### 2. Plan Steps (Required)
-**IMPORTANT: The first step MUST be creating and checking out the feature branch:**
+**NOTE:** The feature branch (${session.featureBranch}) was already created in Phase 0. Start your plan with the first implementation step:
 \`\`\`
-[PLAN_STEP id="step-1" parent="null" status="pending" complexity="low"]
-Create feature branch
-Pull latest from ${session.baseBranch} and create feature branch: git checkout ${session.baseBranch} && git pull origin ${session.baseBranch} && git checkout -b ${session.featureBranch}
+[PLAN_STEP id="step-1" parent="null" status="pending" complexity="low|medium|high"]
+First implementation step title
+Description of what this step accomplishes. Must be at least 50 characters with concrete implementation details.
 [/PLAN_STEP]
 \`\`\`
 
-Then add implementation steps with complexity ratings:
+Add implementation steps with complexity ratings:
 \`\`\`
 [PLAN_STEP id="step-2" parent="step-1" status="pending" complexity="medium"]
 Step title here
@@ -168,9 +177,9 @@ Framework: vitest|jest|other
 Required Types: unit, integration
 
 Step Coverage:
-- step-1: none (git operation only)
-- step-2: unit (required)
-- step-3: unit, integration (required)
+- step-1: unit (required)
+- step-2: unit, integration (required)
+- step-3: unit (required)
 [/PLAN_TEST_COVERAGE]
 \`\`\`
 

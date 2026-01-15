@@ -98,6 +98,23 @@ describe('Stage Prompt Builders', () => {
       expect(prompt).toContain('MANDATORY');
     });
 
+    it('should include Phase 0 git setup before codebase exploration', () => {
+      const prompt = buildStage1Prompt(mockSession);
+
+      // Phase 0 should exist and be marked as MANDATORY
+      expect(prompt).toContain('### Phase 0: Git Setup (MANDATORY - Do this IMMEDIATELY)');
+
+      // Should include git commands with the session's branch settings
+      expect(prompt).toContain('git checkout main');
+      expect(prompt).toContain('git pull origin main');
+      expect(prompt).toContain('git checkout -b feature/add-auth');
+
+      // Phase 0 should come before Phase 1
+      const phase0Index = prompt.indexOf('Phase 0: Git Setup');
+      const phase1Index = prompt.indexOf('Phase 1: Codebase Exploration');
+      expect(phase0Index).toBeLessThan(phase1Index);
+    });
+
     it('should handle session with no affected files', () => {
       const sessionNoFiles = { ...mockSession, affectedFiles: [] };
       const prompt = buildStage1Prompt(sessionNoFiles);
@@ -125,7 +142,7 @@ describe('Stage Prompt Builders', () => {
       it('should include PLAN_STEP marker with complexity attribute', () => {
         const prompt = buildStage1Prompt(mockSession);
 
-        expect(prompt).toContain('[PLAN_STEP id="step-1" parent="null" status="pending" complexity="low"]');
+        expect(prompt).toContain('[PLAN_STEP id="step-1" parent="null" status="pending" complexity="low|medium|high"]');
         expect(prompt).toContain('[PLAN_STEP id="step-2" parent="step-1" status="pending" complexity="medium"]');
         expect(prompt).toContain('[/PLAN_STEP]');
       });
