@@ -19,6 +19,7 @@ import type {
   Question,
   ComposablePlan,
   PlanValidationStatus,
+  UserPreferences,
 } from '@claude-code-web/shared';
 import { ComplexityBadge } from '../components/PlanEditor/PlanNode';
 import { StageStatusBadge } from '../components/StageStatusBadge';
@@ -180,6 +181,65 @@ function RetryButton({
         </>
       )}
     </button>
+  );
+}
+
+/**
+ * Preference labels for display
+ */
+const PREFERENCE_LABELS: Record<keyof UserPreferences, string> = {
+  riskComfort: 'Risk',
+  speedVsQuality: 'Speed/Quality',
+  scopeFlexibility: 'Scope',
+  detailLevel: 'Detail',
+  autonomyLevel: 'Autonomy',
+};
+
+/**
+ * Badge-style display for a single preference value
+ */
+function PreferenceBadge({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-gray-700 text-xs">
+      <span className="text-gray-400">{label}:</span>
+      <span className="text-gray-200 capitalize">{value}</span>
+    </span>
+  );
+}
+
+/**
+ * Collapsible read-only preferences display
+ */
+function PreferencesDisplay({ preferences }: { preferences: UserPreferences }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-300 transition-colors"
+        aria-expanded={expanded}
+      >
+        <svg
+          className={`w-4 h-4 transition-transform ${expanded ? 'rotate-90' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+        Preferences
+      </button>
+      {expanded && (
+        <div className="mt-2 flex flex-wrap gap-2" data-testid="preferences-badges">
+          {(Object.entries(preferences) as [keyof UserPreferences, string][]).map(([key, value]) => (
+            <PreferenceBadge key={key} label={PREFERENCE_LABELS[key]} value={value} />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -432,6 +492,9 @@ export default function SessionView() {
             </svg>
             View Pull Request
           </a>
+        )}
+        {session.preferences && (
+          <PreferencesDisplay preferences={session.preferences} />
         )}
       </header>
 

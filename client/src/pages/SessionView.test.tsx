@@ -3,7 +3,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import SessionView from './SessionView';
 import { useSessionStore } from '../stores/sessionStore';
-import type { Session, Plan, PlanStep } from '@claude-code-web/shared';
+import type { Session, Plan, PlanStep, UserPreferences } from '@claude-code-web/shared';
+import userEvent from '@testing-library/user-event';
 
 // Mock socket service
 vi.mock('../services/socket', () => ({
@@ -745,6 +746,135 @@ describe('SessionView', () => {
       await waitFor(() => {
         // Without subState, it should show the default message for stage 1
         expect(screen.getByText(/Claude is analyzing your project/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('preferences display', () => {
+    const mockPreferences: UserPreferences = {
+      riskComfort: 'high',
+      speedVsQuality: 'quality',
+      scopeFlexibility: 'open',
+      detailLevel: 'detailed',
+      autonomyLevel: 'autonomous',
+    };
+
+    it('does not show preferences button when session has no preferences', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ preferences: undefined }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('heading', { name: /Test Feature/i })).toBeInTheDocument();
+      });
+
+      expect(screen.queryByRole('button', { name: /preferences/i })).not.toBeInTheDocument();
+    });
+
+    it('shows collapsed preferences button when session has preferences', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ preferences: mockPreferences }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /preferences/i })).toBeInTheDocument();
+      });
+
+      // Badges should not be visible when collapsed
+      expect(screen.queryByTestId('preferences-badges')).not.toBeInTheDocument();
+    });
+
+    it('expands preferences to show badges when clicked', async () => {
+      const user = userEvent.setup();
+
+      useSessionStore.setState({
+        session: createMockSession({ preferences: mockPreferences }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /preferences/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /preferences/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('preferences-badges')).toBeInTheDocument();
+      });
+
+      // Check that all 5 badges are rendered by counting badges in the container
+      const badgesContainer = screen.getByTestId('preferences-badges');
+      const badges = badgesContainer.querySelectorAll('span.inline-flex');
+      expect(badges.length).toBe(5);
+    });
+
+    it('shows correct preference labels', async () => {
+      const user = userEvent.setup();
+
+      useSessionStore.setState({
+        session: createMockSession({ preferences: mockPreferences }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /preferences/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /preferences/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Risk:/i)).toBeInTheDocument();
+        expect(screen.getByText(/Speed\/Quality:/i)).toBeInTheDocument();
+        expect(screen.getByText(/Scope:/i)).toBeInTheDocument();
+        expect(screen.getByText(/Detail:/i)).toBeInTheDocument();
+        expect(screen.getByText(/Autonomy:/i)).toBeInTheDocument();
+      });
+    });
+
+    it('collapses preferences when clicked again', async () => {
+      const user = userEvent.setup();
+
+      useSessionStore.setState({
+        session: createMockSession({ preferences: mockPreferences }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /preferences/i })).toBeInTheDocument();
+      });
+
+      // Expand
+      await user.click(screen.getByRole('button', { name: /preferences/i }));
+      await waitFor(() => {
+        expect(screen.getByTestId('preferences-badges')).toBeInTheDocument();
+      });
+
+      // Collapse
+      await user.click(screen.getByRole('button', { name: /preferences/i }));
+      await waitFor(() => {
+        expect(screen.queryByTestId('preferences-badges')).not.toBeInTheDocument();
       });
     });
   });
