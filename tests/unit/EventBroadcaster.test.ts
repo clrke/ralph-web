@@ -209,6 +209,206 @@ describe('EventBroadcaster', () => {
         action: 'stage1_error',
       }));
     });
+
+    it('should include stage when provided in options', () => {
+      broadcaster.executionStatus('project-abc', 'add-auth', 'running', 'stage2_started', { stage: 2 });
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('execution.status', expect.objectContaining({
+        status: 'running',
+        action: 'stage2_started',
+        stage: 2,
+      }));
+    });
+
+    it('should include subState when provided in options', () => {
+      broadcaster.executionStatus('project-abc', 'add-auth', 'running', 'stage1_started', {
+        stage: 1,
+        subState: 'spawning_agent',
+      });
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('execution.status', expect.objectContaining({
+        status: 'running',
+        action: 'stage1_started',
+        stage: 1,
+        subState: 'spawning_agent',
+      }));
+    });
+
+    it('should include stepId when provided in options', () => {
+      broadcaster.executionStatus('project-abc', 'add-auth', 'running', 'stage3_progress', {
+        stage: 3,
+        stepId: 'step-5',
+      });
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('execution.status', expect.objectContaining({
+        status: 'running',
+        action: 'stage3_progress',
+        stage: 3,
+        stepId: 'step-5',
+      }));
+    });
+
+    it('should include progress when provided in options', () => {
+      broadcaster.executionStatus('project-abc', 'add-auth', 'running', 'stage3_progress', {
+        stage: 3,
+        stepId: 'step-3',
+        progress: { current: 3, total: 10 },
+      });
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('execution.status', expect.objectContaining({
+        status: 'running',
+        action: 'stage3_progress',
+        stage: 3,
+        stepId: 'step-3',
+        progress: { current: 3, total: 10 },
+      }));
+    });
+
+    it('should include isIntermediate when provided in options', () => {
+      broadcaster.executionStatus('project-abc', 'add-auth', 'running', 'stage1_started', {
+        stage: 1,
+        isIntermediate: true,
+      });
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('execution.status', expect.objectContaining({
+        status: 'running',
+        action: 'stage1_started',
+        stage: 1,
+        isIntermediate: true,
+      }));
+    });
+
+    it('should include all options together', () => {
+      broadcaster.executionStatus('project-abc', 'add-auth', 'running', 'stage3_progress', {
+        stage: 3,
+        subState: 'validating_output',
+        stepId: 'step-7',
+        progress: { current: 7, total: 12 },
+        isIntermediate: false,
+      });
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('execution.status', expect.objectContaining({
+        status: 'running',
+        action: 'stage3_progress',
+        stage: 3,
+        subState: 'validating_output',
+        stepId: 'step-7',
+        progress: { current: 7, total: 12 },
+        isIntermediate: false,
+      }));
+    });
+
+    it('should not include undefined options in event', () => {
+      broadcaster.executionStatus('project-abc', 'add-auth', 'idle', 'stage2_complete', { stage: 2 });
+
+      const emitCall = mockRoom.emit.mock.calls.find(call => call[0] === 'execution.status');
+      expect(emitCall).toBeDefined();
+      const eventData = emitCall![1];
+
+      expect(eventData.stage).toBe(2);
+      expect(eventData).not.toHaveProperty('subState');
+      expect(eventData).not.toHaveProperty('stepId');
+      expect(eventData).not.toHaveProperty('progress');
+      expect(eventData).not.toHaveProperty('isIntermediate');
+    });
+
+    it('should work without options for backward compatibility', () => {
+      broadcaster.executionStatus('project-abc', 'add-auth', 'running', 'legacy_action');
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('execution.status', expect.objectContaining({
+        status: 'running',
+        action: 'legacy_action',
+        timestamp: expect.any(String),
+      }));
+    });
+
+    describe('granular sub-states', () => {
+      it('should emit spawning_agent sub-state', () => {
+        broadcaster.executionStatus('project-abc', 'add-auth', 'running', 'stage1_started', {
+          stage: 1,
+          subState: 'spawning_agent',
+        });
+
+        expect(mockRoom.emit).toHaveBeenCalledWith('execution.status', expect.objectContaining({
+          status: 'running',
+          action: 'stage1_started',
+          stage: 1,
+          subState: 'spawning_agent',
+        }));
+      });
+
+      it('should emit processing_output sub-state', () => {
+        broadcaster.executionStatus('project-abc', 'add-auth', 'running', 'stage2_started', {
+          stage: 2,
+          subState: 'processing_output',
+        });
+
+        expect(mockRoom.emit).toHaveBeenCalledWith('execution.status', expect.objectContaining({
+          status: 'running',
+          action: 'stage2_started',
+          stage: 2,
+          subState: 'processing_output',
+        }));
+      });
+
+      it('should emit parsing_response sub-state', () => {
+        broadcaster.executionStatus('project-abc', 'add-auth', 'running', 'stage3_started', {
+          stage: 3,
+          subState: 'parsing_response',
+        });
+
+        expect(mockRoom.emit).toHaveBeenCalledWith('execution.status', expect.objectContaining({
+          status: 'running',
+          action: 'stage3_started',
+          stage: 3,
+          subState: 'parsing_response',
+        }));
+      });
+
+      it('should emit validating_output sub-state', () => {
+        broadcaster.executionStatus('project-abc', 'add-auth', 'running', 'stage4_started', {
+          stage: 4,
+          subState: 'validating_output',
+        });
+
+        expect(mockRoom.emit).toHaveBeenCalledWith('execution.status', expect.objectContaining({
+          status: 'running',
+          action: 'stage4_started',
+          stage: 4,
+          subState: 'validating_output',
+        }));
+      });
+
+      it('should emit saving_results sub-state', () => {
+        broadcaster.executionStatus('project-abc', 'add-auth', 'running', 'stage5_started', {
+          stage: 5,
+          subState: 'saving_results',
+        });
+
+        expect(mockRoom.emit).toHaveBeenCalledWith('execution.status', expect.objectContaining({
+          status: 'running',
+          action: 'stage5_started',
+          stage: 5,
+          subState: 'saving_results',
+        }));
+      });
+
+      it('should emit sub-state with stepId for step execution', () => {
+        broadcaster.executionStatus('project-abc', 'add-auth', 'running', 'stage3_progress', {
+          stage: 3,
+          stepId: 'step-3',
+          subState: 'processing_output',
+        });
+
+        expect(mockRoom.emit).toHaveBeenCalledWith('execution.status', expect.objectContaining({
+          status: 'running',
+          action: 'stage3_progress',
+          stage: 3,
+          stepId: 'step-3',
+          subState: 'processing_output',
+        }));
+      });
+    });
   });
 
   describe('claudeOutput', () => {

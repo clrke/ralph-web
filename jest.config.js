@@ -2,10 +2,11 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  roots: ['<rootDir>/tests', '<rootDir>/server/src'],
+  roots: ['<rootDir>/tests', '<rootDir>/server/src', '<rootDir>/shared'],
   testMatch: ['**/*.test.ts'],
   moduleNameMapper: {
     '^@claude-code-web/shared$': '<rootDir>/shared/types',
+    '^@claude-code-web/shared/utils$': '<rootDir>/shared/utils',
   },
   collectCoverageFrom: [
     'server/src/**/*.ts',

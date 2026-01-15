@@ -4,7 +4,7 @@
     "composite": true,
     "declaration": true,
     "outDir": "./dist",
-    "rootDir": "./types"
+    "rootDir": "."
   },
-  "include": ["types/**/*"]
+  "include": ["index.ts", "types/**/*", "utils/**/*"]
 }

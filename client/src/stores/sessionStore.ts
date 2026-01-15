@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Session, Plan, Question, PlanStepStatus, ImplementationProgressEvent, ValidationAction } from '@claude-code-web/shared';
+import type { Session, Plan, Question, PlanStepStatus, ImplementationProgressEvent, ValidationAction, ExecutionSubState, StepProgress } from '@claude-code-web/shared';
 
 export type { ValidationAction } from '@claude-code-web/shared';
 
@@ -40,6 +40,14 @@ export interface ExecutionStatus {
   status: 'running' | 'idle' | 'error';
   action: string;
   timestamp: string;
+  /** Current stage number (1-6) */
+  stage?: number;
+  /** Granular sub-state within the current action */
+  subState?: ExecutionSubState;
+  /** Current step ID for Stage 3 context */
+  stepId?: string;
+  /** Progress tracking for multi-step operations */
+  progress?: StepProgress;
 }
 
 interface SessionState {

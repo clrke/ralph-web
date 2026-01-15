@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useSessionStore } from '../stores/sessionStore';
+import { useSessionStore, type ExecutionStatus } from '../stores/sessionStore';
 import { TimelineView } from '../components/PlanEditor';
 import { ConversationPanel } from '../components/ConversationPanel';
 import { connectToSession, disconnectFromSession, getSocket } from '../services/socket';
@@ -21,6 +21,59 @@ import type {
   PlanValidationStatus,
 } from '@claude-code-web/shared';
 import { ComplexityBadge } from '../components/PlanEditor/PlanNode';
+import { StageStatusBadge } from '../components/StageStatusBadge';
+import type { ExecutionSubState } from '@claude-code-web/shared';
+
+/**
+ * Human-readable loading messages for sub-state values by stage.
+ */
+const SUBSTATE_LOADING_MESSAGES: Partial<Record<ExecutionSubState, Record<number, string>>> = {
+  spawning_agent: {
+    1: 'Starting Claude agent for codebase analysis...',
+    2: 'Starting Claude agent for plan review...',
+    3: 'Starting Claude agent for implementation...',
+    4: 'Starting Claude agent for PR creation...',
+    5: 'Starting Claude agent for PR review...',
+  },
+  processing_output: {
+    1: 'Analyzing project structure and gathering context...',
+    2: 'Analyzing plan and generating feedback...',
+    3: 'Implementing changes...',
+    4: 'Generating PR description and summary...',
+    5: 'Analyzing CI results and PR feedback...',
+  },
+  parsing_response: {
+    1: 'Processing discovery findings...',
+    2: 'Processing review findings...',
+    3: 'Processing implementation results...',
+    4: 'Processing PR details...',
+    5: 'Processing review comments...',
+  },
+  validating_output: {
+    1: 'Validating analysis results...',
+    2: 'Validating plan structure and completeness...',
+    3: 'Validating implementation changes...',
+    4: 'Verifying PR was created successfully...',
+    5: 'Validating review completeness...',
+  },
+  saving_results: {
+    1: 'Saving discovery findings...',
+    2: 'Saving review results...',
+    3: 'Saving implementation progress...',
+    4: 'Saving PR information...',
+    5: 'Saving review results...',
+  },
+};
+
+/**
+ * Get a context-aware loading message based on sub-state and stage.
+ */
+function getLoadingMessage(subState: ExecutionSubState | undefined, stage: number, defaultMessage: string): string {
+  if (!subState) return defaultMessage;
+  const stageMessages = SUBSTATE_LOADING_MESSAGES[subState];
+  if (!stageMessages) return defaultMessage;
+  return stageMessages[stage] || defaultMessage;
+}
 
 const STAGE_LABELS: Record<number, string> = {
   1: 'Feature Discovery',
@@ -29,15 +82,6 @@ const STAGE_LABELS: Record<number, string> = {
   4: 'PR Creation',
   5: 'PR Review',
   6: 'Final Approval',
-};
-
-const STAGE_COLORS: Record<number, string> = {
-  1: 'bg-stage-discovery',
-  2: 'bg-stage-planning',
-  3: 'bg-stage-implementation',
-  4: 'bg-stage-pr',
-  5: 'bg-stage-review',
-  6: 'bg-emerald-600',
 };
 
 export default function SessionView() {
@@ -67,6 +111,8 @@ export default function SessionView() {
 
   // Socket.IO event handlers
   const handleExecutionStatus = useCallback((data: ExecutionStatusEvent) => {
+    // Skip intermediate updates to prevent UI flickering from rapid updates
+    if (data.isIntermediate) return;
     setExecutionStatus(data);
   }, [setExecutionStatus]);
 
@@ -213,9 +259,12 @@ export default function SessionView() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
           </Link>
-          <span className={`px-3 py-1 rounded-full text-sm ${STAGE_COLORS[currentStage] || 'bg-gray-600'}`}>
-            Stage {currentStage}: {STAGE_LABELS[currentStage]}
-          </span>
+          <StageStatusBadge
+            stage={currentStage}
+            action={executionStatus?.action}
+            subState={executionStatus?.subState}
+            status={executionStatus?.status ?? 'idle'}
+          />
         </div>
         <h1 className="text-3xl font-bold">{session.title}</h1>
         <p className="text-gray-400 mt-2">{session.featureDescription}</p>
@@ -244,27 +293,27 @@ export default function SessionView() {
 
           {/* Stage 1: Discovery - show loading state if no questions */}
           {currentStage === 1 && unansweredQuestions.length === 0 && (
-            <DiscoveryLoadingSection />
+            <DiscoveryLoadingSection executionStatus={executionStatus} />
           )}
 
           {/* Stage 2: Plan Review */}
           {currentStage === 2 && plan && (
-            <PlanReviewSection plan={plan} isRunning={executionStatus?.status === 'running'} />
+            <PlanReviewSection plan={plan} isRunning={executionStatus?.status === 'running'} executionStatus={executionStatus} />
           )}
 
           {/* Stage 3: Implementation Progress */}
           {currentStage === 3 && (
-            <ImplementationSection plan={plan} />
+            <ImplementationSection plan={plan} executionStatus={executionStatus} />
           )}
 
           {/* Stage 4: PR Creation */}
           {currentStage === 4 && (
-            <PRCreationSection plan={plan} isRunning={executionStatus?.status === 'running'} />
+            <PRCreationSection plan={plan} isRunning={executionStatus?.status === 'running'} executionStatus={executionStatus} />
           )}
 
           {/* Stage 5: PR Review */}
           {currentStage === 5 && (
-            <PRReviewSection plan={plan} isRunning={executionStatus?.status === 'running'} projectId={projectId} featureId={featureId} />
+            <PRReviewSection plan={plan} isRunning={executionStatus?.status === 'running'} projectId={projectId} featureId={featureId} executionStatus={executionStatus} />
           )}
 
           {/* Stage 6: Final Approval */}
@@ -400,7 +449,14 @@ export default function SessionView() {
   );
 }
 
-function DiscoveryLoadingSection() {
+function DiscoveryLoadingSection({ executionStatus }: { executionStatus?: ExecutionStatus | null }) {
+  // Get context-aware loading message based on sub-state
+  const loadingMessage = getLoadingMessage(
+    executionStatus?.subState,
+    1,
+    'Claude is analyzing your project...'
+  );
+
   return (
     <div className="bg-gray-800 rounded-lg p-6">
       <h2 className="text-xl font-semibold mb-4">Feature Discovery</h2>
@@ -410,7 +466,7 @@ function DiscoveryLoadingSection() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
           </svg>
         </div>
-        <p>Claude is analyzing your project...</p>
+        <p>{loadingMessage}</p>
         <p className="text-sm mt-2">Questions will appear here as they're generated.</p>
       </div>
     </div>
@@ -644,10 +700,17 @@ function QuestionCard({
   );
 }
 
-function PlanReviewSection({ plan, isRunning }: { plan: Plan; isRunning?: boolean }) {
+function PlanReviewSection({ plan, isRunning, executionStatus }: { plan: Plan; isRunning?: boolean; executionStatus?: ExecutionStatus | null }) {
   const { approvePlan, requestPlanChanges } = useSessionStore();
   const [viewMode, setViewMode] = useState<'list' | 'timeline'>('timeline');
   const [selectedStep, setSelectedStep] = useState<PlanStep | null>(null);
+
+  // Get context-aware loading message
+  const loadingMessage = getLoadingMessage(
+    executionStatus?.subState,
+    2,
+    'Claude is reviewing the implementation plan.'
+  );
 
   // While plan review is running, show a loading state instead of the plan
   if (isRunning) {
@@ -658,7 +721,7 @@ function PlanReviewSection({ plan, isRunning }: { plan: Plan; isRunning?: boolea
           <h2 className="text-xl font-semibold">Reviewing Plan...</h2>
         </div>
         <p className="text-gray-400">
-          Claude is reviewing the implementation plan. The plan will be shown once the review is complete.
+          {loadingMessage}
         </p>
         <div className="mt-4 p-3 bg-gray-700/50 rounded-lg">
           <p className="text-sm text-gray-400">
@@ -766,8 +829,10 @@ function PlanReviewSection({ plan, isRunning }: { plan: Plan; isRunning?: boolea
 
 function ImplementationSection({
   plan,
+  executionStatus,
 }: {
   plan: Plan | null;
+  executionStatus: ExecutionStatus | null;
 }) {
   const { implementationProgress } = useSessionStore();
   const [viewMode, setViewMode] = useState<'list' | 'timeline'>('timeline');
@@ -779,6 +844,16 @@ function ImplementationSection({
       </div>
     );
   }
+
+  // Find the currently executing step based on executionStatus.stepId or implementationProgress.stepId
+  const activeStepId = executionStatus?.stepId || implementationProgress?.stepId;
+  const activeStepIndex = activeStepId
+    ? plan.steps.findIndex(s => s.id === activeStepId)
+    : -1;
+  const activeStep = activeStepIndex >= 0 ? plan.steps[activeStepIndex] : null;
+  const totalSteps = plan.steps.length;
+  const retryCount = implementationProgress?.retryCount ?? 0;
+  const isRunning = executionStatus?.status === 'running';
 
   return (
     <div className="space-y-6">
@@ -805,6 +880,46 @@ function ImplementationSection({
           </div>
         </div>
 
+        {/* Step Progress Indicator - shown when a step is active */}
+        {activeStep && isRunning && (
+          <div className="mb-4 p-3 bg-blue-900/30 border border-blue-500/30 rounded-lg">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                <div>
+                  <span className="text-blue-300 font-medium">
+                    Step {activeStepIndex + 1} of {totalSteps}:
+                  </span>
+                  <span className="ml-2 text-gray-200">{activeStep.title}</span>
+                </div>
+              </div>
+              {retryCount > 0 && (
+                <span className="text-xs text-yellow-400 bg-yellow-900/30 px-2 py-1 rounded flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Retry {retryCount}/3
+                </span>
+              )}
+            </div>
+            {/* Progress bar within step if available */}
+            {executionStatus?.progress && (
+              <div className="mt-2">
+                <div className="flex justify-between text-xs text-gray-400 mb-1">
+                  <span>Sub-task progress</span>
+                  <span>{executionStatus.progress.current} / {executionStatus.progress.total}</span>
+                </div>
+                <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-500 transition-all duration-300"
+                    style={{ width: `${(executionStatus.progress.current / executionStatus.progress.total) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {viewMode === 'timeline' ? (
           <TimelineView
             plan={plan}
@@ -815,14 +930,22 @@ function ImplementationSection({
             } : null}
           />
         ) : (
-          <ImplementationListView plan={plan} />
+          <ImplementationListView plan={plan} activeStepId={activeStepId} retryCount={retryCount} />
         )}
       </div>
     </div>
   );
 }
 
-function ImplementationListView({ plan }: { plan: Plan }) {
+function ImplementationListView({
+  plan,
+  activeStepId,
+  retryCount = 0,
+}: {
+  plan: Plan;
+  activeStepId?: string;
+  retryCount?: number;
+}) {
   const completedSteps = plan.steps.filter(s => s.status === 'completed').length;
   const totalSteps = plan.steps.length;
   const progress = totalSteps > 0 ? (completedSteps / totalSteps) * 100 : 0;
@@ -845,54 +968,74 @@ function ImplementationListView({ plan }: { plan: Plan }) {
 
       {/* Steps */}
       <div className="space-y-3">
-        {plan.steps.map((step, index) => (
-          <div
-            key={step.id}
-            className={`flex items-center gap-3 p-3 rounded-lg ${
-              step.status === 'completed'
-                ? 'bg-green-900/20'
-                : step.status === 'in_progress'
-                ? 'bg-blue-900/20'
-                : step.status === 'blocked' || step.status === 'needs_review'
-                ? 'bg-yellow-900/20'
-                : 'bg-gray-700/50'
-            }`}
-          >
-            <div className="flex-shrink-0">
-              {step.status === 'completed' ? (
-                <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-              ) : step.status === 'in_progress' ? (
-                <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-              ) : step.status === 'blocked' || step.status === 'needs_review' ? (
-                <svg className="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-              ) : (
-                <div className="w-5 h-5 rounded-full border-2 border-gray-500" />
-              )}
+        {plan.steps.map((step, index) => {
+          const isActiveStep = step.id === activeStepId;
+          return (
+            <div
+              key={step.id}
+              className={`flex items-center gap-3 p-3 rounded-lg transition-all ${
+                isActiveStep
+                  ? 'bg-blue-900/40 ring-2 ring-blue-500/50'
+                  : step.status === 'completed'
+                  ? 'bg-green-900/20'
+                  : step.status === 'in_progress'
+                  ? 'bg-blue-900/20'
+                  : step.status === 'blocked' || step.status === 'needs_review'
+                  ? 'bg-yellow-900/20'
+                  : 'bg-gray-700/50'
+              }`}
+            >
+              <div className="flex-shrink-0">
+                {step.status === 'completed' ? (
+                  <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : step.status === 'in_progress' || isActiveStep ? (
+                  <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                ) : step.status === 'blocked' || step.status === 'needs_review' ? (
+                  <svg className="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                ) : (
+                  <div className="w-5 h-5 rounded-full border-2 border-gray-500" />
+                )}
+              </div>
+              <div className="flex-1 flex items-center justify-between">
+                <div>
+                  <span className={step.status === 'completed' ? 'text-gray-400' : ''}>
+                    {index + 1}. {step.title}
+                  </span>
+                  {(step.status === 'blocked' || step.status === 'needs_review') && (
+                    <span className="ml-2 text-xs text-yellow-400">
+                      {step.status === 'blocked' ? 'Waiting for input' : 'Needs review'}
+                    </span>
+                  )}
+                </div>
+                {/* Show retry count for the active step */}
+                {isActiveStep && retryCount > 0 && (
+                  <span className="text-xs text-yellow-400 bg-yellow-900/30 px-2 py-0.5 rounded">
+                    Retry {retryCount}/3
+                  </span>
+                )}
+              </div>
             </div>
-            <div className="flex-1">
-              <span className={step.status === 'completed' ? 'text-gray-400' : ''}>
-                {index + 1}. {step.title}
-              </span>
-              {(step.status === 'blocked' || step.status === 'needs_review') && (
-                <span className="ml-2 text-xs text-yellow-400">
-                  {step.status === 'blocked' ? 'Waiting for input' : 'Needs review'}
-                </span>
-              )}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </>
   );
 }
 
-function PRCreationSection({ plan, isRunning }: { plan: Plan | null; isRunning?: boolean }) {
+function PRCreationSection({ plan, isRunning, executionStatus }: { plan: Plan | null; isRunning?: boolean; executionStatus?: ExecutionStatus | null }) {
   const completedSteps = plan?.steps.filter(s => s.status === 'completed').length ?? 0;
   const totalSteps = plan?.steps.length ?? 0;
+
+  // Get context-aware loading message
+  const loadingMessage = getLoadingMessage(
+    executionStatus?.subState,
+    4,
+    'Claude is preparing your changes for review...'
+  );
 
   return (
     <div className="space-y-6">
@@ -919,7 +1062,7 @@ function PRCreationSection({ plan, isRunning }: { plan: Plan | null; isRunning?:
               <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
               <div>
                 <p className="font-medium">Creating Pull Request</p>
-                <p className="text-gray-400 text-sm">Claude is preparing your changes for review...</p>
+                <p className="text-gray-400 text-sm">{loadingMessage}</p>
               </div>
             </>
           ) : (
@@ -939,7 +1082,7 @@ function PRCreationSection({ plan, isRunning }: { plan: Plan | null; isRunning?:
   );
 }
 
-function PRReviewSection({ plan, isRunning, projectId, featureId }: { plan: Plan | null; isRunning?: boolean; projectId?: string; featureId?: string }) {
+function PRReviewSection({ plan, isRunning, projectId, featureId, executionStatus }: { plan: Plan | null; isRunning?: boolean; projectId?: string; featureId?: string; executionStatus?: ExecutionStatus | null }) {
   const completedSteps = plan?.steps.filter(s => s.status === 'completed').length ?? 0;
   const totalSteps = plan?.steps.length ?? 0;
   const needsReviewSteps = plan?.steps.filter(s => s.status === 'needs_review').length ?? 0;
@@ -947,6 +1090,13 @@ function PRReviewSection({ plan, isRunning, projectId, featureId }: { plan: Plan
   const [showReReviewForm, setShowReReviewForm] = useState(false);
   const [remarks, setRemarks] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Get context-aware loading message
+  const loadingMessage = getLoadingMessage(
+    executionStatus?.subState,
+    5,
+    'Claude is checking CI status and reviewing the PR...'
+  );
 
   const handleRequestReReview = async () => {
     if (!projectId || !featureId) return;
@@ -998,7 +1148,7 @@ function PRReviewSection({ plan, isRunning, projectId, featureId }: { plan: Plan
               <div className="w-8 h-8 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
               <div>
                 <p className="font-medium">Reviewing Changes</p>
-                <p className="text-gray-400 text-sm">Claude is checking CI status and reviewing the PR...</p>
+                <p className="text-gray-400 text-sm">{loadingMessage}</p>
               </div>
             </>
           ) : (

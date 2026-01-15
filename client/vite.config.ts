@@ -7,6 +7,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@shared': path.resolve(__dirname, '../shared/types'),
+      '@shared-utils': path.resolve(__dirname, '../shared/utils'),
     },
   },
   server: {
