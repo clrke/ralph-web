@@ -54,6 +54,8 @@ interface SessionState {
   liveOutput: string;
   isOutputComplete: boolean;
   implementationProgress: ImplementationProgressEvent | null;
+  /** True after submitting answers until Claude starts running */
+  isAwaitingClaudeResponse: boolean;
 
   // UI state
   isLoading: boolean;
@@ -81,6 +83,7 @@ interface SessionState {
   submitAllAnswers: (answers: Array<{ questionId: string; answer: Question['answer'] }>, remarks?: string) => Promise<void>;
   approvePlan: () => Promise<void>;
   requestPlanChanges: (feedback: string) => Promise<void>;
+  retrySession: () => Promise<void>;
 }
 
 const initialState = {
@@ -92,6 +95,7 @@ const initialState = {
   liveOutput: '',
   isOutputComplete: true,
   implementationProgress: null,
+  isAwaitingClaudeResponse: false,
   isLoading: false,
   error: null,
 };
@@ -101,7 +105,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   setSession: (session) => set({ session }),
   setPlan: (plan) => set({ plan }),
-  setQuestions: (questions) => set({ questions }),
+  setQuestions: (questions) => set({ questions, isAwaitingClaudeResponse: false }),
 
   addQuestion: (question) =>
     set((state) => ({
@@ -117,7 +121,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   setConversations: (conversations) => set({ conversations }),
 
-  setExecutionStatus: (executionStatus) => set({ executionStatus }),
+  setExecutionStatus: (executionStatus) => set({
+    executionStatus,
+    // Clear awaiting flag when Claude starts running
+    isAwaitingClaudeResponse: executionStatus.status === 'running' ? false : get().isAwaitingClaudeResponse,
+  }),
 
   appendLiveOutput: (output, isComplete) =>
     set((state) => ({
@@ -241,6 +249,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       answers.forEach(({ questionId, answer }) => {
         get().answerQuestion(questionId, answer);
       });
+
+      // Set flag to indicate we're waiting for Claude to respond
+      set({ isAwaitingClaudeResponse: true });
     } catch (error) {
       set({
         error: error instanceof Error ? error.message : 'Failed to submit answers',
@@ -295,6 +306,33 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       set({
         error: error instanceof Error ? error.message : 'Failed to request changes',
       });
+    }
+  },
+
+  retrySession: async () => {
+    const { session } = get();
+    if (!session) return;
+
+    try {
+      const response = await fetch(
+        `/api/sessions/${session.projectId}/${session.featureId}/retry`,
+        {
+          method: 'POST',
+        }
+      );
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to retry session');
+      }
+
+      // Refresh session data after retry
+      await get().fetchSession(session.projectId, session.featureId);
+    } catch (error) {
+      set({
+        error: error instanceof Error ? error.message : 'Failed to retry session',
+      });
+      throw error;
     }
   },
 }));

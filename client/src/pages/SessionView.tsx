@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useSessionStore } from '../stores/sessionStore';
 import { TimelineView } from '../components/PlanEditor';
@@ -58,12 +58,14 @@ export default function SessionView() {
     appendLiveOutput,
     updateStepStatus,
     setImplementationProgress,
+    retrySession,
   } = useSessionStore();
 
   // Modal state (must be before early returns to maintain hooks order)
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
 
   // Socket.IO event handlers
   const handleExecutionStatus = useCallback((data: ExecutionStatusEvent) => {
@@ -216,6 +218,36 @@ export default function SessionView() {
           <span className={`px-3 py-1 rounded-full text-sm ${STAGE_COLORS[currentStage] || 'bg-gray-600'}`}>
             Stage {currentStage}: {STAGE_LABELS[currentStage]}
           </span>
+          {/* Retry button - show when session appears stuck */}
+          {executionStatus?.status !== 'running' && unansweredQuestions.length === 0 && currentStage < 6 && (
+            <button
+              onClick={async () => {
+                setIsRetrying(true);
+                try {
+                  await retrySession();
+                } finally {
+                  setIsRetrying(false);
+                }
+              }}
+              disabled={isRetrying}
+              className="px-3 py-1 rounded-full text-sm bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 transition-colors flex items-center gap-2"
+              title="Retry current stage if session appears stuck"
+            >
+              {isRetrying ? (
+                <>
+                  <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Retrying...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Retry
+                </>
+              )}
+            </button>
+          )}
         </div>
         <h1 className="text-3xl font-bold">{session.title}</h1>
         <p className="text-gray-400 mt-2">{session.featureDescription}</p>
@@ -518,9 +550,12 @@ function QuestionsSection({ questions, stage }: { questions: Question[]; stage: 
 /**
  * Tooltip component for displaying step details on hover
  */
-function StepTooltip({ step }: { step: PlanStep }) {
+function StepTooltip({ step, leftOffset, arrowOffset }: { step: PlanStep; leftOffset: number; arrowOffset: number }) {
   return (
-    <div className="absolute z-50 w-96 max-w-[90vw] p-4 bg-gray-900 border border-gray-700 rounded-lg shadow-xl text-sm left-0 bottom-full mb-2">
+    <div
+      className="absolute z-50 w-96 max-w-[90vw] p-4 bg-gray-900 border border-gray-700 rounded-lg shadow-xl text-sm bottom-full mb-2"
+      style={{ left: `${leftOffset}px` }}
+    >
       <div className="font-medium text-white mb-2">
         Step {step.orderIndex + 1}: {step.title}
       </div>
@@ -533,19 +568,51 @@ function StepTooltip({ step }: { step: PlanStep }) {
         </div>
       )}
       {/* Arrow pointing down */}
-      <div className="absolute left-4 top-full w-0 h-0 border-l-8 border-r-8 border-t-8 border-transparent border-t-gray-700" />
+      <div
+        className="absolute top-full w-0 h-0 border-l-8 border-r-8 border-t-8 border-transparent border-t-gray-700"
+        style={{ left: `${arrowOffset}px` }}
+      />
     </div>
   );
 }
+
+const TOOLTIP_WIDTH = 384; // w-96 = 24rem = 384px
+const TOOLTIP_PADDING = 16; // padding from viewport edge
 
 /**
  * Highlighted step reference with hover tooltip
  */
 function StepReference({ stepNumber, plan }: { stepNumber: number; plan?: Plan | null }) {
   const [showTooltip, setShowTooltip] = useState(false);
+  const [tooltipOffset, setTooltipOffset] = useState({ left: 0, arrow: 16 });
+  const spanRef = useRef<HTMLSpanElement>(null);
 
   // Find the step by orderIndex (0-based), stepNumber in text is 1-based
   const step = plan?.steps.find((s) => s.orderIndex === stepNumber - 1);
+
+  const handleMouseEnter = useCallback(() => {
+    if (spanRef.current) {
+      const rect = spanRef.current.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+
+      // Default: tooltip starts at left edge of the step reference
+      let leftOffset = 0;
+      let arrowOffset = 16; // default arrow position
+
+      // Check if tooltip would overflow right edge
+      const tooltipRight = rect.left + TOOLTIP_WIDTH;
+      if (tooltipRight > viewportWidth - TOOLTIP_PADDING) {
+        // Shift tooltip left to fit within viewport
+        const overflow = tooltipRight - (viewportWidth - TOOLTIP_PADDING);
+        leftOffset = -overflow;
+        // Adjust arrow to still point at the step reference
+        arrowOffset = 16 + overflow;
+      }
+
+      setTooltipOffset({ left: leftOffset, arrow: arrowOffset });
+    }
+    setShowTooltip(true);
+  }, []);
 
   if (!step) {
     // If no step found, just render the text normally
@@ -554,14 +621,15 @@ function StepReference({ stepNumber, plan }: { stepNumber: number; plan?: Plan |
 
   return (
     <span
+      ref={spanRef}
       className="relative inline-block"
-      onMouseEnter={() => setShowTooltip(true)}
+      onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setShowTooltip(false)}
     >
       <span className="text-blue-400 hover:text-blue-300 cursor-help underline decoration-dotted underline-offset-2">
         Step {stepNumber}
       </span>
-      {showTooltip && <StepTooltip step={step} />}
+      {showTooltip && <StepTooltip step={step} leftOffset={tooltipOffset.left} arrowOffset={tooltipOffset.arrow} />}
     </span>
   );
 }
@@ -724,9 +792,12 @@ function QuestionCard({
 }
 
 function PlanReviewSection({ plan, isRunning }: { plan: Plan; isRunning?: boolean }) {
-  const { approvePlan, requestPlanChanges } = useSessionStore();
+  const { approvePlan, requestPlanChanges, questions, isAwaitingClaudeResponse } = useSessionStore();
   const [viewMode, setViewMode] = useState<'list' | 'timeline'>('timeline');
   const [selectedStep, setSelectedStep] = useState<PlanStep | null>(null);
+
+  // Check if there are any unanswered questions (hide approval buttons until all answered)
+  const hasUnansweredQuestions = questions.some(q => !q.answer);
 
   // While plan review is running, show a loading state instead of the plan
   if (isRunning) {
@@ -820,7 +891,8 @@ function PlanReviewSection({ plan, isRunning }: { plan: Plan; isRunning?: boolea
       {/* Plan validation status */}
       <PlanValidationStatusPanel plan={plan} />
 
-      {!plan.isApproved && (
+      {/* Only show approval buttons when plan is not approved, no pending questions, and not waiting for Claude */}
+      {!plan.isApproved && !hasUnansweredQuestions && !isRunning && !isAwaitingClaudeResponse && (
         <div className="flex gap-4">
           <button
             onClick={() => {

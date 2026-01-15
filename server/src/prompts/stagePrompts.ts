@@ -132,7 +132,7 @@ isApproved: false
 \`\`\`
 [PLAN_STEP id="step-1" parent="null" status="pending" complexity="low"]
 Create feature branch
-Create and checkout feature branch: git checkout -b ${session.featureBranch} from ${session.baseBranch}
+Pull latest from ${session.baseBranch} and create feature branch: git checkout ${session.baseBranch} && git pull origin ${session.baseBranch} && git checkout -b ${session.featureBranch}
 [/PLAN_STEP]
 \`\`\`
 
