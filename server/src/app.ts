@@ -307,22 +307,37 @@ async function spawnStage2Review(
   await resultHandler.saveConversationStart(sessionDir, 2, prompt);
 
   // Spawn Claude with --resume if we have a session ID
+  let hasReceivedOutput = false;
   orchestrator.spawn({
     prompt,
     projectPath: session.projectPath,
     sessionId: session.claudeSessionId || undefined,
     allowedTools: orchestrator.getStageTools(2),
     onOutput: (output, isComplete) => {
+      // Broadcast processing_output on first output received
+      if (!hasReceivedOutput) {
+        hasReceivedOutput = true;
+        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage2_started', { stage: 2, subState: 'processing_output' });
+      }
       eventBroadcaster?.claudeOutput(session.projectId, session.featureId, output, isComplete);
     },
   }).then(async (result) => {
+    // Broadcast parsing_response before handling result
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage2_started', { stage: 2, subState: 'parsing_response' });
+
     const { allFiltered, planValidation } = await resultHandler.handleStage2Result(session, result, prompt);
+
+    // Broadcast validating_output before Haiku post-processing
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage2_started', { stage: 2, subState: 'validating_output' });
 
     // Apply Haiku fallback if no decisions were parsed but output looks like questions
     const extractedCount = await applyHaikuPostProcessing(result, session.projectPath, storage, session, resultHandler);
 
     // Increment review count after Stage 2 completes
     await resultHandler.incrementReviewCount(sessionDir);
+
+    // Broadcast saving_results before broadcasting parsed data events
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage2_started', { stage: 2, subState: 'saving_results' });
 
     // Broadcast events for parsed data
     if (eventBroadcaster) {
@@ -557,6 +572,7 @@ async function _spawnStage3Implementation(
 
   // Track current step for real-time broadcasting
   let currentStepId: string | null = null;
+  let hasReceivedOutput = false;
 
   // Spawn Claude with Stage 3 tools (includes Bash for git)
   orchestrator.spawn({
@@ -565,6 +581,11 @@ async function _spawnStage3Implementation(
     sessionId: session.claudeSessionId || undefined,
     allowedTools: orchestrator.getStageTools(3),
     onOutput: (output, isComplete) => {
+      // Broadcast processing_output on first output received
+      if (!hasReceivedOutput) {
+        hasReceivedOutput = true;
+        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage3_started', { stage: 3, subState: 'processing_output' });
+      }
       // Broadcast raw output
       eventBroadcaster?.claudeOutput(session.projectId, session.featureId, output, isComplete);
 
@@ -598,8 +619,14 @@ async function _spawnStage3Implementation(
       }
     },
   }).then(async (result) => {
+    // Broadcast parsing_response before handling result
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage3_started', { stage: 3, subState: 'parsing_response' });
+
     // Handle Stage 3 result
     const { hasBlocker, implementationComplete } = await resultHandler.handleStage3Result(session, result, prompt);
+
+    // Broadcast saving_results before broadcasting events
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage3_started', { stage: 3, subState: 'saving_results' });
 
     // Broadcast events for completed steps
     if (eventBroadcaster && result.parsed.stepsCompleted.length > 0) {
@@ -771,6 +798,10 @@ async function executeSingleStep(
 
   console.log(`Executing step [${step.id}] ${step.title} for ${session.featureId}${sessionIdToUse ? ' (resuming session)' : ' (fresh session)'}`);
 
+  // Broadcast spawning_agent sub-state
+  eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage3_progress', { stage: 3, stepId: step.id, subState: 'spawning_agent' });
+
+  let hasReceivedOutput = false;
   return new Promise((resolve, reject) => {
     orchestrator.spawn({
       prompt,
@@ -778,6 +809,11 @@ async function executeSingleStep(
       sessionId: sessionIdToUse,
       allowedTools: orchestrator.getStageTools(3),
       onOutput: (output, isComplete) => {
+        // Broadcast processing_output on first output received
+        if (!hasReceivedOutput) {
+          hasReceivedOutput = true;
+          eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage3_progress', { stage: 3, stepId: step.id, subState: 'processing_output' });
+        }
         // Broadcast raw output
         eventBroadcaster?.claudeOutput(session.projectId, session.featureId, output, isComplete);
 
@@ -801,6 +837,9 @@ async function executeSingleStep(
         }
       },
     }).then(async (result) => {
+      // Broadcast parsing_response before handling result
+      eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage3_progress', { stage: 3, stepId: step.id, subState: 'parsing_response' });
+
       // Capture sessionId from first spawn (for subsequent steps)
       const capturedSessionId = result.sessionId;
 
@@ -817,6 +856,9 @@ async function executeSingleStep(
       const { hasBlocker, implementationComplete: _implementationComplete } = await resultHandler.handleStage3Result(
         session, result, prompt, step.id, preStepCommitSha || undefined
       );
+
+      // Broadcast validating_output before checking completion
+      eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage3_progress', { stage: 3, stepId: step.id, subState: 'validating_output' });
 
       // Check if this step was completed
       const stepCompleted = result.parsed.stepsCompleted.some(s => s.id === step.id);
@@ -939,6 +981,9 @@ async function executeSingleStep(
 
       // Broadcast step completed if applicable
       if (stepCompleted && eventBroadcaster) {
+        // Broadcast saving_results before broadcasting completion events
+        eventBroadcaster.executionStatus(session.projectId, session.featureId, 'running', 'stage3_progress', { stage: 3, stepId: step.id, subState: 'saving_results' });
+
         const completedStep = result.parsed.stepsCompleted.find(s => s.id === step.id);
         eventBroadcaster.stepCompleted(
           session.projectId,
@@ -1328,15 +1373,24 @@ async function spawnStage4PRCreation(
   await resultHandler.saveConversationStart(sessionDir, 4, prompt);
 
   // Spawn Claude with Stage 4 tools (git and gh commands) - git push already done
+  let hasReceivedOutput = false;
   orchestrator.spawn({
     prompt,
     projectPath: session.projectPath,
     sessionId: session.claudeSessionId || undefined,
     allowedTools: orchestrator.getStageTools(4),
     onOutput: (output, isComplete) => {
+      // Broadcast processing_output on first output received
+      if (!hasReceivedOutput) {
+        hasReceivedOutput = true;
+        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage4_started', { stage: 4, subState: 'processing_output' });
+      }
       eventBroadcaster?.claudeOutput(session.projectId, session.featureId, output, isComplete);
     },
   }).then(async (result) => {
+    // Broadcast parsing_response before handling result
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage4_started', { stage: 4, subState: 'parsing_response' });
+
     // Save Stage 4 conversation first
     const conversationsPath = `${sessionDir}/conversations.json`;
     const conversations = await storage.readJson<{ entries: unknown[] }>(conversationsPath) || { entries: [] };
@@ -1352,11 +1406,17 @@ async function spawnStage4PRCreation(
     });
     await storage.writeJson(conversationsPath, conversations);
 
+    // Broadcast validating_output before verifying PR
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage4_started', { stage: 4, subState: 'validating_output' });
+
     // Verify PR creation using gh pr list command instead of parsing markers
     // This is more reliable than relying on Claude's output markers
     const prInfo = await verifyPRCreation(session.projectPath, session.projectId, session.featureId);
 
     if (prInfo) {
+      // Broadcast saving_results before saving PR info
+      eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage4_started', { stage: 4, subState: 'saving_results' });
+
       // Save PR info
       await storage.writeJson(`${sessionDir}/pr.json`, prInfo);
 
@@ -1456,15 +1516,24 @@ async function spawnStage5PRReview(
   await resultHandler.saveConversationStart(sessionDir, 5, prompt);
 
   // Spawn Claude with Stage 5 tools
+  let hasReceivedOutput = false;
   orchestrator.spawn({
     prompt,
     projectPath: session.projectPath,
     sessionId: session.claudeSessionId || undefined,
     allowedTools: orchestrator.getStageTools(5),
     onOutput: (output, isComplete) => {
+      // Broadcast processing_output on first output received
+      if (!hasReceivedOutput) {
+        hasReceivedOutput = true;
+        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage5_started', { stage: 5, subState: 'processing_output' });
+      }
       eventBroadcaster?.claudeOutput(session.projectId, session.featureId, output, isComplete);
     },
   }).then(async (result) => {
+    // Broadcast parsing_response before handling result
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage5_started', { stage: 5, subState: 'parsing_response' });
+
     // Handle Stage 5 result
     await handleStage5Result(session, result, sessionDir, prompt, storage, sessionManager, resultHandler, eventBroadcaster);
   }).catch((error) => {
@@ -1487,6 +1556,9 @@ async function handleStage5Result(
   eventBroadcaster: EventBroadcaster | undefined
 ): Promise<void> {
   const statusPath = `${sessionDir}/status.json`;
+
+  // Broadcast saving_results before saving conversation
+  eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage5_started', { stage: 5, subState: 'saving_results' });
 
   // Save Stage 5 conversation
   const conversationsPath = `${sessionDir}/conversations.json`;
@@ -1764,19 +1836,34 @@ export function createApp(
       await resultHandler.saveConversationStart(sessionDir, 1, prompt);
 
       // Spawn Claude (fire and forget, errors logged)
+      let hasReceivedOutput = false;
       orchestrator.spawn({
         prompt,
         projectPath: session.projectPath,
         allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
         onOutput: (output, isComplete) => {
+          // Broadcast processing_output on first output received
+          if (!hasReceivedOutput) {
+            hasReceivedOutput = true;
+            eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage1_started', { stage: 1, subState: 'processing_output' });
+          }
           eventBroadcaster?.claudeOutput(session.projectId, session.featureId, output, isComplete);
         },
       }).then(async (result) => {
+        // Broadcast parsing_response before handling result
+        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage1_started', { stage: 1, subState: 'parsing_response' });
+
         // Use ClaudeResultHandler to save all parsed data
         await resultHandler.handleStage1Result(session, result, prompt);
 
+        // Broadcast validating_output before Haiku post-processing
+        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage1_started', { stage: 1, subState: 'validating_output' });
+
         // Apply Haiku fallback if no decisions were parsed but output looks like questions
         const extractedCount = await applyHaikuPostProcessing(result, session.projectPath, storage, session, resultHandler);
+
+        // Broadcast saving_results before broadcasting events
+        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage1_started', { stage: 1, subState: 'saving_results' });
 
         // Broadcast events for parsed data
         if (eventBroadcaster) {
