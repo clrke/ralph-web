@@ -174,7 +174,7 @@ flowchart TB
         subgraph Core["Core"]
             ClaudeOrchestrator["Claude Code Orchestrator"]
             WSServer["WebSocket Server"]
-            FileStorage["JSON File Storage<br/>~/.clrke/"]
+            FileStorage["JSON File Storage<br/>~/.claude-web/"]
         end
     end
 
@@ -466,7 +466,7 @@ The server tracks output length in `status.json` to detect declining engagement:
 State transitions are logged to a history file for debugging and analysis:
 
 ```
-~/.clrke/<project_id>/<feature_id>/.circuit_breaker_history
+~/.claude-web/<project_id>/<feature_id>/.circuit_breaker_history
 ```
 
 ```json
@@ -609,7 +609,7 @@ Comprehensive logging for debugging and audit:
 |----------|----------|---------|
 | Server logs | `logs/server.log` | API requests, WebSocket events, errors |
 | Claude outputs | `logs/claude_{sessionId}_{timestamp}.log` | Raw Claude CLI output per spawn |
-| Session events | `~/.clrke/<project_id>/<feature_id>/events.json` | Stage transitions, user actions, decisions |
+| Session events | `~/.claude-web/<project_id>/<feature_id>/events.json` | Stage transitions, user actions, decisions |
 
 **Log Levels:**
 - `INFO` - Normal operations (stage transitions, questions asked)
@@ -642,7 +642,7 @@ Validation checks before accepting requests:
 | Check | Validation | On Failure |
 |-------|------------|------------|
 | Claude CLI | `claude --version` succeeds | Exit with error |
-| Data directory | `~/.clrke/` exists or can be created | Exit with error |
+| Data directory | `~/.claude-web/` exists or can be created | Exit with error |
 | Git available | `git --version` succeeds | Exit with error |
 | Node version | >= 18.0.0 | Exit with warning |
 | Port available | Configured port not in use | Exit with error |
@@ -724,12 +724,12 @@ Uses `git reset --hard` to undo all changes:
 
 ## Data Storage
 
-Session data is stored as JSON files in `~/.clrke/` directory, organized by project and feature. This allows Claude to inspect session state during implementation.
+Session data is stored as JSON files in `~/.claude-web/` directory, organized by project and feature. This allows Claude to inspect session state during implementation.
 
 ### Directory Structure
 
 ```
-~/.clrke/
+~/.claude-web/
 ├── projects.json                     # Global index: project_id -> project_path
 ├── <project_id>/                     # MD5 hash of absolute project path
 │   ├── index.json                    # Lists all feature sessions for this project
@@ -989,8 +989,8 @@ Updated every few seconds during active Claude execution:
 
 | File | Purpose |
 |------|---------|
-| `~/.clrke/projects.json` | Maps project_id (MD5) to project paths |
-| `~/.clrke/<project_id>/index.json` | Lists all feature sessions for a project |
+| `~/.claude-web/projects.json` | Maps project_id (MD5) to project paths |
+| `~/.claude-web/<project_id>/index.json` | Lists all feature sessions for a project |
 
 ### Claude Plan File Tracking
 
@@ -1002,8 +1002,8 @@ When Claude creates a plan file during Stage 1-2, the server extracts the file p
 
 During implementation (Stage 3), Claude can read these files to understand context:
 ```bash
-cat ~/.clrke/<project_id>/<feature_id>/session.json
-cat ~/.clrke/<project_id>/<feature_id>/plan.json
+cat ~/.claude-web/<project_id>/<feature_id>/session.json
+cat ~/.claude-web/<project_id>/<feature_id>/plan.json
 ```
 
 Files are READ-ONLY for Claude. The server updates them based on Claude's structured output markers.
@@ -2398,7 +2398,7 @@ Version checked at startup; warning shown if incompatible.
 |----------|---------|-------------|
 | `PORT` | 3333 | Server port |
 | `HOST` | 0.0.0.0 | Server host (all interfaces for network access) |
-| `DATA_DIR` | ~/.clrke | JSON file storage directory |
+| `DATA_DIR` | ~/.claude-web | JSON file storage directory |
 | `LOG_DIR` | ./logs | Log files directory |
 | `LOG_MAX_SIZE_MB` | 50 | Max size per log file before rotation |
 | `LOG_MAX_FILES` | 10 | Number of rotated files to keep |
@@ -2560,7 +2560,7 @@ export const mockClaudeError = {
 
 **File System Mocking:**
 - Use `memfs` for in-memory file system during tests
-- Avoids polluting `~/.clrke/` with test data
+- Avoids polluting `~/.claude-web/` with test data
 - Faster execution, no cleanup needed
 
 ### Test Commands

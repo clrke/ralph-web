@@ -9,7 +9,7 @@ import { EventBroadcaster } from './services/EventBroadcaster';
 import { createApp } from './app';
 
 // Initialize services
-const dataDir = process.env.DATA_DIR || path.join(os.homedir(), '.clrke');
+const dataDir = process.env.DATA_DIR || path.join(os.homedir(), '.claude-web');
 const storage = new FileStorageService(dataDir);
 const sessionManager = new SessionManager(storage);
 

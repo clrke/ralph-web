@@ -6,7 +6,7 @@
 PROJECT_ID="${1:-c36c4f449192026ca999ef7f3fae2a8d}"
 FEATURE_ID="${2:-implement-stage-3-execution}"
 MODE="${3:-all}"
-SESSION_DIR="$HOME/.clrke/$PROJECT_ID/$FEATURE_ID"
+SESSION_DIR="$HOME/.claude-web/$PROJECT_ID/$FEATURE_ID"
 API_BASE="http://localhost:3333/api/sessions/$PROJECT_ID/$FEATURE_ID"
 
 poll_status() {
