@@ -7,7 +7,21 @@ import {
   StepStartedEvent,
   StepCompletedEvent,
   ImplementationProgressEvent,
+  ExecutionStatusEvent,
+  ExecutionSubState,
+  StepProgress,
 } from '@claude-code-web/shared';
+
+/**
+ * Optional parameters for extended execution status
+ */
+export interface ExecutionStatusOptions {
+  stage?: number;
+  subState?: ExecutionSubState;
+  stepId?: string;
+  progress?: StepProgress;
+  isIntermediate?: boolean;
+}
 
 /**
  * Broadcasts real-time events to connected clients via Socket.IO.
@@ -129,20 +143,27 @@ export class EventBroadcaster {
   }
 
   /**
-   * Broadcast Claude execution status
+   * Broadcast Claude execution status with optional sub-state tracking
    */
   executionStatus(
     projectId: string,
     featureId: string,
     status: 'running' | 'idle' | 'error',
-    action: string
+    action: string,
+    options?: ExecutionStatusOptions
   ): void {
     const room = this.getRoom(projectId, featureId);
-    this.io.to(room).emit('execution.status', {
+    const event: ExecutionStatusEvent = {
       status,
       action,
       timestamp: new Date().toISOString(),
-    });
+      ...(options?.stage !== undefined && { stage: options.stage }),
+      ...(options?.subState && { subState: options.subState }),
+      ...(options?.stepId && { stepId: options.stepId }),
+      ...(options?.progress && { progress: options.progress }),
+      ...(options?.isIntermediate !== undefined && { isIntermediate: options.isIntermediate }),
+    };
+    this.io.to(room).emit('execution.status', event);
   }
 
   /**

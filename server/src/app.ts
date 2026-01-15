@@ -301,7 +301,7 @@ async function spawnStage2Review(
   }
 
   // Broadcast execution started
-  eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage2_started');
+  eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage2_started', { stage: 2, subState: 'spawning_agent' });
 
   // Save "started" conversation entry immediately
   await resultHandler.saveConversationStart(sessionDir, 2, prompt);
@@ -347,7 +347,8 @@ async function spawnStage2Review(
         session.projectId,
         session.featureId,
         result.isError ? 'error' : 'idle',
-        result.isError ? 'stage2_error' : 'stage2_complete'
+        result.isError ? 'stage2_error' : 'stage2_complete',
+        { stage: 2 }
       );
     }
 
@@ -363,7 +364,7 @@ async function spawnStage2Review(
     console.log(`Stage 2 review ${result.isError ? 'failed' : 'completed'} for ${session.featureId}${extractedCount > 0 ? ` (${extractedCount} questions via Haiku)` : ''}`);
   }).catch((error) => {
     console.error(`Stage 2 spawn error for ${session.featureId}:`, error);
-    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage2_spawn_error');
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage2_spawn_error', { stage: 2 });
   });
 }
 
@@ -496,7 +497,7 @@ async function handleStage2Completion(
       eventBroadcaster
     ).catch(err => {
       console.error('Stage 3 step execution error:', err);
-      eventBroadcaster?.executionStatus(updatedSession.projectId, updatedSession.featureId, 'error', 'stage3_error');
+      eventBroadcaster?.executionStatus(updatedSession.projectId, updatedSession.featureId, 'error', 'stage3_error', { stage: 3 });
     });
   }
 }
@@ -549,7 +550,7 @@ async function _spawnStage3Implementation(
   }
 
   // Broadcast execution started
-  eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage3_started');
+  eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage3_started', { stage: 3, subState: 'spawning_agent' });
 
   // Save "started" conversation entry immediately
   await resultHandler.saveConversationStart(sessionDir, 3, prompt);
@@ -641,7 +642,7 @@ async function _spawnStage3Implementation(
       ? 'stage3_blocked'
       : (implementationComplete ? 'stage3_complete' : 'stage3_progress');
 
-    eventBroadcaster?.executionStatus(session.projectId, session.featureId, finalStatus, finalAction);
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, finalStatus, finalAction, { stage: 3 });
 
     // Handle Stage 3→4 transition when implementation complete
     if (implementationComplete) {
@@ -651,7 +652,7 @@ async function _spawnStage3Implementation(
     console.log(`Stage 3 ${implementationComplete ? 'completed' : (hasBlocker ? 'blocked' : 'in progress')} for ${session.featureId}`);
   }).catch((error) => {
     console.error(`Stage 3 spawn error for ${session.featureId}:`, error);
-    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage3_spawn_error');
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage3_spawn_error', { stage: 3 });
   });
 }
 
@@ -855,7 +856,7 @@ async function executeSingleStep(
           );
           eventBroadcaster?.stageChanged(updatedSession, previousStage);
           eventBroadcaster?.executionStatus(
-            session.projectId, session.featureId, 'idle', 'stage2_blocker_review'
+            session.projectId, session.featureId, 'idle', 'stage2_blocker_review', { stage: 2 }
           );
 
           // Spawn Stage 2 review with blocker context
@@ -975,7 +976,7 @@ async function executeSingleStep(
       });
     }).catch((error) => {
       console.error(`Step ${step.id} spawn error for ${session.featureId}:`, error);
-      eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'step_spawn_error');
+      eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'step_spawn_error', { stage: 3, stepId: step.id });
       reject(error);
     });
   });
@@ -1031,7 +1032,7 @@ async function executeStage3Steps(
 
       if (result.hasBlocker) {
         // Still blocked - wait for user
-        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_blocked');
+        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_blocked', { stage: 3 });
         return;
       }
 
@@ -1060,7 +1061,7 @@ async function executeStage3Steps(
       } else {
         // Some steps are blocked or have unmet dependencies
         console.log(`No more steps ready for ${session.featureId}, waiting for user input`);
-        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_waiting');
+        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_waiting', { stage: 3 });
       }
       hasMoreSteps = false;
       continue;
@@ -1075,7 +1076,7 @@ async function executeStage3Steps(
     if (result.hasBlocker) {
       // Step is blocked - pause and wait for user
       console.log(`Step [${nextStep.id}] blocked, waiting for user input`);
-      eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_blocked');
+      eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_blocked', { stage: 3, stepId: nextStep.id });
       hasMoreSteps = false;
       continue;
     }
@@ -1095,7 +1096,7 @@ async function executeStage3Steps(
         );
         eventBroadcaster?.stageChanged(updatedSession, previousStage);
         eventBroadcaster?.executionStatus(
-          session.projectId, session.featureId, 'idle', 'stage2_replanning_needed'
+          session.projectId, session.featureId, 'idle', 'stage2_replanning_needed', { stage: 2 }
         );
 
         // Spawn Stage 2 review with context about the failed step
@@ -1111,7 +1112,7 @@ async function executeStage3Steps(
         );
       } else {
         console.warn(`Step [${nextStep.id}] did not complete, stopping execution`);
-        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_waiting');
+        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage3_waiting', { stage: 3, stepId: nextStep.id });
       }
       hasMoreSteps = false;
       continue;
@@ -1216,7 +1217,7 @@ async function prepareGitForPR(
 
   try {
     console.log(`[Stage 4] Preparing git state for ${featureId}...`);
-    eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage4_git_prep');
+    eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage4_git_prep', { stage: 4 });
 
     // 1. Check current branch
     const currentBranch = runGit('git branch --show-current');
@@ -1297,7 +1298,7 @@ async function spawnStage4PRCreation(
   }
 
   // Broadcast execution started
-  eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage4_started');
+  eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage4_started', { stage: 4, subState: 'spawning_agent' });
 
   // DETERMINISTIC: Prepare git state before Claude (checkout, commit, push)
   const gitResult = await prepareGitForPR(
@@ -1310,7 +1311,7 @@ async function spawnStage4PRCreation(
 
   if (!gitResult.success) {
     console.error(`[Stage 4] Git preparation failed, aborting PR creation: ${gitResult.error}`);
-    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage4_git_error');
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage4_git_error', { stage: 4 });
 
     const finalStatus = await storage.readJson<Record<string, unknown>>(statusPath);
     if (finalStatus) {
@@ -1371,7 +1372,7 @@ async function spawnStage4PRCreation(
       console.log(`PR verified: ${prInfo.url || prInfo.title}`);
 
       // Broadcast PR created event
-      eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage4_complete');
+      eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage4_complete', { stage: 4 });
 
       // Update status
       const finalStatus = await storage.readJson<Record<string, unknown>>(statusPath);
@@ -1403,7 +1404,8 @@ async function spawnStage4PRCreation(
         session.projectId,
         session.featureId,
         'error',
-        'stage4_no_pr_found'
+        'stage4_no_pr_found',
+        { stage: 4 }
       );
 
       // Update status as error
@@ -1417,7 +1419,7 @@ async function spawnStage4PRCreation(
     }
   }).catch((error) => {
     console.error(`Stage 4 spawn error for ${session.featureId}:`, error);
-    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage4_spawn_error');
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage4_spawn_error', { stage: 4 });
   });
 }
 
@@ -1448,7 +1450,7 @@ async function spawnStage5PRReview(
   }
 
   // Broadcast execution started
-  eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage5_started');
+  eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage5_started', { stage: 5, subState: 'spawning_agent' });
 
   // Save "started" conversation entry immediately
   await resultHandler.saveConversationStart(sessionDir, 5, prompt);
@@ -1467,7 +1469,7 @@ async function spawnStage5PRReview(
     await handleStage5Result(session, result, sessionDir, prompt, storage, sessionManager, resultHandler, eventBroadcaster);
   }).catch((error) => {
     console.error(`Stage 5 spawn error for ${session.featureId}:`, error);
-    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage5_spawn_error');
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage5_spawn_error', { stage: 5 });
   });
 }
 
@@ -1571,7 +1573,7 @@ async function handleStage5Result(
     }
 
     eventBroadcaster?.stageChanged(updatedSession, previousStage);
-    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage6_awaiting_approval');
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage6_awaiting_approval', { stage: 6 });
     return;
   }
 
@@ -1600,7 +1602,7 @@ async function handleStage5Result(
       await storage.writeJson(statusPath, finalStatus);
     }
 
-    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage5_awaiting_user');
+    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'stage5_awaiting_user', { stage: 5 });
     return;
   }
 
@@ -1618,7 +1620,8 @@ async function handleStage5Result(
     session.projectId,
     session.featureId,
     result.isError ? 'error' : 'idle',
-    result.isError ? 'stage5_error' : 'stage5_complete'
+    result.isError ? 'stage5_error' : 'stage5_complete',
+    { stage: 5 }
   );
 }
 
@@ -1754,7 +1757,7 @@ export function createApp(
       }
 
       // Broadcast execution started
-      eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage1_started');
+      eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage1_started', { stage: 1, subState: 'spawning_agent' });
 
       // Save "started" conversation entry immediately
       const sessionDir = `${session.projectId}/${session.featureId}`;
@@ -1802,7 +1805,8 @@ export function createApp(
             session.projectId,
             session.featureId,
             result.isError ? 'error' : 'idle',
-            result.isError ? 'stage1_error' : 'stage1_complete'
+            result.isError ? 'stage1_error' : 'stage1_complete',
+            { stage: 1 }
           );
         }
 
@@ -1814,7 +1818,7 @@ export function createApp(
         console.log(`Stage 1 ${result.isError ? 'failed' : 'completed'} for ${session.featureId}${extractedCount > 0 ? ` (${extractedCount} questions via Haiku)` : ''}`);
       }).catch((error) => {
         console.error(`Stage 1 spawn error for ${session.featureId}:`, error);
-        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage1_spawn_error');
+        eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage1_spawn_error', { stage: 1 });
       });
 
     } catch (error) {
@@ -2021,7 +2025,7 @@ export function createApp(
           await storage.writeJson(statusPath, status);
         }
 
-        eventBroadcaster?.executionStatus(projectId, featureId, 'idle', 'session_completed');
+        eventBroadcaster?.executionStatus(projectId, featureId, 'idle', 'session_completed', { stage: 6 });
 
         console.log(`Session ${featureId} marked as completed by user`);
         res.json({ success: true, session: updatedSession });
@@ -2293,7 +2297,7 @@ Please pay special attention to the above areas during your review.`;
             }
 
             // Broadcast execution started
-            eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'batch_answers_resume');
+            eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'batch_answers_resume', { stage: session.currentStage, subState: 'spawning_agent' });
 
             // Resume Claude with the batch answers
             const result = await orchestrator.spawn({
@@ -2393,7 +2397,8 @@ After creating all steps, write the plan to a file and output:
                 projectId,
                 featureId,
                 result.isError ? 'error' : 'idle',
-                result.isError ? 'batch_resume_error' : 'batch_resume_complete'
+                result.isError ? 'batch_resume_error' : 'batch_resume_complete',
+                { stage: session.currentStage }
               );
             }
 
@@ -2401,7 +2406,7 @@ After creating all steps, write the plan to a file and output:
           }
         } catch (error) {
           console.error(`Batch resume error for ${featureId}:`, error);
-          eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'batch_resume_error');
+          eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'batch_resume_error', { stage: session.currentStage });
         }
       })();
 
@@ -2518,7 +2523,7 @@ After creating all steps, write the plan to a file and output:
           }
 
           // Broadcast execution started
-          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'batch_answers_resume');
+          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'batch_answers_resume', { stage: session.currentStage, subState: 'spawning_agent' });
 
           // Save "started" conversation entry
           await resultHandler.saveConversationStart(sessionDir, session.currentStage, prompt);
@@ -2574,7 +2579,7 @@ Continue implementing step [${blockedStepId}].`;
                 resumeContext
               ).catch(err => {
                 console.error('Stage 3 step execution error:', err);
-                eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage3_error');
+                eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage3_error', { stage: 3 });
               });
             }
             return; // Stage 3 handles its own completion
@@ -2682,14 +2687,15 @@ After creating all steps, write the plan to a file and output:
               projectId,
               featureId,
               result.isError ? 'error' : 'idle',
-              result.isError ? 'batch_resume_error' : 'batch_resume_complete'
+              result.isError ? 'batch_resume_error' : 'batch_resume_complete',
+              { stage: session.currentStage }
             );
           }
 
           console.log(`Batch resume ${result.isError ? 'failed' : 'completed'} for ${featureId}${extractedCount > 0 ? ` (${extractedCount} questions via Haiku)` : ''}`);
         } catch (error) {
           console.error(`Batch resume error for ${featureId}:`, error);
-          eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'batch_resume_error');
+          eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'batch_resume_error', { stage: session.currentStage });
         }
       })();
 
@@ -2776,7 +2782,7 @@ After creating all steps, write the plan to a file and output:
         eventBroadcaster
       ).catch(err => {
         console.error('Stage 3 step execution error:', err);
-        eventBroadcaster?.executionStatus(updatedSession.projectId, updatedSession.featureId, 'error', 'stage3_error');
+        eventBroadcaster?.executionStatus(updatedSession.projectId, updatedSession.featureId, 'error', 'stage3_error', { stage: 3 });
       });
 
       res.json({ plan, session: updatedSession });
@@ -2833,7 +2839,7 @@ After creating all steps, write the plan to a file and output:
       }
 
       // Broadcast execution started
-      eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'plan_revision_started');
+      eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'plan_revision_started', { stage: 2, subState: 'spawning_agent' });
 
       // Save "started" conversation entry
       await resultHandler.saveConversationStart(sessionDir, 2, prompt);
@@ -2876,7 +2882,8 @@ After creating all steps, write the plan to a file and output:
             projectId,
             featureId,
             result.isError ? 'error' : 'idle',
-            result.isError ? 'plan_revision_error' : 'plan_revision_complete'
+            result.isError ? 'plan_revision_error' : 'plan_revision_complete',
+            { stage: 2 }
           );
         }
 
@@ -2892,7 +2899,7 @@ After creating all steps, write the plan to a file and output:
         console.log(`Plan revision ${result.isError ? 'failed' : 'completed'} for ${featureId}`);
       }).catch((error) => {
         console.error(`Plan revision spawn error for ${featureId}:`, error);
-        eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'plan_revision_spawn_error');
+        eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'plan_revision_spawn_error', { stage: 2 });
       });
 
     } catch (error) {
@@ -2949,7 +2956,7 @@ After creating all steps, write the plan to a file and output:
       executeStage3Steps(session, storage, sessionManager, resultHandler, eventBroadcaster)
         .catch(err => {
           console.error('Stage 3 restart error:', err);
-          eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage3_restart_error');
+          eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage3_restart_error', { stage: 3 });
         });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to restart Stage 3';
@@ -2990,7 +2997,7 @@ After creating all steps, write the plan to a file and output:
         case 1: {
           // Stage 1: Discovery
           const prompt = buildStage1Prompt(session);
-          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage1_retry');
+          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage1_retry', { stage: 1, subState: 'spawning_agent' });
           await resultHandler.saveConversationStart(sessionDir, 1, prompt);
 
           orchestrator.spawn({
@@ -3007,10 +3014,10 @@ After creating all steps, write the plan to a file and output:
               await handleStage1Completion(session, result, storage, sessionManager, resultHandler, eventBroadcaster);
             }
             console.log(`Stage 1 retry ${result.isError ? 'failed' : 'completed'} for ${featureId}`);
-            eventBroadcaster?.executionStatus(projectId, featureId, result.isError ? 'error' : 'idle', 'stage1_complete');
+            eventBroadcaster?.executionStatus(projectId, featureId, result.isError ? 'error' : 'idle', 'stage1_complete', { stage: 1 });
           }).catch((error) => {
             console.error(`Stage 1 retry spawn error for ${featureId}:`, error);
-            eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'stage1_retry_error');
+            eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'stage1_retry_error', { stage: 1 });
           });
           break;
         }
@@ -3023,7 +3030,7 @@ After creating all steps, write the plan to a file and output:
             return;
           }
           const stage2Prompt = buildStage2Prompt(session, plan, 1);
-          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage2_retry');
+          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage2_retry', { stage: 2, subState: 'spawning_agent' });
           spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, stage2Prompt);
           break;
         }
@@ -3035,11 +3042,11 @@ After creating all steps, write the plan to a file and output:
             console.error(`No approved plan found for Stage 3 retry: ${featureId}`);
             return;
           }
-          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage3_retry');
+          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage3_retry', { stage: 3, subState: 'spawning_agent' });
           executeStage3Steps(session, storage, sessionManager, resultHandler, eventBroadcaster)
             .catch(err => {
               console.error(`Stage 3 retry error: ${err}`);
-              eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'stage3_retry_error');
+              eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'stage3_retry_error', { stage: 3 });
             });
           break;
         }
@@ -3052,7 +3059,7 @@ After creating all steps, write the plan to a file and output:
             return;
           }
           const stage4Prompt = buildStage4Prompt(session, plan);
-          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage4_retry');
+          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage4_retry', { stage: 4, subState: 'spawning_agent' });
           spawnStage4PRCreation(session, storage, sessionManager, resultHandler, eventBroadcaster, stage4Prompt);
           break;
         }
@@ -3074,7 +3081,7 @@ After creating all steps, write the plan to a file and output:
             branch: session.featureBranch,
           };
           const stage5Prompt = buildStage5Prompt(session, plan, prInfo);
-          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage5_retry');
+          eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage5_retry', { stage: 5, subState: 'spawning_agent' });
           spawnStage5PRReview(session, storage, sessionManager, resultHandler, eventBroadcaster, stage5Prompt);
           break;
         }
