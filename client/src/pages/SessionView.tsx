@@ -428,6 +428,7 @@ const STAGE_QUESTION_TITLES: Record<number, string> = {
 function QuestionsSection({ questions, stage }: { questions: Question[]; stage: number }) {
   const { submitAllAnswers } = useSessionStore();
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({});
+  const [remarks, setRemarks] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -450,7 +451,7 @@ function QuestionsSection({ questions, stage }: { questions: Question[]; stage: 
         questionId: q.id,
         answer: { value: selectedAnswers[q.id] },
       }));
-      await submitAllAnswers(answers);
+      await submitAllAnswers(answers, remarks.trim() || undefined);
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : 'Failed to submit answers');
     } finally {
@@ -476,6 +477,21 @@ function QuestionsSection({ questions, stage }: { questions: Question[]; stage: 
           onSelect={(value) => handleSelectAnswer(question.id, value)}
         />
       ))}
+
+      {/* Additional concerns/remarks textarea */}
+      <div className="space-y-2">
+        <label htmlFor="remarks" className="block text-sm font-medium text-gray-300">
+          Additional concerns or requested changes (optional)
+        </label>
+        <textarea
+          id="remarks"
+          value={remarks}
+          onChange={(e) => setRemarks(e.target.value)}
+          placeholder="Any other concerns about the plan? Changes you'd like to request?"
+          rows={3}
+          className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-gray-100 placeholder-gray-500"
+        />
+      </div>
 
       {submitError && (
         <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-400 text-sm">

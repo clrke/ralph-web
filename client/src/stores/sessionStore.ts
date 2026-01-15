@@ -78,7 +78,7 @@ interface SessionState {
   fetchSession: (projectId: string, featureId: string) => Promise<void>;
   fetchConversations: (projectId: string, featureId: string) => Promise<void>;
   submitQuestionAnswer: (questionId: string, answer: Question['answer']) => Promise<void>;
-  submitAllAnswers: (answers: Array<{ questionId: string; answer: Question['answer'] }>) => Promise<void>;
+  submitAllAnswers: (answers: Array<{ questionId: string; answer: Question['answer'] }>, remarks?: string) => Promise<void>;
   approvePlan: () => Promise<void>;
   requestPlanChanges: (feedback: string) => Promise<void>;
 }
@@ -218,7 +218,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  submitAllAnswers: async (answers: Array<{ questionId: string; answer: Question['answer'] }>) => {
+  submitAllAnswers: async (answers: Array<{ questionId: string; answer: Question['answer'] }>, remarks?: string) => {
     const { session } = get();
     if (!session) return;
 
@@ -228,7 +228,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(answers),
+          body: JSON.stringify({ answers, remarks: remarks || undefined }),
         }
       );
 

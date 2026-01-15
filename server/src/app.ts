@@ -2415,7 +2415,10 @@ After creating all steps, write the plan to a file and output:
   app.post('/api/sessions/:projectId/:featureId/questions/answers', validate(BatchAnswersInputSchema), async (req, res) => {
     try {
       const { projectId, featureId } = req.params;
-      const answers = req.body as Array<{ questionId: string; answer: { value?: string; text?: string; values?: string[] } }>;
+      const { answers, remarks } = req.body as {
+        answers: Array<{ questionId: string; answer: { value?: string; text?: string; values?: string[] } }>;
+        remarks?: string;
+      };
 
       // Check session exists
       const session = await sessionManager.getSession(projectId, featureId);
@@ -2502,9 +2505,9 @@ After creating all steps, write the plan to a file and output:
       // Fire-and-forget: Resume Claude with all batch answers
       (async () => {
         try {
-          console.log(`All ${answeredQuestions.length} questions answered via batch, resuming Claude`);
+          console.log(`All ${answeredQuestions.length} questions answered via batch, resuming Claude${remarks ? ' (with remarks)' : ''}`);
 
-          const prompt = buildBatchAnswersContinuationPrompt(answeredQuestions, session.currentStage, session.claudePlanFilePath);
+          const prompt = buildBatchAnswersContinuationPrompt(answeredQuestions, session.currentStage, session.claudePlanFilePath, remarks);
           const sessionDir = `${projectId}/${featureId}`;
           const statusPath = `${sessionDir}/status.json`;
 
