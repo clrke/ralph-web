@@ -62,10 +62,41 @@ export interface PlanApprovedEvent {
 // Execution Status Events
 // =============================================================================
 
+/**
+ * Progress tracking for step-level execution (Stage 3)
+ */
+export interface StepProgress {
+  current: number;
+  total: number;
+}
+
+/**
+ * Sub-state values for granular activity tracking during Claude execution.
+ * These represent internal states within each stage.
+ */
+export type ExecutionSubState =
+  | 'spawning_agent'
+  | 'processing_output'
+  | 'parsing_response'
+  | 'validating_output'
+  | 'saving_results'
+  | 'waiting_for_input'
+  | 'retrying';
+
 export interface ExecutionStatusEvent {
   status: 'running' | 'idle' | 'error';
   action: string;
   timestamp: string;
+  /** Current stage number (1-5) for context */
+  stage?: number;
+  /** Granular sub-state within the current action */
+  subState?: ExecutionSubState;
+  /** Current step ID (for Stage 3 implementation) */
+  stepId?: string;
+  /** Step-level progress tracking */
+  progress?: StepProgress;
+  /** Marks rapid intermediate updates for client-side batching/filtering */
+  isIntermediate?: boolean;
 }
 
 export interface ClaudeOutputEvent {
