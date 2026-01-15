@@ -1,6 +1,7 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
 import path from 'path';
 import crypto from 'crypto';
+import { readFile } from 'fs/promises';
 import { ZodSchema, ZodError } from 'zod';
 import { FileStorageService } from './data/FileStorageService';
 import { SessionManager } from './services/SessionManager';
@@ -1776,9 +1777,47 @@ async function handleStage1Completion(
   resultHandler: ClaudeResultHandler,
   eventBroadcaster: EventBroadcaster | undefined
 ): Promise<void> {
-  if (!result.parsed.planFilePath) return;
+  let planFilePath = result.parsed.planFilePath;
 
-  console.log(`Plan file created at ${result.parsed.planFilePath}, auto-transitioning to Stage 2`);
+  // Fallback: If no planFilePath but planModeExited is true, check if plan.md exists
+  if (!planFilePath && result.parsed.planModeExited && session.claudePlanFilePath) {
+    try {
+      const planContent = await readFile(session.claudePlanFilePath, 'utf-8');
+      const parser = new OutputParser();
+      const planSteps = parser.parsePlanSteps(planContent);
+
+      if (planSteps.length > 0) {
+        console.log(`Fallback: Found ${planSteps.length} plan steps in ${session.claudePlanFilePath}`);
+        planFilePath = session.claudePlanFilePath;
+
+        // Update plan.json with the parsed steps
+        const sessionDir = `${session.projectId}/${session.featureId}`;
+        const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+        if (plan) {
+          plan.steps = planSteps.map((step, index) => ({
+            id: step.id,
+            parentId: step.parentId,
+            orderIndex: index,
+            title: step.title,
+            description: step.description,
+            status: (step.status || 'pending') as PlanStep['status'],
+            metadata: {},
+            complexity: step.complexity,
+            acceptanceCriteriaIds: step.acceptanceCriteriaIds,
+            estimatedFiles: step.estimatedFiles,
+          }));
+          await storage.writeJson(`${sessionDir}/plan.json`, plan);
+          console.log(`Updated plan.json with ${plan.steps.length} steps from fallback`);
+        }
+      }
+    } catch (error) {
+      console.log(`Fallback plan file check failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  if (!planFilePath) return;
+
+  console.log(`Plan file created at ${planFilePath}, auto-transitioning to Stage 2`);
 
   // Transition to Stage 2
   const previousStage = session.currentStage;
