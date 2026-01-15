@@ -10,6 +10,7 @@ const STAGE_LABELS: Record<number, string> = {
   4: 'PR Creation',
   5: 'PR Review',
   6: 'Final Approval',
+  7: 'Completed',
 };
 
 const STATUS_COLORS: Record<string, string> = {

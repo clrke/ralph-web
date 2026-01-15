@@ -162,13 +162,15 @@ describe('stageActivity utility', () => {
   });
 
   describe('STAGE_NAMES', () => {
-    it('should have names for all 6 stages', () => {
+    it('should have names for all stages including queued and completed', () => {
+      expect(STAGE_NAMES[0]).toBe('Queued');
       expect(STAGE_NAMES[1]).toBe('Discovery');
       expect(STAGE_NAMES[2]).toBe('Planning');
       expect(STAGE_NAMES[3]).toBe('Implementation');
       expect(STAGE_NAMES[4]).toBe('PR Creation');
       expect(STAGE_NAMES[5]).toBe('PR Review');
-      expect(STAGE_NAMES[6]).toBe('Merge');
+      expect(STAGE_NAMES[6]).toBe('Final Approval');
+      expect(STAGE_NAMES[7]).toBe('Completed');
     });
   });
 
@@ -244,18 +246,20 @@ describe('stageActivity utility', () => {
 
   describe('getStageName', () => {
     it('should return correct stage names', () => {
+      expect(getStageName(0)).toBe('Queued');
       expect(getStageName(1)).toBe('Discovery');
       expect(getStageName(2)).toBe('Planning');
       expect(getStageName(3)).toBe('Implementation');
       expect(getStageName(4)).toBe('PR Creation');
       expect(getStageName(5)).toBe('PR Review');
-      expect(getStageName(6)).toBe('Merge');
+      expect(getStageName(6)).toBe('Final Approval');
+      expect(getStageName(7)).toBe('Completed');
     });
 
     it('should return Unknown for invalid stages', () => {
-      expect(getStageName(0)).toBe('Unknown');
-      expect(getStageName(7)).toBe('Unknown');
       expect(getStageName(-1)).toBe('Unknown');
+      expect(getStageName(8)).toBe('Unknown');
+      expect(getStageName(100)).toBe('Unknown');
     });
   });
 

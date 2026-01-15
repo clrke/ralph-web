@@ -109,7 +109,8 @@ describe('shared package exports', () => {
     it('should export STAGE_NAMES constant', () => {
       expect(typeof STAGE_NAMES).toBe('object');
       expect(STAGE_NAMES[1]).toBe('Discovery');
-      expect(STAGE_NAMES[6]).toBe('Merge');
+      expect(STAGE_NAMES[6]).toBe('Final Approval');
+      expect(STAGE_NAMES[7]).toBe('Completed');
     });
   });
 

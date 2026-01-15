@@ -64,11 +64,14 @@ const POST_PROCESSING_LABELS: Record<string, string> = {
  * Stage number to default label mapping.
  */
 const STAGE_LABELS: Record<number, string> = {
+  0: 'Queued',
   1: 'Discovery',
   2: 'Plan Review',
   3: 'Implementation',
   4: 'PR Creation',
   5: 'PR Review',
+  6: 'Final Approval',
+  7: 'Completed',
 };
 
 /**

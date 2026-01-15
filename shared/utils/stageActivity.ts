@@ -63,8 +63,11 @@ export const STAGE_ACTIVITY_MAP: Record<string, string> = {
   stage5_spawn_error: 'PR review failed',
   stage5_retry: 'Retrying review',
 
-  // Stage 6: Merge
-  stage6_awaiting_approval: 'Awaiting merge approval',
+  // Stage 6: Final Approval
+  stage6_awaiting_approval: 'Awaiting final approval',
+
+  // Stage 7: Completed
+  stage7_complete: 'Session completed',
 
   // Session lifecycle
   session_completed: 'Session completed',
@@ -83,12 +86,14 @@ export const STAGE_ACTIVITY_MAP: Record<string, string> = {
  * Stage names for display.
  */
 export const STAGE_NAMES: Record<number, string> = {
+  0: 'Queued',
   1: 'Discovery',
   2: 'Planning',
   3: 'Implementation',
   4: 'PR Creation',
   5: 'PR Review',
-  6: 'Merge',
+  6: 'Final Approval',
+  7: 'Completed',
 };
 
 /**

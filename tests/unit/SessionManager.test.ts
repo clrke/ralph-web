@@ -310,6 +310,47 @@ describe('SessionManager', () => {
         manager.transitionStage(session.projectId, session.featureId, 3)
       ).rejects.toThrow();
     });
+
+    it('should transition from Stage 6 to Stage 7 (completion)', async () => {
+      const session = await manager.createSession({
+        title: 'Stage 7 Test',
+        featureDescription: 'Test',
+        projectPath: '/test',
+      });
+
+      // Progress through stages 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
+      await manager.transitionStage(session.projectId, session.featureId, 2);
+      await manager.transitionStage(session.projectId, session.featureId, 3);
+      await manager.transitionStage(session.projectId, session.featureId, 4);
+      await manager.transitionStage(session.projectId, session.featureId, 5);
+      await manager.transitionStage(session.projectId, session.featureId, 6);
+
+      const completed = await manager.transitionStage(session.projectId, session.featureId, 7);
+
+      expect(completed.currentStage).toBe(7);
+      expect(completed.status).toBe('completed');
+    });
+
+    it('should not allow transitions from Stage 7 (terminal state)', async () => {
+      const session = await manager.createSession({
+        title: 'Terminal Test',
+        featureDescription: 'Test',
+        projectPath: '/test',
+      });
+
+      // Progress to Stage 7
+      await manager.transitionStage(session.projectId, session.featureId, 2);
+      await manager.transitionStage(session.projectId, session.featureId, 3);
+      await manager.transitionStage(session.projectId, session.featureId, 4);
+      await manager.transitionStage(session.projectId, session.featureId, 5);
+      await manager.transitionStage(session.projectId, session.featureId, 6);
+      await manager.transitionStage(session.projectId, session.featureId, 7);
+
+      // Can't transition from Stage 7
+      await expect(
+        manager.transitionStage(session.projectId, session.featureId, 6)
+      ).rejects.toThrow(/invalid stage transition/i);
+    });
   });
 
   describe('validateProjectPath', () => {

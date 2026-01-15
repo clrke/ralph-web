@@ -217,11 +217,11 @@ export default function SessionView() {
     if (data.isIntermediate) return;
     setExecutionStatus(data);
 
-    // Update session status when session is completed
+    // Update session status when session is completed (Stage 7)
     if (data.action === 'session_completed') {
       const currentSession = useSessionStore.getState().session;
       if (currentSession) {
-        setSession({ ...currentSession, status: 'completed' });
+        setSession({ ...currentSession, status: 'completed', currentStage: 7 });
       }
     }
   }, [setExecutionStatus, setSession]);
@@ -380,12 +380,12 @@ export default function SessionView() {
                 <span className="text-sm opacity-80">#{session.queuePosition} in queue</span>
               )}
             </div>
-          ) : session.status === 'completed' ? (
+          ) : currentStage === 7 || session.status === 'completed' ? (
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-green-600/20 text-green-300 border-green-500/30">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <span className="font-medium">Completed</span>
+              <span className="font-medium">Stage 7: Completed</span>
             </div>
           ) : (
             <StageStatusBadge
@@ -500,8 +500,8 @@ export default function SessionView() {
             <FinalApprovalSection session={session} projectId={projectId} featureId={featureId} />
           )}
 
-          {/* Session Completed */}
-          {session.status === 'completed' && (
+          {/* Stage 7: Session Completed */}
+          {(currentStage === 7 || session.status === 'completed') && (
             <div className="bg-green-900/20 border border-green-700/50 rounded-lg p-6">
               <div className="flex items-start gap-4">
                 <div className="p-3 bg-green-600/30 rounded-full">

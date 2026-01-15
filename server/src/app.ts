@@ -2233,16 +2233,15 @@ export function createApp(
       const previousStage = session.currentStage;
 
       if (action === 'merge') {
-        // Mark session as completed
-        const updatedSession = await sessionManager.updateSession(projectId, featureId, {
-          status: 'completed',
-        });
+        // Transition to Stage 7: Completed
+        const updatedSession = await sessionManager.transitionStage(projectId, featureId, 7);
 
         // Update status.json
         const statusPath = `${sessionDir}/status.json`;
         const status = await storage.readJson<Record<string, unknown>>(statusPath);
         if (status) {
           status.status = 'idle';
+          status.currentStage = 7;
           status.lastAction = 'session_completed';
           status.lastActionAt = new Date().toISOString();
           if (feedback) {
@@ -2251,7 +2250,8 @@ export function createApp(
           await storage.writeJson(statusPath, status);
         }
 
-        eventBroadcaster?.executionStatus(projectId, featureId, 'idle', 'session_completed', { stage: 6 });
+        eventBroadcaster?.stageChanged(updatedSession, previousStage);
+        eventBroadcaster?.executionStatus(projectId, featureId, 'idle', 'session_completed', { stage: 7 });
 
         console.log(`Session ${featureId} marked as completed by user`);
 

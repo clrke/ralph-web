@@ -21,6 +21,7 @@ const STAGE_STATUS_MAP: Record<number, SessionStatus> = {
   4: 'pr_creation',
   5: 'pr_review',
   6: 'final_approval',
+  7: 'completed',
 };
 
 const VALID_TRANSITIONS: Record<number, number[]> = {
@@ -29,7 +30,8 @@ const VALID_TRANSITIONS: Record<number, number[]> = {
   3: [2, 4], // Can go back to 2 for replanning
   4: [5],
   5: [2, 6], // Can go back to 2 for PR review issues, or forward to 6 for final approval
-  6: [2, 5], // Can return to Stage 2 for plan changes, or Stage 5 for re-review
+  6: [2, 5, 7], // Can return to Stage 2 for plan changes, Stage 5 for re-review, or Stage 7 to complete
+  7: [], // Terminal state - no transitions allowed
 };
 
 // Fields that cannot be modified via updateSession

@@ -6,7 +6,7 @@ export type SessionStatus =
   | 'pr_creation'      // Stage 4: PR creation
   | 'pr_review'        // Stage 5: PR review
   | 'final_approval'   // Stage 6: Final approval (user decides: merge, return to Stage 2, or re-review)
-  | 'completed'
+  | 'completed'        // Stage 7: Session completed, PR ready to merge
   | 'paused'
   | 'failed';
 
