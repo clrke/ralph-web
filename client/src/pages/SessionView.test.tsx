@@ -487,4 +487,265 @@ describe('SessionView', () => {
       });
     });
   });
+
+  describe('loading state context-aware messages', () => {
+    it('shows context-aware loading message for stage 1 spawning_agent', async () => {
+      useSessionStore.setState({
+        session: mockSession,
+        isLoading: false,
+        executionStatus: {
+          status: 'running',
+          action: 'stage1_started',
+          timestamp: '2024-01-01T00:00:00Z',
+          stage: 1,
+          subState: 'spawning_agent',
+        },
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Starting Claude agent for codebase analysis/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows context-aware loading message for stage 1 processing_output', async () => {
+      useSessionStore.setState({
+        session: mockSession,
+        isLoading: false,
+        executionStatus: {
+          status: 'running',
+          action: 'stage1_started',
+          timestamp: '2024-01-01T00:00:00Z',
+          stage: 1,
+          subState: 'processing_output',
+        },
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Analyzing project structure and gathering context/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows context-aware loading message for stage 1 validating_output', async () => {
+      useSessionStore.setState({
+        session: mockSession,
+        isLoading: false,
+        executionStatus: {
+          status: 'running',
+          action: 'stage1_started',
+          timestamp: '2024-01-01T00:00:00Z',
+          stage: 1,
+          subState: 'validating_output',
+        },
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Validating analysis results/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows context-aware loading message for stage 2 spawning_agent', async () => {
+      const stage2Session = createMockSession({ currentStage: 2, status: 'planning' });
+
+      useSessionStore.setState({
+        session: stage2Session,
+        plan: {
+          version: '1.0',
+          planVersion: 1,
+          sessionId: 'sess1',
+          isApproved: false,
+          reviewCount: 0,
+          createdAt: '2024-01-01T00:00:00Z',
+          steps: [],
+        },
+        isLoading: false,
+        executionStatus: {
+          status: 'running',
+          action: 'stage2_started',
+          timestamp: '2024-01-01T00:00:00Z',
+          stage: 2,
+          subState: 'spawning_agent',
+        },
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Starting Claude agent for plan review/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows context-aware loading message for stage 2 validating_output', async () => {
+      const stage2Session = createMockSession({ currentStage: 2, status: 'planning' });
+
+      useSessionStore.setState({
+        session: stage2Session,
+        plan: {
+          version: '1.0',
+          planVersion: 1,
+          sessionId: 'sess1',
+          isApproved: false,
+          reviewCount: 0,
+          createdAt: '2024-01-01T00:00:00Z',
+          steps: [],
+        },
+        isLoading: false,
+        executionStatus: {
+          status: 'running',
+          action: 'stage2_started',
+          timestamp: '2024-01-01T00:00:00Z',
+          stage: 2,
+          subState: 'validating_output',
+        },
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Validating plan structure and completeness/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows context-aware loading message for stage 4 processing_output', async () => {
+      const stage4Session = createMockSession({ currentStage: 4, status: 'pr_creation' });
+
+      useSessionStore.setState({
+        session: stage4Session,
+        plan: {
+          version: '1.0',
+          planVersion: 1,
+          sessionId: 'sess1',
+          isApproved: true,
+          reviewCount: 0,
+          createdAt: '2024-01-01T00:00:00Z',
+          steps: [
+            createMockStep({ id: 'step-1', orderIndex: 0, title: 'Test Step', status: 'completed' }),
+          ],
+        },
+        isLoading: false,
+        executionStatus: {
+          status: 'running',
+          action: 'stage4_started',
+          timestamp: '2024-01-01T00:00:00Z',
+          stage: 4,
+          subState: 'processing_output',
+        },
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Generating PR description and summary/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows context-aware loading message for stage 4 spawning_agent', async () => {
+      const stage4Session = createMockSession({ currentStage: 4, status: 'pr_creation' });
+
+      useSessionStore.setState({
+        session: stage4Session,
+        plan: {
+          version: '1.0',
+          planVersion: 1,
+          sessionId: 'sess1',
+          isApproved: true,
+          reviewCount: 0,
+          createdAt: '2024-01-01T00:00:00Z',
+          steps: [
+            createMockStep({ id: 'step-1', orderIndex: 0, title: 'Test Step', status: 'completed' }),
+          ],
+        },
+        isLoading: false,
+        executionStatus: {
+          status: 'running',
+          action: 'stage4_started',
+          timestamp: '2024-01-01T00:00:00Z',
+          stage: 4,
+          subState: 'spawning_agent',
+        },
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Starting Claude agent for PR creation/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows context-aware loading message for stage 5 processing_output', async () => {
+      const stage5Session = createMockSession({ currentStage: 5, status: 'pr_review' });
+
+      useSessionStore.setState({
+        session: stage5Session,
+        plan: {
+          version: '1.0',
+          planVersion: 1,
+          sessionId: 'sess1',
+          isApproved: true,
+          reviewCount: 0,
+          createdAt: '2024-01-01T00:00:00Z',
+          steps: [
+            createMockStep({ id: 'step-1', orderIndex: 0, title: 'Test Step', status: 'completed' }),
+          ],
+        },
+        isLoading: false,
+        executionStatus: {
+          status: 'running',
+          action: 'stage5_started',
+          timestamp: '2024-01-01T00:00:00Z',
+          stage: 5,
+          subState: 'processing_output',
+        },
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Analyzing CI results and PR feedback/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows default loading message when no subState is set', async () => {
+      useSessionStore.setState({
+        session: mockSession,
+        isLoading: false,
+        executionStatus: {
+          status: 'running',
+          action: 'stage1_started',
+          timestamp: '2024-01-01T00:00:00Z',
+          stage: 1,
+        },
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        // Without subState, it should show the default message for stage 1
+        expect(screen.getByText(/Claude is analyzing your project/i)).toBeInTheDocument();
+      });
+    });
+  });
 });

@@ -22,6 +22,58 @@ import type {
 } from '@claude-code-web/shared';
 import { ComplexityBadge } from '../components/PlanEditor/PlanNode';
 import { StageStatusBadge } from '../components/StageStatusBadge';
+import type { ExecutionSubState } from '@claude-code-web/shared';
+
+/**
+ * Human-readable loading messages for sub-state values by stage.
+ */
+const SUBSTATE_LOADING_MESSAGES: Partial<Record<ExecutionSubState, Record<number, string>>> = {
+  spawning_agent: {
+    1: 'Starting Claude agent for codebase analysis...',
+    2: 'Starting Claude agent for plan review...',
+    3: 'Starting Claude agent for implementation...',
+    4: 'Starting Claude agent for PR creation...',
+    5: 'Starting Claude agent for PR review...',
+  },
+  processing_output: {
+    1: 'Analyzing project structure and gathering context...',
+    2: 'Analyzing plan and generating feedback...',
+    3: 'Implementing changes...',
+    4: 'Generating PR description and summary...',
+    5: 'Analyzing CI results and PR feedback...',
+  },
+  parsing_response: {
+    1: 'Processing discovery findings...',
+    2: 'Processing review findings...',
+    3: 'Processing implementation results...',
+    4: 'Processing PR details...',
+    5: 'Processing review comments...',
+  },
+  validating_output: {
+    1: 'Validating analysis results...',
+    2: 'Validating plan structure and completeness...',
+    3: 'Validating implementation changes...',
+    4: 'Verifying PR was created successfully...',
+    5: 'Validating review completeness...',
+  },
+  saving_results: {
+    1: 'Saving discovery findings...',
+    2: 'Saving review results...',
+    3: 'Saving implementation progress...',
+    4: 'Saving PR information...',
+    5: 'Saving review results...',
+  },
+};
+
+/**
+ * Get a context-aware loading message based on sub-state and stage.
+ */
+function getLoadingMessage(subState: ExecutionSubState | undefined, stage: number, defaultMessage: string): string {
+  if (!subState) return defaultMessage;
+  const stageMessages = SUBSTATE_LOADING_MESSAGES[subState];
+  if (!stageMessages) return defaultMessage;
+  return stageMessages[stage] || defaultMessage;
+}
 
 const STAGE_LABELS: Record<number, string> = {
   1: 'Feature Discovery',
@@ -241,12 +293,12 @@ export default function SessionView() {
 
           {/* Stage 1: Discovery - show loading state if no questions */}
           {currentStage === 1 && unansweredQuestions.length === 0 && (
-            <DiscoveryLoadingSection />
+            <DiscoveryLoadingSection executionStatus={executionStatus} />
           )}
 
           {/* Stage 2: Plan Review */}
           {currentStage === 2 && plan && (
-            <PlanReviewSection plan={plan} isRunning={executionStatus?.status === 'running'} />
+            <PlanReviewSection plan={plan} isRunning={executionStatus?.status === 'running'} executionStatus={executionStatus} />
           )}
 
           {/* Stage 3: Implementation Progress */}
@@ -256,12 +308,12 @@ export default function SessionView() {
 
           {/* Stage 4: PR Creation */}
           {currentStage === 4 && (
-            <PRCreationSection plan={plan} isRunning={executionStatus?.status === 'running'} />
+            <PRCreationSection plan={plan} isRunning={executionStatus?.status === 'running'} executionStatus={executionStatus} />
           )}
 
           {/* Stage 5: PR Review */}
           {currentStage === 5 && (
-            <PRReviewSection plan={plan} isRunning={executionStatus?.status === 'running'} projectId={projectId} featureId={featureId} />
+            <PRReviewSection plan={plan} isRunning={executionStatus?.status === 'running'} projectId={projectId} featureId={featureId} executionStatus={executionStatus} />
           )}
 
           {/* Stage 6: Final Approval */}
@@ -397,7 +449,14 @@ export default function SessionView() {
   );
 }
 
-function DiscoveryLoadingSection() {
+function DiscoveryLoadingSection({ executionStatus }: { executionStatus?: ExecutionStatus | null }) {
+  // Get context-aware loading message based on sub-state
+  const loadingMessage = getLoadingMessage(
+    executionStatus?.subState,
+    1,
+    'Claude is analyzing your project...'
+  );
+
   return (
     <div className="bg-gray-800 rounded-lg p-6">
       <h2 className="text-xl font-semibold mb-4">Feature Discovery</h2>
@@ -407,7 +466,7 @@ function DiscoveryLoadingSection() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
           </svg>
         </div>
-        <p>Claude is analyzing your project...</p>
+        <p>{loadingMessage}</p>
         <p className="text-sm mt-2">Questions will appear here as they're generated.</p>
       </div>
     </div>
@@ -641,10 +700,17 @@ function QuestionCard({
   );
 }
 
-function PlanReviewSection({ plan, isRunning }: { plan: Plan; isRunning?: boolean }) {
+function PlanReviewSection({ plan, isRunning, executionStatus }: { plan: Plan; isRunning?: boolean; executionStatus?: ExecutionStatus | null }) {
   const { approvePlan, requestPlanChanges } = useSessionStore();
   const [viewMode, setViewMode] = useState<'list' | 'timeline'>('timeline');
   const [selectedStep, setSelectedStep] = useState<PlanStep | null>(null);
+
+  // Get context-aware loading message
+  const loadingMessage = getLoadingMessage(
+    executionStatus?.subState,
+    2,
+    'Claude is reviewing the implementation plan.'
+  );
 
   // While plan review is running, show a loading state instead of the plan
   if (isRunning) {
@@ -655,7 +721,7 @@ function PlanReviewSection({ plan, isRunning }: { plan: Plan; isRunning?: boolea
           <h2 className="text-xl font-semibold">Reviewing Plan...</h2>
         </div>
         <p className="text-gray-400">
-          Claude is reviewing the implementation plan. The plan will be shown once the review is complete.
+          {loadingMessage}
         </p>
         <div className="mt-4 p-3 bg-gray-700/50 rounded-lg">
           <p className="text-sm text-gray-400">
@@ -960,9 +1026,16 @@ function ImplementationListView({
   );
 }
 
-function PRCreationSection({ plan, isRunning }: { plan: Plan | null; isRunning?: boolean }) {
+function PRCreationSection({ plan, isRunning, executionStatus }: { plan: Plan | null; isRunning?: boolean; executionStatus?: ExecutionStatus | null }) {
   const completedSteps = plan?.steps.filter(s => s.status === 'completed').length ?? 0;
   const totalSteps = plan?.steps.length ?? 0;
+
+  // Get context-aware loading message
+  const loadingMessage = getLoadingMessage(
+    executionStatus?.subState,
+    4,
+    'Claude is preparing your changes for review...'
+  );
 
   return (
     <div className="space-y-6">
@@ -989,7 +1062,7 @@ function PRCreationSection({ plan, isRunning }: { plan: Plan | null; isRunning?:
               <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
               <div>
                 <p className="font-medium">Creating Pull Request</p>
-                <p className="text-gray-400 text-sm">Claude is preparing your changes for review...</p>
+                <p className="text-gray-400 text-sm">{loadingMessage}</p>
               </div>
             </>
           ) : (
@@ -1009,7 +1082,7 @@ function PRCreationSection({ plan, isRunning }: { plan: Plan | null; isRunning?:
   );
 }
 
-function PRReviewSection({ plan, isRunning, projectId, featureId }: { plan: Plan | null; isRunning?: boolean; projectId?: string; featureId?: string }) {
+function PRReviewSection({ plan, isRunning, projectId, featureId, executionStatus }: { plan: Plan | null; isRunning?: boolean; projectId?: string; featureId?: string; executionStatus?: ExecutionStatus | null }) {
   const completedSteps = plan?.steps.filter(s => s.status === 'completed').length ?? 0;
   const totalSteps = plan?.steps.length ?? 0;
   const needsReviewSteps = plan?.steps.filter(s => s.status === 'needs_review').length ?? 0;
@@ -1017,6 +1090,13 @@ function PRReviewSection({ plan, isRunning, projectId, featureId }: { plan: Plan
   const [showReReviewForm, setShowReReviewForm] = useState(false);
   const [remarks, setRemarks] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Get context-aware loading message
+  const loadingMessage = getLoadingMessage(
+    executionStatus?.subState,
+    5,
+    'Claude is checking CI status and reviewing the PR...'
+  );
 
   const handleRequestReReview = async () => {
     if (!projectId || !featureId) return;
@@ -1068,7 +1148,7 @@ function PRReviewSection({ plan, isRunning, projectId, featureId }: { plan: Plan
               <div className="w-8 h-8 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
               <div>
                 <p className="font-medium">Reviewing Changes</p>
-                <p className="text-gray-400 text-sm">Claude is checking CI status and reviewing the PR...</p>
+                <p className="text-gray-400 text-sm">{loadingMessage}</p>
               </div>
             </>
           ) : (
