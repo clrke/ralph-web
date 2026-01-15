@@ -27,8 +27,15 @@ const eventBroadcaster = new EventBroadcaster(io);
 // Create Express app with all dependencies
 const { app, resumeStuckSessions } = createApp(storage, sessionManager, eventBroadcaster);
 
-// Attach Express app to HTTP server
-httpServer.on('request', app);
+// Attach Express app to HTTP server AFTER Socket.IO is set up
+// Use a wrapper to prevent Express from processing Socket.IO requests
+httpServer.on('request', (req, res) => {
+  // Skip socket.io paths - let Socket.IO handle them
+  if (req.url?.startsWith('/socket.io')) {
+    return;
+  }
+  app(req, res);
+});
 
 // Handle Socket.IO engine errors to prevent crashes
 io.engine.on('connection_error', (err) => {

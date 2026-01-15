@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useSessionStore, type ExecutionStatus } from '../stores/sessionStore';
 import { TimelineView } from '../components/PlanEditor';
@@ -84,12 +84,112 @@ const STAGE_LABELS: Record<number, string> = {
   6: 'Final Approval',
 };
 
+const RETRY_MIN_IDLE_MINUTES = 5; // Minimum minutes idle before retry is enabled
+const RETRY_COOLDOWN_MS = 30000; // 30 second cooldown after clicking retry
+
+/**
+ * Smart retry button with safeguards against accidental double-clicks
+ */
+function RetryButton({
+  executionStatus,
+  unansweredQuestionsCount,
+  currentStage,
+  isRetrying,
+  onRetry,
+  lastActivityTimestamp,
+}: {
+  executionStatus: { status: string; timestamp: string } | null;
+  unansweredQuestionsCount: number;
+  currentStage: number;
+  isRetrying: boolean;
+  onRetry: () => Promise<void>;
+  /** Timestamp of the last conversation entry (actual Claude activity) */
+  lastActivityTimestamp: string | null;
+}) {
+  const [lastRetryTime, setLastRetryTime] = useState<number | null>(null);
+  const [now, setNow] = useState(Date.now());
+
+  // Update current time every 10 seconds to recalculate idle duration
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Don't show if running, has questions, or completed
+  if (executionStatus?.status === 'running' || unansweredQuestionsCount > 0 || currentStage >= 6) {
+    return null;
+  }
+
+  // Calculate how long since last actual Claude activity (from conversations, not execution status)
+  // Use the more recent of lastRetryTime or lastActivityTimestamp to reset idle after clicking retry
+  const lastActivityTime = lastActivityTimestamp ? new Date(lastActivityTimestamp).getTime() : null;
+  const effectiveLastActivity = lastRetryTime && (!lastActivityTime || lastRetryTime > lastActivityTime)
+    ? lastRetryTime
+    : lastActivityTime;
+  const idleMinutes = effectiveLastActivity ? Math.floor((now - effectiveLastActivity) / 60000) : 0;
+  const isIdleLongEnough = idleMinutes >= RETRY_MIN_IDLE_MINUTES;
+
+  // Check cooldown
+  const isInCooldown = lastRetryTime !== null && (now - lastRetryTime) < RETRY_COOLDOWN_MS;
+  const cooldownRemaining = lastRetryTime ? Math.ceil((RETRY_COOLDOWN_MS - (now - lastRetryTime)) / 1000) : 0;
+
+  // Determine if button should be disabled
+  const isDisabled = isRetrying || !isIdleLongEnough || isInCooldown;
+
+  // Build tooltip message
+  let tooltipMessage = 'Retry current stage if session appears stuck';
+  if (!isIdleLongEnough) {
+    tooltipMessage = `Wait ${RETRY_MIN_IDLE_MINUTES - idleMinutes} more minute(s) before retrying (idle: ${idleMinutes}m)`;
+  } else if (isInCooldown) {
+    tooltipMessage = `Cooldown: ${cooldownRemaining}s remaining`;
+  }
+
+  const handleClick = async () => {
+    // Confirmation dialog
+    const confirmed = window.confirm(
+      `Are you sure you want to retry?\n\nThis will restart the current stage. Only use this if the session appears stuck.\n\nIdle time: ${idleMinutes} minutes`
+    );
+    if (!confirmed) return;
+
+    setLastRetryTime(Date.now());
+    await onRetry();
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={isDisabled}
+      className={`px-3 py-1 rounded-full text-sm transition-colors flex items-center gap-2 ${
+        isDisabled
+          ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+          : 'bg-yellow-600 hover:bg-yellow-700 text-white'
+      }`}
+      title={tooltipMessage}
+    >
+      {isRetrying ? (
+        <>
+          <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+          Retrying...
+        </>
+      ) : (
+        <>
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          Retry {isIdleLongEnough ? `(${idleMinutes}m idle)` : `(${idleMinutes}/${RETRY_MIN_IDLE_MINUTES}m)`}
+        </>
+      )}
+    </button>
+  );
+}
+
 export default function SessionView() {
   const { projectId, featureId } = useParams<{ projectId: string; featureId: string }>();
   const {
     session,
     plan,
     questions,
+    conversations,
     isLoading,
     error,
     executionStatus,
@@ -102,12 +202,14 @@ export default function SessionView() {
     appendLiveOutput,
     updateStepStatus,
     setImplementationProgress,
+    retrySession,
   } = useSessionStore();
 
   // Modal state (must be before early returns to maintain hooks order)
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
 
   // Socket.IO event handlers
   const handleExecutionStatus = useCallback((data: ExecutionStatusEvent) => {
@@ -181,12 +283,13 @@ export default function SessionView() {
     }
   }, [projectId, featureId, isTransitioning, setSession]);
 
-  // Fetch session data
+  // Fetch session data and conversations
   useEffect(() => {
     if (projectId && featureId) {
       fetchSession(projectId, featureId);
+      fetchConversations(projectId, featureId);
     }
-  }, [projectId, featureId, fetchSession]);
+  }, [projectId, featureId, fetchSession, fetchConversations]);
 
   // Socket.IO connection
   useEffect(() => {
@@ -264,6 +367,26 @@ export default function SessionView() {
             action={executionStatus?.action}
             subState={executionStatus?.subState}
             status={executionStatus?.status ?? 'idle'}
+          />
+          {/* Retry button - show when session appears stuck */}
+          <RetryButton
+            executionStatus={executionStatus}
+            unansweredQuestionsCount={unansweredQuestions.length}
+            currentStage={currentStage}
+            isRetrying={isRetrying}
+            onRetry={async () => {
+              setIsRetrying(true);
+              try {
+                await retrySession();
+              } finally {
+                setIsRetrying(false);
+              }
+            }}
+            lastActivityTimestamp={
+              conversations.length > 0
+                ? conversations[conversations.length - 1].timestamp
+                : null
+            }
           />
         </div>
         <h1 className="text-3xl font-bold">{session.title}</h1>
@@ -482,8 +605,9 @@ const STAGE_QUESTION_TITLES: Record<number, string> = {
 };
 
 function QuestionsSection({ questions, stage }: { questions: Question[]; stage: number }) {
-  const { submitAllAnswers } = useSessionStore();
+  const { submitAllAnswers, plan } = useSessionStore();
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({});
+  const [remarks, setRemarks] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -506,7 +630,7 @@ function QuestionsSection({ questions, stage }: { questions: Question[]; stage: 
         questionId: q.id,
         answer: { value: selectedAnswers[q.id] },
       }));
-      await submitAllAnswers(answers);
+      await submitAllAnswers(answers, remarks.trim() || undefined);
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : 'Failed to submit answers');
     } finally {
@@ -530,8 +654,24 @@ function QuestionsSection({ questions, stage }: { questions: Question[]; stage: 
           question={question}
           selectedValue={selectedAnswers[question.id]}
           onSelect={(value) => handleSelectAnswer(question.id, value)}
+          plan={plan}
         />
       ))}
+
+      {/* Additional concerns/remarks textarea */}
+      <div className="space-y-2">
+        <label htmlFor="remarks" className="block text-sm font-medium text-gray-300">
+          Additional concerns or requested changes (optional)
+        </label>
+        <textarea
+          id="remarks"
+          value={remarks}
+          onChange={(e) => setRemarks(e.target.value)}
+          placeholder="Any other concerns about the plan? Changes you'd like to request?"
+          rows={3}
+          className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-gray-100 placeholder-gray-500"
+        />
+      </div>
 
       {submitError && (
         <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-400 text-sm">
@@ -555,16 +695,106 @@ function QuestionsSection({ questions, stage }: { questions: Question[]; stage: 
 }
 
 /**
- * Renders simple markdown: **bold**, `code`, and newlines
+ * Tooltip component for displaying step details on hover
  */
-function SimpleMarkdown({ text, className = '' }: { text: string; className?: string }) {
+function StepTooltip({ step, leftOffset, arrowOffset }: { step: PlanStep; leftOffset: number; arrowOffset: number }) {
+  return (
+    <div
+      className="absolute z-50 w-96 max-w-[90vw] p-4 bg-gray-900 border border-gray-700 rounded-lg shadow-xl text-sm bottom-full mb-2"
+      style={{ left: `${leftOffset}px` }}
+    >
+      <div className="font-medium text-white mb-2">
+        Step {step.orderIndex + 1}: {step.title}
+      </div>
+      <div className="text-gray-300 text-xs leading-relaxed whitespace-pre-wrap">
+        {step.description}
+      </div>
+      {step.complexity && (
+        <div className="mt-2">
+          <ComplexityBadge complexity={step.complexity} />
+        </div>
+      )}
+      {/* Arrow pointing down */}
+      <div
+        className="absolute top-full w-0 h-0 border-l-8 border-r-8 border-t-8 border-transparent border-t-gray-700"
+        style={{ left: `${arrowOffset}px` }}
+      />
+    </div>
+  );
+}
+
+const TOOLTIP_WIDTH = 384; // w-96 = 24rem = 384px
+const TOOLTIP_PADDING = 16; // padding from viewport edge
+
+/**
+ * Highlighted step reference with hover tooltip
+ */
+function StepReference({ stepNumber, plan }: { stepNumber: number; plan?: Plan | null }) {
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [tooltipOffset, setTooltipOffset] = useState({ left: 0, arrow: 16 });
+  const spanRef = useRef<HTMLSpanElement>(null);
+
+  // Find the step by orderIndex (0-based), stepNumber in text is 1-based
+  const step = plan?.steps.find((s) => s.orderIndex === stepNumber - 1);
+
+  const handleMouseEnter = useCallback(() => {
+    if (spanRef.current) {
+      const rect = spanRef.current.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+
+      // Default: tooltip starts at left edge of the step reference
+      let leftOffset = 0;
+      let arrowOffset = 16; // default arrow position
+
+      // Check if tooltip would overflow right edge
+      const tooltipRight = rect.left + TOOLTIP_WIDTH;
+      if (tooltipRight > viewportWidth - TOOLTIP_PADDING) {
+        // Shift tooltip left to fit within viewport
+        const overflow = tooltipRight - (viewportWidth - TOOLTIP_PADDING);
+        leftOffset = -overflow;
+        // Adjust arrow to still point at the step reference
+        arrowOffset = 16 + overflow;
+      }
+
+      setTooltipOffset({ left: leftOffset, arrow: arrowOffset });
+    }
+    setShowTooltip(true);
+  }, []);
+
+  if (!step) {
+    // If no step found, just render the text normally
+    return <span>Step {stepNumber}</span>;
+  }
+
+  return (
+    <span
+      ref={spanRef}
+      className="relative inline-block"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={() => setShowTooltip(false)}
+    >
+      <span className="text-blue-400 hover:text-blue-300 cursor-help underline decoration-dotted underline-offset-2">
+        Step {stepNumber}
+      </span>
+      {showTooltip && <StepTooltip step={step} leftOffset={tooltipOffset.left} arrowOffset={tooltipOffset.arrow} />}
+    </span>
+  );
+}
+
+/**
+ * Renders simple markdown: **bold**, `code`, and newlines
+ * Also detects "Step X" references and highlights them with tooltips when plan is provided
+ */
+function SimpleMarkdown({ text, className = '', plan }: { text: string; className?: string; plan?: Plan | null }) {
   const rendered = useMemo(() => {
     // Split by newlines first
     return text.split('\n').map((line, lineIndex) => {
-      // Process inline markdown: **bold** and `code`
+      // Process inline markdown: **bold**, `code`, and Step X references
       const parts: (string | JSX.Element)[] = [];
       let lastIndex = 0;
-      const regex = /(\*\*(.+?)\*\*)|(`(.+?)`)/g;
+      // Added Step X pattern (case insensitive, captures the number)
+      // Matches "Step 4" or "Step-4" formats
+      const regex = /(\*\*(.+?)\*\*)|(`(.+?)`)|(\bStep[\s-](\d+)\b)/gi;
       let match;
 
       while ((match = regex.exec(line)) !== null) {
@@ -583,6 +813,12 @@ function SimpleMarkdown({ text, className = '' }: { text: string; className?: st
               {match[4]}
             </code>
           );
+        } else if (match[6]) {
+          // Step X reference
+          const stepNumber = parseInt(match[6], 10);
+          parts.push(
+            <StepReference key={`${lineIndex}-${match.index}`} stepNumber={stepNumber} plan={plan} />
+          );
         }
 
         lastIndex = match.index + match[0].length;
@@ -600,7 +836,7 @@ function SimpleMarkdown({ text, className = '' }: { text: string; className?: st
         </span>
       );
     });
-  }, [text]);
+  }, [text, plan]);
 
   return <span className={className}>{rendered}</span>;
 }
@@ -609,10 +845,12 @@ function QuestionCard({
   question,
   selectedValue,
   onSelect,
+  plan,
 }: {
   question: Question;
   selectedValue?: string;
   onSelect: (value: string) => void;
+  plan?: Plan | null;
 }) {
   const [showOther, setShowOther] = useState(false);
   const [otherText, setOtherText] = useState('');
@@ -637,7 +875,7 @@ function QuestionCard({
   return (
     <div className="bg-gray-800 rounded-lg p-6">
       <div className="font-medium mb-4">
-        <SimpleMarkdown text={question.questionText} />
+        <SimpleMarkdown text={question.questionText} plan={plan} />
       </div>
       <div className="space-y-2">
         {question.options.map(option => {
@@ -701,9 +939,12 @@ function QuestionCard({
 }
 
 function PlanReviewSection({ plan, isRunning, executionStatus }: { plan: Plan; isRunning?: boolean; executionStatus?: ExecutionStatus | null }) {
-  const { approvePlan, requestPlanChanges } = useSessionStore();
+  const { approvePlan, requestPlanChanges, questions, isAwaitingClaudeResponse } = useSessionStore();
   const [viewMode, setViewMode] = useState<'list' | 'timeline'>('timeline');
   const [selectedStep, setSelectedStep] = useState<PlanStep | null>(null);
+
+  // Check if there are any unanswered questions (hide approval buttons until all answered)
+  const hasUnansweredQuestions = questions.some(q => !q.answer);
 
   // Get context-aware loading message
   const loadingMessage = getLoadingMessage(
@@ -804,7 +1045,8 @@ function PlanReviewSection({ plan, isRunning, executionStatus }: { plan: Plan; i
       {/* Plan validation status */}
       <PlanValidationStatusPanel plan={plan} />
 
-      {!plan.isApproved && (
+      {/* Only show approval buttons when plan is not approved, no pending questions, and not waiting for Claude */}
+      {!plan.isApproved && !hasUnansweredQuestions && !isRunning && !isAwaitingClaudeResponse && (
         <div className="flex gap-4">
           <button
             onClick={() => {
@@ -1083,9 +1325,14 @@ function PRCreationSection({ plan, isRunning, executionStatus }: { plan: Plan | 
 }
 
 function PRReviewSection({ plan, isRunning, projectId, featureId, executionStatus }: { plan: Plan | null; isRunning?: boolean; projectId?: string; featureId?: string; executionStatus?: ExecutionStatus | null }) {
+  const { questions, isAwaitingClaudeResponse } = useSessionStore();
   const completedSteps = plan?.steps.filter(s => s.status === 'completed').length ?? 0;
   const totalSteps = plan?.steps.length ?? 0;
   const needsReviewSteps = plan?.steps.filter(s => s.status === 'needs_review').length ?? 0;
+
+  // Hide actions when there are active conversations
+  const hasUnansweredQuestions = questions.some(q => !q.answer);
+  const hasActiveConversation = isRunning || isAwaitingClaudeResponse || hasUnansweredQuestions;
 
   const [showReReviewForm, setShowReReviewForm] = useState(false);
   const [remarks, setRemarks] = useState('');
@@ -1164,8 +1411,8 @@ function PRReviewSection({ plan, isRunning, projectId, featureId, executionStatu
           )}
         </div>
 
-        {/* Re-review request form */}
-        {!isRunning && (
+        {/* Re-review request form - hidden during active conversations */}
+        {!hasActiveConversation && (
           <div className="mt-4">
             {!showReReviewForm ? (
               <button
@@ -1233,9 +1480,15 @@ function PRReviewSection({ plan, isRunning, projectId, featureId, executionStatu
 }
 
 function FinalApprovalSection({ session, projectId, featureId }: { session: Session; projectId: string; featureId: string }) {
+  const { questions, isAwaitingClaudeResponse, executionStatus } = useSessionStore();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedAction, setSelectedAction] = useState<'merge' | 'plan_changes' | 're_review' | null>(null);
   const [feedback, setFeedback] = useState('');
+
+  // Hide actions when there are active conversations
+  const hasUnansweredQuestions = questions.some(q => !q.answer);
+  const isRunning = executionStatus?.status === 'running';
+  const hasActiveConversation = isRunning || isAwaitingClaudeResponse || hasUnansweredQuestions;
 
   const handleAction = async (action: 'merge' | 'plan_changes' | 're_review') => {
     setIsSubmitting(true);
@@ -1302,117 +1555,119 @@ function FinalApprovalSection({ session, projectId, featureId }: { session: Sess
           </div>
         )}
 
-        {/* Action buttons */}
-        <div className="space-y-4">
-          <p className="text-sm text-gray-400">What would you like to do?</p>
+        {/* Action buttons - hidden during active conversations */}
+        {!hasActiveConversation && (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-400">What would you like to do?</p>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Merge button */}
-            <button
-              onClick={() => setSelectedAction('merge')}
-              disabled={isSubmitting}
-              className={`p-4 rounded-lg border-2 transition-all ${
-                selectedAction === 'merge'
-                  ? 'border-green-500 bg-green-900/30'
-                  : 'border-gray-600 hover:border-green-500/50 hover:bg-green-900/10'
-              }`}
-            >
-              <div className="flex flex-col items-center gap-2">
-                <svg className="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                <span className="font-medium text-green-400">Complete Session</span>
-                <span className="text-xs text-gray-400 text-center">Mark as complete - ready to merge</span>
-              </div>
-            </button>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Merge button */}
+              <button
+                onClick={() => setSelectedAction('merge')}
+                disabled={isSubmitting}
+                className={`p-4 rounded-lg border-2 transition-all ${
+                  selectedAction === 'merge'
+                    ? 'border-green-500 bg-green-900/30'
+                    : 'border-gray-600 hover:border-green-500/50 hover:bg-green-900/10'
+                }`}
+              >
+                <div className="flex flex-col items-center gap-2">
+                  <svg className="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span className="font-medium text-green-400">Complete Session</span>
+                  <span className="text-xs text-gray-400 text-center">Mark as complete - ready to merge</span>
+                </div>
+              </button>
 
-            {/* Return to Plan Review button */}
-            <button
-              onClick={() => setSelectedAction('plan_changes')}
-              disabled={isSubmitting}
-              className={`p-4 rounded-lg border-2 transition-all ${
-                selectedAction === 'plan_changes'
-                  ? 'border-blue-500 bg-blue-900/30'
-                  : 'border-gray-600 hover:border-blue-500/50 hover:bg-blue-900/10'
-              }`}
-            >
-              <div className="flex flex-col items-center gap-2">
-                <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-                <span className="font-medium text-blue-400">Request Changes</span>
-                <span className="text-xs text-gray-400 text-center">Return to Stage 2 for plan updates</span>
-              </div>
-            </button>
+              {/* Return to Plan Review button */}
+              <button
+                onClick={() => setSelectedAction('plan_changes')}
+                disabled={isSubmitting}
+                className={`p-4 rounded-lg border-2 transition-all ${
+                  selectedAction === 'plan_changes'
+                    ? 'border-blue-500 bg-blue-900/30'
+                    : 'border-gray-600 hover:border-blue-500/50 hover:bg-blue-900/10'
+                }`}
+              >
+                <div className="flex flex-col items-center gap-2">
+                  <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  <span className="font-medium text-blue-400">Request Changes</span>
+                  <span className="text-xs text-gray-400 text-center">Return to Stage 2 for plan updates</span>
+                </div>
+              </button>
 
-            {/* Re-review button */}
-            <button
-              onClick={() => setSelectedAction('re_review')}
-              disabled={isSubmitting}
-              className={`p-4 rounded-lg border-2 transition-all ${
-                selectedAction === 're_review'
-                  ? 'border-yellow-500 bg-yellow-900/30'
-                  : 'border-gray-600 hover:border-yellow-500/50 hover:bg-yellow-900/10'
-              }`}
-            >
-              <div className="flex flex-col items-center gap-2">
-                <svg className="w-8 h-8 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                <span className="font-medium text-yellow-400">Re-Review PR</span>
-                <span className="text-xs text-gray-400 text-center">Return to Stage 5 for another review</span>
-              </div>
-            </button>
-          </div>
-
-          {/* Feedback form (shown when action selected) */}
-          {selectedAction && (
-            <div className="mt-4 p-4 bg-gray-700/50 rounded-lg space-y-3">
-              <label className="block text-sm font-medium">
-                {selectedAction === 'merge' ? 'Any final notes? (optional)' :
-                 selectedAction === 'plan_changes' ? 'What changes do you need?' :
-                 'What should Claude focus on in the re-review?'}
-              </label>
-              <textarea
-                value={feedback}
-                onChange={(e) => setFeedback(e.target.value)}
-                placeholder={
-                  selectedAction === 'merge' ? 'Add any notes about the implementation...' :
-                  selectedAction === 'plan_changes' ? 'Describe the changes you want to make to the plan...' :
-                  'Describe specific areas to focus on...'
-                }
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500"
-                rows={3}
-              />
-              <div className="flex gap-2">
-                <button
-                  onClick={() => {
-                    setSelectedAction(null);
-                    setFeedback('');
-                  }}
-                  className="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-lg text-sm font-medium transition-colors"
-                  disabled={isSubmitting}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => handleAction(selectedAction)}
-                  disabled={isSubmitting || (selectedAction !== 'merge' && !feedback.trim())}
-                  className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
-                    selectedAction === 'merge' ? 'bg-green-600 hover:bg-green-700' :
-                    selectedAction === 'plan_changes' ? 'bg-blue-600 hover:bg-blue-700' :
-                    'bg-yellow-600 hover:bg-yellow-700'
-                  }`}
-                >
-                  {isSubmitting ? 'Processing...' :
-                   selectedAction === 'merge' ? 'Complete Session' :
-                   selectedAction === 'plan_changes' ? 'Return to Plan Review' :
-                   'Start Re-Review'}
-                </button>
-              </div>
+              {/* Re-review button */}
+              <button
+                onClick={() => setSelectedAction('re_review')}
+                disabled={isSubmitting}
+                className={`p-4 rounded-lg border-2 transition-all ${
+                  selectedAction === 're_review'
+                    ? 'border-yellow-500 bg-yellow-900/30'
+                    : 'border-gray-600 hover:border-yellow-500/50 hover:bg-yellow-900/10'
+                }`}
+              >
+                <div className="flex flex-col items-center gap-2">
+                  <svg className="w-8 h-8 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <span className="font-medium text-yellow-400">Re-Review PR</span>
+                  <span className="text-xs text-gray-400 text-center">Return to Stage 5 for another review</span>
+                </div>
+              </button>
             </div>
-          )}
-        </div>
+
+            {/* Feedback form (shown when action selected) */}
+            {selectedAction && (
+              <div className="mt-4 p-4 bg-gray-700/50 rounded-lg space-y-3">
+                <label className="block text-sm font-medium">
+                  {selectedAction === 'merge' ? 'Any final notes? (optional)' :
+                   selectedAction === 'plan_changes' ? 'What changes do you need?' :
+                   'What should Claude focus on in the re-review?'}
+                </label>
+                <textarea
+                  value={feedback}
+                  onChange={(e) => setFeedback(e.target.value)}
+                  placeholder={
+                    selectedAction === 'merge' ? 'Add any notes about the implementation...' :
+                    selectedAction === 'plan_changes' ? 'Describe the changes you want to make to the plan...' :
+                    'Describe specific areas to focus on...'
+                  }
+                  className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                  rows={3}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setSelectedAction(null);
+                      setFeedback('');
+                    }}
+                    className="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-lg text-sm font-medium transition-colors"
+                    disabled={isSubmitting}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => handleAction(selectedAction)}
+                    disabled={isSubmitting || (selectedAction !== 'merge' && !feedback.trim())}
+                    className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
+                      selectedAction === 'merge' ? 'bg-green-600 hover:bg-green-700' :
+                      selectedAction === 'plan_changes' ? 'bg-blue-600 hover:bg-blue-700' :
+                      'bg-yellow-600 hover:bg-yellow-700'
+                    }`}
+                  >
+                    {isSubmitting ? 'Processing...' :
+                     selectedAction === 'merge' ? 'Complete Session' :
+                     selectedAction === 'plan_changes' ? 'Return to Plan Review' :
+                     'Start Re-Review'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -88,13 +88,18 @@ export const AnswerQuestionInputSchema = z.union([
   z.object({ values: z.array(z.string()) }),
 ]);
 
+// Single answer item schema
+const AnswerItemSchema = z.object({
+  questionId: z.string().min(1),
+  answer: AnswerQuestionInputSchema,
+});
+
 // Batch answers input schema (all unanswered questions at once)
-export const BatchAnswersInputSchema = z.array(
-  z.object({
-    questionId: z.string().min(1),
-    answer: AnswerQuestionInputSchema,
-  })
-).min(1, 'At least one answer is required');
+// Accepts object with answers array and optional remarks
+export const BatchAnswersInputSchema = z.object({
+  answers: z.array(AnswerItemSchema).min(1, 'At least one answer is required'),
+  remarks: z.string().max(5000).optional(),
+});
 
 // Plan approval input schema
 export const PlanApprovalInputSchema = z.object({}).strict();

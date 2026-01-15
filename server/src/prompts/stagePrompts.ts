@@ -132,7 +132,7 @@ isApproved: false
 \`\`\`
 [PLAN_STEP id="step-1" parent="null" status="pending" complexity="low"]
 Create feature branch
-Create and checkout feature branch: git checkout -b ${session.featureBranch} from ${session.baseBranch}
+Pull latest from ${session.baseBranch} and create feature branch: git checkout ${session.baseBranch} && git pull origin ${session.baseBranch} && git checkout -b ${session.featureBranch}
 [/PLAN_STEP]
 \`\`\`
 
@@ -428,7 +428,8 @@ Question about the feedback...
 export function buildBatchAnswersContinuationPrompt(
   answeredQuestions: Question[],
   currentStage: number,
-  claudePlanFilePath?: string | null
+  claudePlanFilePath?: string | null,
+  remarks?: string
 ): string {
   // Sanitize user answers to prevent marker injection
   const answers = answeredQuestions.map(q => {
@@ -438,10 +439,15 @@ export function buildBatchAnswersContinuationPrompt(
     return `**Q:** ${q.questionText}\n**A:** ${answerText}`;
   }).join('\n\n');
 
+  // Sanitize and include remarks if provided
+  const remarksSection = remarks?.trim()
+    ? `\n\n**Additional concerns/requested changes from user:**\n${escapeMarkers(remarks.trim())}`
+    : '';
+
   if (currentStage === 1) {
     return `The user answered your discovery questions:
 
-${answers}
+${answers}${remarksSection}
 
 Continue with the discovery process based on these answers.
 
@@ -462,9 +468,9 @@ When you have enough information:
   // Stage 2 continuation
   return `The user answered your review questions:
 
-${answers}
+${answers}${remarksSection}
 
-Continue with the review process based on these answers.
+Continue with the review process based on these answers.${remarks?.trim() ? ' Pay special attention to the additional concerns raised by the user.' : ''}
 
 IMPORTANT: If there are more issues to address, you MUST use this exact format:
 [DECISION_NEEDED priority="1|2|3" category="code_quality|architecture|security|performance"]
@@ -1099,7 +1105,7 @@ ${step.description || 'No description provided.'}
 
 ${testNote}
 Commit when done. Output [STEP_COMPLETE id="${step.id}"] with summary.
-If blocked, use [DECISION_NEEDED category="blocker"].`;
+If blocked (e.g., a planning assumption discovered to be incorrect during implementation), use [DECISION_NEEDED category="blocker"].`;
 }
 
 /**

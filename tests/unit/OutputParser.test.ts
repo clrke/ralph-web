@@ -124,7 +124,7 @@ Add login endpoint
   });
 
   describe('parseStepComplete', () => {
-    it('should parse STEP_COMPLETE marker', () => {
+    it('should parse STEP_COMPLETE marker with double quotes', () => {
       const input = `
 [STEP_COMPLETE id="step-1"]
 Created the authentication middleware with JWT validation.
@@ -137,6 +137,73 @@ Added tests for token expiry.
         id: 'step-1',
         summary: expect.stringContaining('JWT validation'),
       });
+    });
+
+    it('should parse STEP_COMPLETE marker with single quotes', () => {
+      const input = `
+[STEP_COMPLETE id='step-14']
+Full test suite verified with no regressions.
+[/STEP_COMPLETE]
+`;
+      const result = parser.parse(input);
+
+      expect(result.stepCompleted).toMatchObject({
+        id: 'step-14',
+        summary: expect.stringContaining('test suite'),
+      });
+      expect(result.stepsCompleted).toHaveLength(1);
+      expect(result.stepsCompleted[0].id).toBe('step-14');
+    });
+
+    it('should parse self-closing STEP_COMPLETE without closing tag (double quotes)', () => {
+      const input = `
+Step 14 is complete.
+
+[STEP_COMPLETE id="step-14"]
+
+**Summary:** Full test suite passes with no regressions.
+`;
+      const result = parser.parse(input);
+
+      expect(result.stepsCompleted).toHaveLength(1);
+      expect(result.stepsCompleted[0].id).toBe('step-14');
+      // Self-closing markers without inline content use default summary
+      expect(result.stepsCompleted[0].summary).toBeDefined();
+    });
+
+    it('should extract summary from inline content after self-closing marker', () => {
+      const input = `[STEP_COMPLETE id="step-5"] Done with authentication module.`;
+      const result = parser.parse(input);
+
+      expect(result.stepsCompleted).toHaveLength(1);
+      expect(result.stepsCompleted[0].id).toBe('step-5');
+      expect(result.stepsCompleted[0].summary).toContain('authentication module');
+    });
+
+    it('should parse self-closing STEP_COMPLETE without closing tag (single quotes)', () => {
+      const input = `
+[STEP_COMPLETE id='step-14']
+
+**Summary:** Full test suite passes with no regressions.
+`;
+      const result = parser.parse(input);
+
+      expect(result.stepsCompleted).toHaveLength(1);
+      expect(result.stepsCompleted[0].id).toBe('step-14');
+    });
+
+    it('should handle Claude actual output format from step-14', () => {
+      // This is the exact format Claude outputs that caused the infinite loop
+      const input = `Step 14 is complete. The commit 94f1b1c exists with message "Step step-14: Run full test suite and verify no regressions" and the working tree is clean.
+
+[STEP_COMPLETE id='step-14']
+
+**Summary:** Full test suite passes with no regressions. Build succeeds. Server/Shared: 1377 tests pass. Client: 122 tests pass. Commit 94f1b1c marks completion.`;
+
+      const result = parser.parse(input);
+
+      expect(result.stepsCompleted).toHaveLength(1);
+      expect(result.stepsCompleted[0].id).toBe('step-14');
     });
   });
 

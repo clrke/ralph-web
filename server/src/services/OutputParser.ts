@@ -161,7 +161,11 @@ export class OutputParser {
           const optionMatch = line.match(/^-\s+(?:\*?\*?Option\s+\w+:\s*\*?\*?\s*)?(.+?)(?:\s+\(recommended\))?$/i);
           if (optionMatch) {
             const isRecommended = hasRecommendedSuffix;
-            const label = optionMatch[1].replace(/\s*\(recommended\)\s*/i, '').trim();
+            // Strip markdown bold markers (**) from label - they shouldn't be in option text
+            const label = optionMatch[1]
+              .replace(/\s*\(recommended\)\s*/i, '')
+              .replace(/^\*\*|\*\*$/g, '') // Strip leading/trailing **
+              .trim();
             options.push({ label, recommended: isRecommended });
           }
         } else if (line.trim()) {
@@ -246,8 +250,8 @@ export class OutputParser {
     const steps: ParsedStepComplete[] = [];
     const seenIds = new Set<string>();
 
-    // Primary: Parse formal [STEP_COMPLETE] markers
-    const formalRegex = /\[STEP_COMPLETE\s+id="([^"]+)"\]([\s\S]*?)\[\/STEP_COMPLETE\]/g;
+    // Primary: Parse formal [STEP_COMPLETE] markers with closing tag (both quote styles)
+    const formalRegex = /\[STEP_COMPLETE\s+id=['"]([^'"]+)['"]\]([\s\S]*?)\[\/STEP_COMPLETE\]/g;
     let match;
     while ((match = formalRegex.exec(input)) !== null) {
       const content = match[2].trim();
@@ -270,6 +274,29 @@ export class OutputParser {
         summary: content,
         testsAdded,
         testsPassing,
+      });
+    }
+
+    // Also parse self-closing [STEP_COMPLETE id="xxx"] without closing tag
+    // Claude sometimes outputs just the marker without closing tag
+    const selfClosingRegex = /\[STEP_COMPLETE\s+id=['"]([^'"]+)['"]\](?!\s*[\s\S]*?\[\/STEP_COMPLETE\])/g;
+    while ((match = selfClosingRegex.exec(input)) !== null) {
+      const stepId = match[1];
+      if (seenIds.has(stepId)) continue; // Already found with closing tag
+
+      // Try to extract summary from text after the marker
+      const startPos = match.index + match[0].length;
+      const remainingText = input.slice(startPos);
+      // Get text until next marker, heading, or double newline
+      const summaryMatch = remainingText.match(/^[\s\S]*?(?=\n\n|\[STEP_|\[IMPLEMENTATION|$)/);
+      const summary = summaryMatch ? summaryMatch[0].trim() : `Step ${stepId} completed`;
+
+      seenIds.add(stepId);
+      steps.push({
+        id: stepId,
+        summary: summary || `Step ${stepId} completed`,
+        testsAdded: [],
+        testsPassing: true,
       });
     }
 

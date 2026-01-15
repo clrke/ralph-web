@@ -50,6 +50,30 @@ const outputParser = new OutputParser();
 const orchestrator = new ClaudeOrchestrator(outputParser);
 const haikuPostProcessor = new HaikuPostProcessor(outputParser);
 
+// Lock to prevent concurrent Stage 3 executions per session
+const stage3ExecutionLocks = new Map<string, boolean>();
+
+function getSessionKey(projectId: string, featureId: string): string {
+  return `${projectId}/${featureId}`;
+}
+
+function acquireStage3Lock(projectId: string, featureId: string): boolean {
+  const key = getSessionKey(projectId, featureId);
+  if (stage3ExecutionLocks.get(key)) {
+    console.log(`[Stage 3 Lock] Execution already in progress for ${featureId}, skipping`);
+    return false;
+  }
+  stage3ExecutionLocks.set(key, true);
+  console.log(`[Stage 3 Lock] Acquired lock for ${featureId}`);
+  return true;
+}
+
+function releaseStage3Lock(projectId: string, featureId: string): void {
+  const key = getSessionKey(projectId, featureId);
+  stage3ExecutionLocks.delete(key);
+  console.log(`[Stage 3 Lock] Released lock for ${featureId}`);
+}
+
 /**
  * Apply Haiku post-processing to extract various content types when Claude's output
  * lacks proper markers. Uses smart extraction based on current stage.
@@ -1040,16 +1064,22 @@ async function executeStage3Steps(
   resumeStepId?: string,
   resumeContext?: string
 ): Promise<void> {
-  const sessionDir = `${session.projectId}/${session.featureId}`;
-
-  // Load current plan
-  let plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
-  if (!plan) {
-    console.error(`No plan found for ${session.featureId}`);
-    return;
+  // Acquire lock to prevent concurrent executions
+  if (!acquireStage3Lock(session.projectId, session.featureId)) {
+    return; // Another execution is already in progress
   }
 
-  console.log(`Starting Stage 3 step-by-step execution for ${session.featureId}`);
+  try {
+    const sessionDir = `${session.projectId}/${session.featureId}`;
+
+    // Load current plan
+    let plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+    if (!plan) {
+      console.error(`No plan found for ${session.featureId}`);
+      return;
+    }
+
+    console.log(`Starting Stage 3 step-by-step execution for ${session.featureId}`);
 
   // Convert any 'needs_review' steps to 'pending' at the start of Stage 3
   // This handles the transition from Stage 2 planning to Stage 3 implementation
@@ -1171,6 +1201,10 @@ async function executeStage3Steps(
     }
 
     console.log(`Step [${nextStep.id}] completed, checking for next step...`);
+  }
+  } finally {
+    // Always release the lock when done
+    releaseStage3Lock(session.projectId, session.featureId);
   }
 }
 
@@ -1391,10 +1425,20 @@ async function spawnStage4PRCreation(
     // Broadcast parsing_response before handling result
     eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage4_started', { stage: 4, subState: 'parsing_response' });
 
-    // Save Stage 4 conversation first
+    // Save Stage 4 conversation - find and update the "started" entry
     const conversationsPath = `${sessionDir}/conversations.json`;
-    const conversations = await storage.readJson<{ entries: unknown[] }>(conversationsPath) || { entries: [] };
-    conversations.entries.push({
+    const conversations = await storage.readJson<{ entries: Array<{ stage: number; status?: string; [key: string]: unknown }> }>(conversationsPath) || { entries: [] };
+
+    // Find the most recent "started" entry for Stage 4 and update it
+    let startedIndex = -1;
+    for (let i = conversations.entries.length - 1; i >= 0; i--) {
+      if (conversations.entries[i].stage === 4 && conversations.entries[i].status === 'started') {
+        startedIndex = i;
+        break;
+      }
+    }
+
+    const entryData = {
       stage: 4,
       timestamp: new Date().toISOString(),
       prompt: prompt,
@@ -1403,7 +1447,14 @@ async function spawnStage4PRCreation(
       costUsd: result.costUsd,
       isError: result.isError,
       parsed: result.parsed,
-    });
+      status: 'completed' as const,
+    };
+
+    if (startedIndex !== -1) {
+      conversations.entries[startedIndex] = entryData;
+    } else {
+      conversations.entries.push(entryData);
+    }
     await storage.writeJson(conversationsPath, conversations);
 
     // Broadcast validating_output before verifying PR
@@ -1560,10 +1611,20 @@ async function handleStage5Result(
   // Broadcast saving_results before saving conversation
   eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage5_started', { stage: 5, subState: 'saving_results' });
 
-  // Save Stage 5 conversation
+  // Save Stage 5 conversation - find and update the "started" entry
   const conversationsPath = `${sessionDir}/conversations.json`;
-  const conversations = await storage.readJson<{ entries: unknown[] }>(conversationsPath) || { entries: [] };
-  conversations.entries.push({
+  const conversations = await storage.readJson<{ entries: Array<{ stage: number; status?: string; [key: string]: unknown }> }>(conversationsPath) || { entries: [] };
+
+  // Find the most recent "started" entry for Stage 5 and update it
+  let startedIndex = -1;
+  for (let i = conversations.entries.length - 1; i >= 0; i--) {
+    if (conversations.entries[i].stage === 5 && conversations.entries[i].status === 'started') {
+      startedIndex = i;
+      break;
+    }
+  }
+
+  const entryData = {
     stage: 5,
     timestamp: new Date().toISOString(),
     prompt: prompt,
@@ -1572,7 +1633,14 @@ async function handleStage5Result(
     costUsd: result.costUsd,
     isError: result.isError,
     parsed: result.parsed,
-  });
+    status: 'completed' as const,
+  };
+
+  if (startedIndex !== -1) {
+    conversations.entries[startedIndex] = entryData;
+  } else {
+    conversations.entries.push(entryData);
+  }
   await storage.writeJson(conversationsPath, conversations);
 
   // Check for CI failure - requires return to Stage 2
@@ -2507,7 +2575,10 @@ After creating all steps, write the plan to a file and output:
   app.post('/api/sessions/:projectId/:featureId/questions/answers', validate(BatchAnswersInputSchema), async (req, res) => {
     try {
       const { projectId, featureId } = req.params;
-      const answers = req.body as Array<{ questionId: string; answer: { value?: string; text?: string; values?: string[] } }>;
+      const { answers, remarks } = req.body as {
+        answers: Array<{ questionId: string; answer: { value?: string; text?: string; values?: string[] } }>;
+        remarks?: string;
+      };
 
       // Check session exists
       const session = await sessionManager.getSession(projectId, featureId);
@@ -2594,9 +2665,9 @@ After creating all steps, write the plan to a file and output:
       // Fire-and-forget: Resume Claude with all batch answers
       (async () => {
         try {
-          console.log(`All ${answeredQuestions.length} questions answered via batch, resuming Claude`);
+          console.log(`All ${answeredQuestions.length} questions answered via batch, resuming Claude${remarks ? ' (with remarks)' : ''}`);
 
-          const prompt = buildBatchAnswersContinuationPrompt(answeredQuestions, session.currentStage, session.claudePlanFilePath);
+          const prompt = buildBatchAnswersContinuationPrompt(answeredQuestions, session.currentStage, session.claudePlanFilePath, remarks);
           const sessionDir = `${projectId}/${featureId}`;
           const statusPath = `${sessionDir}/status.json`;
 
