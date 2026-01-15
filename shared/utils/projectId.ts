@@ -11,7 +11,7 @@
  */
 export function generateProjectIdSync(projectPath: string): string {
   // Dynamic import to avoid bundling issues
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const crypto = require('crypto');
   return crypto.createHash('sha256').update(projectPath).digest('hex').substring(0, 32);
 }

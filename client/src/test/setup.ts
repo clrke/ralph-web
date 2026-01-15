@@ -1,9 +1,8 @@
 import '@testing-library/jest-dom';
+import * as nodeCrypto from 'crypto';
 
 // Polyfill crypto.subtle for jsdom environment
 if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.subtle === 'undefined') {
-  const nodeCrypto = require('crypto');
-
   Object.defineProperty(globalThis, 'crypto', {
     value: {
       subtle: {
