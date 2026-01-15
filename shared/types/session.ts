@@ -12,6 +12,32 @@ export type SessionStatus =
 
 export type CircuitBreakerState = 'CLOSED' | 'HALF_OPEN' | 'OPEN';
 
+/** User preferences for decision filtering in plan review */
+export interface UserPreferences {
+  /** How comfortable with experimental/risky approaches */
+  riskComfort: 'low' | 'medium' | 'high';
+
+  /** Trade-off between delivery speed and implementation quality */
+  speedVsQuality: 'speed' | 'balanced' | 'quality';
+
+  /** Openness to scope changes beyond original request */
+  scopeFlexibility: 'fixed' | 'flexible' | 'open';
+
+  /** How many questions/details to surface */
+  detailLevel: 'minimal' | 'standard' | 'detailed';
+
+  /** How much Claude should decide vs ask */
+  autonomyLevel: 'guided' | 'collaborative' | 'autonomous';
+}
+
+export const DEFAULT_USER_PREFERENCES: UserPreferences = {
+  riskComfort: 'medium',
+  speedVsQuality: 'balanced',
+  scopeFlexibility: 'flexible',
+  detailLevel: 'standard',
+  autonomyLevel: 'collaborative',
+};
+
 export interface AcceptanceCriterion {
   text: string;
   checked: boolean;
@@ -57,6 +83,8 @@ export interface Session {
   queuePosition?: number | null;
   /** Timestamp when session was queued */
   queuedAt?: string | null;
+  /** User preferences for decision filtering */
+  preferences?: UserPreferences;
 }
 
 export interface SessionRuntimeStatus {
