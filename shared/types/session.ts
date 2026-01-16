@@ -116,4 +116,10 @@ export interface CreateSessionInput {
   baseBranch?: string;
   /** Optional preferences to use for this session (overrides project defaults) */
   preferences?: UserPreferences;
+  /** Queue position for new sessions (only used when session is being queued)
+   * 'front' = position 1 (highest priority)
+   * 'end' = after all existing queued sessions (default)
+   * number = specific position (1-based)
+   */
+  insertAtPosition?: 'front' | 'end' | number;
 }

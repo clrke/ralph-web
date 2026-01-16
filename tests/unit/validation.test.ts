@@ -136,6 +136,92 @@ describe('Validation Schemas', () => {
       });
       expect(result.success).toBe(false);
     });
+
+    describe('insertAtPosition', () => {
+      it('should accept "front" as insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse({
+          ...validInput,
+          insertAtPosition: 'front',
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.insertAtPosition).toBe('front');
+        }
+      });
+
+      it('should accept "end" as insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse({
+          ...validInput,
+          insertAtPosition: 'end',
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.insertAtPosition).toBe('end');
+        }
+      });
+
+      it('should accept positive integer as insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse({
+          ...validInput,
+          insertAtPosition: 5,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.insertAtPosition).toBe(5);
+        }
+      });
+
+      it('should accept 1 as insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse({
+          ...validInput,
+          insertAtPosition: 1,
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.insertAtPosition).toBe(1);
+        }
+      });
+
+      it('should reject 0 as insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse({
+          ...validInput,
+          insertAtPosition: 0,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject negative number as insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse({
+          ...validInput,
+          insertAtPosition: -1,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject decimal number as insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse({
+          ...validInput,
+          insertAtPosition: 1.5,
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject invalid string as insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse({
+          ...validInput,
+          insertAtPosition: 'middle',
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should allow omitting insertAtPosition', () => {
+        const result = CreateSessionInputSchema.safeParse(validInput);
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.insertAtPosition).toBeUndefined();
+        }
+      });
+    });
   });
 
   describe('UpdateSessionInputSchema', () => {

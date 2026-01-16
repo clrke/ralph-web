@@ -76,6 +76,14 @@ export const CreateSessionInputSchema = z.object({
     .default('main'),
 
   preferences: UserPreferencesSchema.optional(),
+
+  // Queue position for new sessions (only used when session is being queued)
+  // 'front' = position 1, 'end' = after all existing queued sessions, number = specific position
+  insertAtPosition: z.union([
+    z.literal('front'),
+    z.literal('end'),
+    z.number().int().min(1),
+  ]).optional(),
 });
 
 // Update session input schema (partial, for PATCH requests)

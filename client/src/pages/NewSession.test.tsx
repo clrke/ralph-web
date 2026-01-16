@@ -472,4 +472,289 @@ describe('NewSession', () => {
       });
     });
   });
+
+  describe('queue priority selector', () => {
+    it('should not show priority selector when no active session exists', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/check-queue')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ activeSession: null, queuedCount: 0 }),
+          });
+        }
+        if (url.includes('/preferences')) {
+          return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      });
+      global.fetch = fetchMock;
+
+      renderWithRouter(<NewSession />);
+
+      await user.type(screen.getByPlaceholderText(/path\/to\/your\/project/i), '/test/project');
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/check-queue'));
+      }, { timeout: 1000 });
+
+      // Priority selector should not be visible
+      expect(screen.queryByTestId('queue-priority-front')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('queue-priority-end')).not.toBeInTheDocument();
+    });
+
+    it('should show priority selector when active session exists', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/check-queue')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+              activeSession: { id: 'session-1', title: 'Active Feature' },
+              queuedCount: 2,
+            }),
+          });
+        }
+        if (url.includes('/preferences')) {
+          return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      });
+      global.fetch = fetchMock;
+
+      renderWithRouter(<NewSession />);
+
+      await user.type(screen.getByPlaceholderText(/path\/to\/your\/project/i), '/test/project');
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/check-queue'));
+      }, { timeout: 1000 });
+
+      // Priority selector should be visible
+      await waitFor(() => {
+        expect(screen.getByTestId('queue-priority-front')).toBeInTheDocument();
+        expect(screen.getByTestId('queue-priority-end')).toBeInTheDocument();
+      });
+    });
+
+    it('should default to "End of queue"', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/check-queue')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+              activeSession: { id: 'session-1', title: 'Active Feature' },
+              queuedCount: 0,
+            }),
+          });
+        }
+        if (url.includes('/preferences')) {
+          return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      });
+      global.fetch = fetchMock;
+
+      renderWithRouter(<NewSession />);
+
+      await user.type(screen.getByPlaceholderText(/path\/to\/your\/project/i), '/test/project');
+
+      await waitFor(() => {
+        expect(screen.getByTestId('queue-priority-end')).toBeInTheDocument();
+      });
+
+      // "End of queue" button should be highlighted (have the selected class)
+      const endButton = screen.getByTestId('queue-priority-end');
+      expect(endButton).toHaveClass('bg-yellow-600');
+    });
+
+    it('should allow selecting "Front of queue"', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/check-queue')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+              activeSession: { id: 'session-1', title: 'Active Feature' },
+              queuedCount: 0,
+            }),
+          });
+        }
+        if (url.includes('/preferences')) {
+          return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      });
+      global.fetch = fetchMock;
+
+      renderWithRouter(<NewSession />);
+
+      await user.type(screen.getByPlaceholderText(/path\/to\/your\/project/i), '/test/project');
+
+      await waitFor(() => {
+        expect(screen.getByTestId('queue-priority-front')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId('queue-priority-front'));
+
+      // "Front of queue" button should now be highlighted
+      const frontButton = screen.getByTestId('queue-priority-front');
+      expect(frontButton).toHaveClass('bg-yellow-600');
+    });
+
+    it('should show position dropdown when queuedCount > 1', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/check-queue')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+              activeSession: { id: 'session-1', title: 'Active Feature' },
+              queuedCount: 3,
+            }),
+          });
+        }
+        if (url.includes('/preferences')) {
+          return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      });
+      global.fetch = fetchMock;
+
+      renderWithRouter(<NewSession />);
+
+      await user.type(screen.getByPlaceholderText(/path\/to\/your\/project/i), '/test/project');
+
+      await waitFor(() => {
+        expect(screen.getByTestId('queue-priority-position')).toBeInTheDocument();
+      });
+
+      // Should have options for positions 1, 2, 3
+      const select = screen.getByTestId('queue-priority-position');
+      expect(select).toBeInTheDocument();
+    });
+
+    it('should not show position dropdown when queuedCount <= 1', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/check-queue')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+              activeSession: { id: 'session-1', title: 'Active Feature' },
+              queuedCount: 1,
+            }),
+          });
+        }
+        if (url.includes('/preferences')) {
+          return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      });
+      global.fetch = fetchMock;
+
+      renderWithRouter(<NewSession />);
+
+      await user.type(screen.getByPlaceholderText(/path\/to\/your\/project/i), '/test/project');
+
+      await waitFor(() => {
+        expect(screen.getByTestId('queue-priority-front')).toBeInTheDocument();
+      });
+
+      // Position dropdown should not be visible
+      expect(screen.queryByTestId('queue-priority-position')).not.toBeInTheDocument();
+    });
+
+    it('should include insertAtPosition in API call when session is queued', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+        if (url.includes('/check-queue')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+              activeSession: { id: 'session-1', title: 'Active Feature' },
+              queuedCount: 2,
+            }),
+          });
+        }
+        if (url.includes('/preferences')) {
+          return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ projectId: 'proj1', featureId: 'feat1' }),
+        });
+      });
+      global.fetch = fetchMock;
+
+      renderWithRouter(<NewSession />);
+
+      await user.type(screen.getByPlaceholderText(/path\/to\/your\/project/i), '/test/project');
+
+      await waitFor(() => {
+        expect(screen.getByTestId('queue-priority-front')).toBeInTheDocument();
+      });
+
+      // Select "Front of queue"
+      await user.click(screen.getByTestId('queue-priority-front'));
+
+      // Fill required fields
+      await user.type(screen.getByPlaceholderText(/add user authentication/i), 'Test Feature');
+      await user.type(screen.getByPlaceholderText(/describe the feature/i), 'Test description');
+
+      // Submit
+      await user.click(screen.getByRole('button', { name: /queue session/i }));
+
+      await waitFor(() => {
+        const sessionCall = (fetchMock.mock.calls as [string, RequestInit?][]).find(
+          (call) => call[0] === '/api/sessions' && call[1]?.method === 'POST'
+        );
+        expect(sessionCall).toBeDefined();
+        if (sessionCall) {
+          const body = JSON.parse(sessionCall[1]?.body as string);
+          expect(body.insertAtPosition).toBe('front');
+        }
+      });
+    });
+
+    it('should not include insertAtPosition when no active session exists', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/check-queue')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ activeSession: null, queuedCount: 0 }),
+          });
+        }
+        if (url.includes('/preferences')) {
+          return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ projectId: 'proj1', featureId: 'feat1' }),
+        });
+      });
+      global.fetch = fetchMock;
+
+      renderWithRouter(<NewSession />);
+
+      await user.type(screen.getByPlaceholderText(/path\/to\/your\/project/i), '/test/project');
+      await user.type(screen.getByPlaceholderText(/add user authentication/i), 'Test Feature');
+      await user.type(screen.getByPlaceholderText(/describe the feature/i), 'Test description');
+
+      await user.click(screen.getByRole('button', { name: /start discovery/i }));
+
+      await waitFor(() => {
+        const sessionCall = (fetchMock.mock.calls as [string, RequestInit?][]).find(
+          (call) => call[0] === '/api/sessions' && call[1]?.method === 'POST'
+        );
+        expect(sessionCall).toBeDefined();
+        if (sessionCall) {
+          const body = JSON.parse(sessionCall[1]?.body as string);
+          expect(body.insertAtPosition).toBeUndefined();
+        }
+      });
+    });
+  });
 });

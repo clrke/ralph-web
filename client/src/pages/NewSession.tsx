@@ -12,6 +12,8 @@ interface FormData {
   baseBranch: string;
 }
 
+type QueuePriority = 'end' | 'front' | number;
+
 export default function NewSession() {
   const navigate = useNavigate();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -30,6 +32,7 @@ export default function NewSession() {
   const [preferencesExpanded, setPreferencesExpanded] = useState(false);
   const [rememberPreferences, setRememberPreferences] = useState(true);
   const [loadingPreferences, setLoadingPreferences] = useState(false);
+  const [queuePriority, setQueuePriority] = useState<QueuePriority>('end');
 
   const updateField = <K extends keyof FormData>(field: K, value: FormData[K]) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -144,6 +147,8 @@ export default function NewSession() {
           acceptanceCriteria: formData.acceptanceCriteria
             .filter(c => c.trim())
             .map(text => ({ text, checked: false, type: 'manual' as const })),
+          // Only include insertAtPosition if session will be queued
+          ...(activeSession ? { insertAtPosition: queuePriority } : {}),
         }),
       });
 
@@ -200,7 +205,7 @@ export default function NewSession() {
                 <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
-                <div>
+                <div className="flex-1">
                   <p className="font-medium">Session will be queued</p>
                   <p className="text-yellow-300/80 mt-1">
                     This project has an active session: <span className="font-medium">{activeSession.title}</span>.
@@ -211,6 +216,65 @@ export default function NewSession() {
                       </span>
                     )}
                   </p>
+
+                  {/* Queue Priority Selector */}
+                  <div className="mt-3 pt-3 border-t border-yellow-700/30">
+                    <label className="block text-yellow-200 font-medium mb-2">Queue Priority</label>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setQueuePriority('front')}
+                        className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                          queuePriority === 'front'
+                            ? 'bg-yellow-600 text-white'
+                            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        }`}
+                        data-testid="queue-priority-front"
+                      >
+                        Front of queue
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQueuePriority('end')}
+                        className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                          queuePriority === 'end'
+                            ? 'bg-yellow-600 text-white'
+                            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        }`}
+                        data-testid="queue-priority-end"
+                      >
+                        End of queue
+                      </button>
+                      {queuedCount > 1 && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-yellow-300/70 text-xs">Position:</span>
+                          <select
+                            value={typeof queuePriority === 'number' ? queuePriority : ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val) {
+                                setQueuePriority(parseInt(val, 10));
+                              }
+                            }}
+                            className="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-gray-200 focus:ring-1 focus:ring-yellow-500 focus:border-yellow-500"
+                            data-testid="queue-priority-position"
+                          >
+                            <option value="">Select...</option>
+                            {Array.from({ length: queuedCount }, (_, i) => i + 1).map((pos) => (
+                              <option key={pos} value={pos}>
+                                #{pos}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-yellow-300/60 text-xs mt-2">
+                      {queuePriority === 'front' && 'This session will be processed next after the current active session.'}
+                      {queuePriority === 'end' && `This session will be added to the end of the queue (position #${queuedCount + 1}).`}
+                      {typeof queuePriority === 'number' && `This session will be inserted at position #${queuePriority} in the queue.`}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>

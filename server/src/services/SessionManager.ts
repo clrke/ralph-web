@@ -201,7 +201,22 @@ export class SessionManager {
     const activeSession = await this.getActiveSessionForProject(projectId);
     const queuedSessions = await this.getQueuedSessions(projectId);
     const isQueued = activeSession !== null;
-    const queuePosition = isQueued ? queuedSessions.length + 1 : null;
+
+    // Calculate queue position based on insertAtPosition option
+    let queuePosition: number | null = null;
+    if (isQueued) {
+      const insertAt = input.insertAtPosition;
+      if (insertAt === 'front' || insertAt === 1) {
+        // Insert at front - will need to shift other sessions
+        queuePosition = 1;
+      } else if (typeof insertAt === 'number') {
+        // Insert at specific position (clamped to valid range)
+        queuePosition = Math.min(Math.max(1, insertAt), queuedSessions.length + 1);
+      } else {
+        // Default: 'end' or undefined - add to end of queue
+        queuePosition = queuedSessions.length + 1;
+      }
+    }
 
     // Create session directory
     await this.storage.ensureDir(sessionPath);
@@ -296,6 +311,18 @@ export class SessionManager {
     if (!projectIndex.includes(featureId)) {
       projectIndex.push(featureId);
       await this.storage.writeJson(`${projectId}/index.json`, projectIndex);
+    }
+
+    // If inserting at a position other than the end, shift existing queued sessions
+    if (isQueued && queuePosition !== null && queuePosition <= queuedSessions.length) {
+      // Shift sessions that are at or after the insertion position
+      for (const queuedSession of queuedSessions) {
+        if (queuedSession.queuePosition !== null && queuedSession.queuePosition >= queuePosition) {
+          await this.updateSession(projectId, queuedSession.featureId, {
+            queuePosition: queuedSession.queuePosition + 1,
+          });
+        }
+      }
     }
 
     return session;
