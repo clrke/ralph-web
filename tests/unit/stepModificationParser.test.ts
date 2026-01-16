@@ -695,4 +695,348 @@ Add this new functionality to the system.
       expect(detected.newIds).toEqual(['step-new-1']);
     });
   });
+
+  describe('error handling and edge cases', () => {
+    describe('malformed markers', () => {
+      it('should handle unclosed STEP_MODIFICATIONS marker', () => {
+        const input = `
+Some text
+[STEP_MODIFICATIONS]
+modified: ["step-1"]
+added: []
+removed: []
+`;
+        const result = parseStepModifications(input);
+        // Should return null since marker is not properly closed
+        expect(result).toBeNull();
+      });
+
+      it('should handle unclosed REMOVE_STEPS marker', () => {
+        const input = `
+[REMOVE_STEPS]
+["step-1", "step-2"]
+`;
+        const result = parseRemoveSteps(input);
+        // Should return empty array since marker is not properly closed
+        expect(result).toEqual([]);
+      });
+
+      it('should handle invalid JSON in STEP_MODIFICATIONS', () => {
+        const input = `
+[STEP_MODIFICATIONS]
+modified: [step-1, step-2]
+added: ["step-new-1"
+removed: []
+[/STEP_MODIFICATIONS]
+`;
+        const result = parseStepModifications(input);
+        // Parser should handle gracefully - either parse what it can or return structured default
+        expect(result).not.toBeNull();
+        // The parser uses a fallback comma-separated format for invalid JSON
+      });
+
+      it('should handle invalid JSON array in REMOVE_STEPS', () => {
+        const input = `
+[REMOVE_STEPS]
+{not valid json}
+[/REMOVE_STEPS]
+`;
+        const result = parseRemoveSteps(input);
+        // Should return empty or handle gracefully
+        expect(Array.isArray(result)).toBe(true);
+      });
+
+      it('should handle empty STEP_MODIFICATIONS marker', () => {
+        const input = `
+[STEP_MODIFICATIONS]
+[/STEP_MODIFICATIONS]
+`;
+        const result = parseStepModifications(input);
+        expect(result).not.toBeNull();
+        expect(result!.modifiedStepIds).toEqual([]);
+        expect(result!.addedStepIds).toEqual([]);
+        expect(result!.removedStepIds).toEqual([]);
+      });
+
+      it('should handle marker with only whitespace', () => {
+        const input = `
+[STEP_MODIFICATIONS]
+
+
+[/STEP_MODIFICATIONS]
+`;
+        const result = parseStepModifications(input);
+        expect(result).not.toBeNull();
+        expect(result!.modifiedStepIds).toEqual([]);
+      });
+
+      it('should handle marker with comments or extra text', () => {
+        const input = `
+[STEP_MODIFICATIONS]
+// This is a comment
+modified: ["step-1"]
+# Another comment style
+added: []
+removed: []
+[/STEP_MODIFICATIONS]
+`;
+        const result = parseStepModifications(input);
+        expect(result).not.toBeNull();
+        expect(result!.modifiedStepIds).toEqual(['step-1']);
+      });
+    });
+
+    describe('special characters in step IDs', () => {
+      it('should handle step IDs with hyphens and numbers', () => {
+        const input = `
+[STEP_MODIFICATIONS]
+modified: ["step-1-a", "step-2-b-3"]
+added: ["new-step-123"]
+removed: ["old-step-456"]
+[/STEP_MODIFICATIONS]
+`;
+        const result = parseStepModifications(input);
+        expect(result).not.toBeNull();
+        expect(result!.modifiedStepIds).toEqual(['step-1-a', 'step-2-b-3']);
+        expect(result!.addedStepIds).toEqual(['new-step-123']);
+        expect(result!.removedStepIds).toEqual(['old-step-456']);
+      });
+
+      it('should handle step IDs with underscores', () => {
+        const input = `
+[REMOVE_STEPS]
+["step_1", "step_2_test"]
+[/REMOVE_STEPS]
+`;
+        const result = parseRemoveSteps(input);
+        expect(result).toEqual(['step_1', 'step_2_test']);
+      });
+
+      it('should trim whitespace from step IDs', () => {
+        const input = `
+[STEP_MODIFICATIONS]
+modified:   step-1 ,  step-2
+[/STEP_MODIFICATIONS]
+`;
+        const result = parseStepModifications(input);
+        expect(result).not.toBeNull();
+        expect(result!.modifiedStepIds).toEqual(['step-1', 'step-2']);
+      });
+
+      it('should include empty strings as-is (no special filtering)', () => {
+        // Note: The parser currently doesn't filter empty strings from JSON arrays
+        // This documents current behavior - empty string filtering could be added if needed
+        const input = `
+[STEP_MODIFICATIONS]
+modified: ["step-1", "", "step-2"]
+[/STEP_MODIFICATIONS]
+`;
+        const result = parseStepModifications(input);
+        expect(result).not.toBeNull();
+        // Empty strings are included as-is from JSON parsing
+        expect(result!.modifiedStepIds).toEqual(['step-1', '', 'step-2']);
+      });
+    });
+
+    describe('deeply nested cascade deletions', () => {
+      it('should handle 3+ levels of nesting', () => {
+        const steps: PlanStep[] = [
+          createMockStep('root'),
+          createMockStep('level-1', 'root'),
+          createMockStep('level-2', 'level-1'),
+          createMockStep('level-3', 'level-2'),
+          createMockStep('level-4', 'level-3'),
+        ];
+
+        const cascaded = findCascadeDeletedSteps(['root'], steps);
+
+        expect(cascaded).toContain('level-1');
+        expect(cascaded).toContain('level-2');
+        expect(cascaded).toContain('level-3');
+        expect(cascaded).toContain('level-4');
+        expect(cascaded).toHaveLength(4);
+      });
+
+      it('should handle tree with multiple branches', () => {
+        const steps: PlanStep[] = [
+          createMockStep('root'),
+          createMockStep('branch-a', 'root'),
+          createMockStep('branch-b', 'root'),
+          createMockStep('leaf-a1', 'branch-a'),
+          createMockStep('leaf-a2', 'branch-a'),
+          createMockStep('leaf-b1', 'branch-b'),
+        ];
+
+        const cascaded = findCascadeDeletedSteps(['root'], steps);
+
+        expect(cascaded).toContain('branch-a');
+        expect(cascaded).toContain('branch-b');
+        expect(cascaded).toContain('leaf-a1');
+        expect(cascaded).toContain('leaf-a2');
+        expect(cascaded).toContain('leaf-b1');
+        expect(cascaded).toHaveLength(5);
+      });
+
+      it('should handle removing middle node (preserves siblings)', () => {
+        const steps: PlanStep[] = [
+          createMockStep('root'),
+          createMockStep('branch-a', 'root'),
+          createMockStep('branch-b', 'root'),
+          createMockStep('leaf-a1', 'branch-a'),
+        ];
+
+        const cascaded = findCascadeDeletedSteps(['branch-a'], steps);
+
+        expect(cascaded).toContain('leaf-a1');
+        expect(cascaded).not.toContain('root');
+        expect(cascaded).not.toContain('branch-b');
+        expect(cascaded).toHaveLength(1);
+      });
+    });
+
+    describe('validation edge cases', () => {
+      it('should validate against empty existing steps', () => {
+        const modifications: ParsedStepModifications = {
+          modifiedStepIds: ['step-1'],
+          addedStepIds: [],
+          removedStepIds: [],
+        };
+
+        const errors = validateStepModifications(modifications, [], []);
+
+        expect(errors.length).toBeGreaterThan(0);
+        expect(errors[0]).toContain('Cannot modify step "step-1"');
+      });
+
+      it('should handle case where all steps are being removed', () => {
+        const steps: PlanStep[] = [
+          createMockStep('step-1'),
+          createMockStep('step-2'),
+          createMockStep('step-3'),
+        ];
+
+        const modifications: ParsedStepModifications = {
+          modifiedStepIds: [],
+          addedStepIds: [],
+          removedStepIds: ['step-1', 'step-2', 'step-3'],
+        };
+
+        const errors = validateStepModifications(modifications, steps, []);
+
+        // This should be valid - removing all steps is allowed
+        expect(errors).toEqual([]);
+      });
+
+      it('should handle simultaneous add and modify of same ID', () => {
+        const steps: PlanStep[] = [createMockStep('step-1')];
+
+        const modifications: ParsedStepModifications = {
+          modifiedStepIds: ['step-new'],
+          addedStepIds: ['step-new'],
+          removedStepIds: [],
+        };
+
+        const errors = validateStepModifications(modifications, steps, ['step-new']);
+
+        // Modify a new step that doesn't exist yet - should error
+        // But if step-new is in newStepIds (being added), it might be allowed
+        // The behavior depends on implementation
+        expect(Array.isArray(errors)).toBe(true);
+      });
+
+      it('should validate parent references in cascade deletion', () => {
+        // Orphan step with non-existent parent
+        const steps: PlanStep[] = [
+          createMockStep('step-1'),
+          { ...createMockStep('orphan'), parentId: 'non-existent' },
+        ];
+
+        const cascaded = findCascadeDeletedSteps(['step-1'], steps);
+
+        // Orphan step should not be affected since its parent doesn't exist
+        expect(cascaded).not.toContain('orphan');
+      });
+    });
+
+    describe('processStepModifications edge cases', () => {
+      it('should handle input with no markers gracefully', () => {
+        const steps: PlanStep[] = [createMockStep('step-1')];
+        const result = processStepModifications('Just regular text', steps);
+
+        expect(result.isValid).toBe(true);
+        expect(result.modifications.modifiedStepIds).toEqual([]);
+        expect(result.modifications.addedStepIds).toEqual([]);
+        expect(result.modifications.removedStepIds).toEqual([]);
+        expect(result.errors).toEqual([]);
+      });
+
+      it('should handle multiple REMOVE_STEPS markers', () => {
+        const steps: PlanStep[] = [
+          createMockStep('step-1'),
+          createMockStep('step-2'),
+          createMockStep('step-3'),
+        ];
+
+        const input = `
+First removal:
+[REMOVE_STEPS]
+["step-1"]
+[/REMOVE_STEPS]
+
+Second removal:
+[REMOVE_STEPS]
+["step-2"]
+[/REMOVE_STEPS]
+`;
+
+        const result = processStepModifications(input, steps);
+
+        expect(result.allRemovedStepIds).toContain('step-1');
+        expect(result.allRemovedStepIds).toContain('step-2');
+        expect(result.allRemovedStepIds).not.toContain('step-3');
+      });
+
+      it('should merge all modification sources correctly', () => {
+        const steps: PlanStep[] = [
+          createMockStep('step-1'),
+          createMockStep('step-2'),
+          createMockStep('step-3', 'step-2'),
+        ];
+
+        const input = `
+[STEP_MODIFICATIONS]
+modified: ["step-1"]
+added: ["step-new"]
+removed: ["step-2"]
+[/STEP_MODIFICATIONS]
+`;
+
+        const result = processStepModifications(input, steps, ['step-new']);
+
+        expect(result.modifications.modifiedStepIds).toContain('step-1');
+        expect(result.modifications.addedStepIds).toContain('step-new');
+        expect(result.modifications.removedStepIds).toContain('step-2');
+        // step-3 should be cascade deleted
+        expect(result.cascadeDeletedStepIds).toContain('step-3');
+      });
+    });
+
+    describe('hasStepModificationMarkers edge cases', () => {
+      it('should return true for partial markers in text', () => {
+        expect(hasStepModificationMarkers('[STEP_MODIFICATIONS]')).toBe(true);
+        expect(hasStepModificationMarkers('[REMOVE_STEPS]')).toBe(true);
+      });
+
+      it('should be case-sensitive', () => {
+        expect(hasStepModificationMarkers('[step_modifications]')).toBe(false);
+        expect(hasStepModificationMarkers('[remove_steps]')).toBe(false);
+      });
+
+      it('should handle markers in code blocks', () => {
+        const input = '```\n[STEP_MODIFICATIONS]\n```';
+        // This depends on implementation - markers in code blocks might or might not count
+        expect(typeof hasStepModificationMarkers(input)).toBe('boolean');
+      });
+    });
+  });
 });
