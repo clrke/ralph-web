@@ -30,6 +30,9 @@ const ESCAPE_MARKERS = [
   // Plan mode markers (deprecated - parsed but not used for business logic)
   '[PLAN_MODE_ENTERED]',
   '[PLAN_MODE_EXITED]',
+  // Step modification markers
+  '[REMOVE_STEPS]',
+  '[STEP_MODIFICATIONS]',
 ];
 
 /**
@@ -125,3 +128,29 @@ export function containsMarkers(text: string): { hasMarkers: boolean; markers: s
  * List of markers that are escaped (exported for reference)
  */
 export const ESCAPED_MARKERS = ESCAPE_MARKERS;
+
+/**
+ * Escape a string for safe use in shell commands.
+ * Prevents command injection by properly escaping special characters.
+ *
+ * Uses single quotes to wrap the string, which prevents interpretation
+ * of most special characters. Single quotes within the string are
+ * handled by ending the quote, adding an escaped single quote, and
+ * starting a new quoted section.
+ *
+ * @param str - The string to escape for shell use
+ * @returns A safely escaped string suitable for shell interpolation
+ */
+export function escapeShellArg(str: string): string {
+  if (!str) return "''";
+
+  // If the string contains no special characters, return as-is
+  // This is an optimization for common cases like simple branch names
+  if (/^[a-zA-Z0-9._\-/]+$/.test(str)) {
+    return str;
+  }
+
+  // Wrap in single quotes and escape any single quotes within
+  // 'foo'bar' becomes 'foo'\''bar'
+  return "'" + str.replace(/'/g, "'\\''") + "'";
+}

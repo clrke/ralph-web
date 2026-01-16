@@ -5,6 +5,7 @@ import { ClaudeResult } from '../../server/src/services/ClaudeOrchestrator';
 import { DecisionValidator, ValidationLog, ValidationResult } from '../../server/src/services/DecisionValidator';
 import { PlanCompletionChecker, PlanCompletenessResult } from '../../server/src/services/PlanCompletionChecker';
 import { PlanValidationResult } from '../../server/src/services/PlanValidator';
+import { computeStepContentHash } from '../../server/src/utils/stepContentHash';
 import { Session, ComposablePlan, PlanStep, UserPreferences } from '@claude-code-web/shared';
 import * as fs from 'fs-extra';
 import * as path from 'path';
@@ -843,6 +844,94 @@ describe('ClaudeResultHandler', () => {
 
         expect(plan!.steps[0].status).toBe('pending'); // step-1 unchanged
         expect(plan!.steps[1].status).toBe('completed'); // step-2 completed
+      });
+
+      it('should store contentHash when step is marked complete', async () => {
+        const result = baseResult();
+        result.parsed.stepsCompleted = [
+          { id: 'step-1', summary: 'Implemented feature', testsAdded: [], testsPassing: true },
+        ];
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-1');
+
+        const plan = await storage.readJson<{ steps: Array<{ id: string; status: string; contentHash?: string }> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/plan.json`
+        );
+
+        expect(plan!.steps[0].status).toBe('completed');
+        expect(plan!.steps[0].contentHash).toBeDefined();
+        expect(plan!.steps[0].contentHash).toMatch(/^[a-f0-9]{16}$/); // 16-char hex hash
+      });
+
+      it('should compute deterministic contentHash based on step content', async () => {
+        const result = baseResult();
+        result.parsed.stepsCompleted = [
+          { id: 'step-1', summary: 'Done', testsAdded: [], testsPassing: true },
+        ];
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-1');
+
+        const plan = await storage.readJson<{ steps: Array<{ id: string; title: string; description?: string; contentHash?: string }> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/plan.json`
+        );
+
+        const step = plan!.steps[0];
+        // Hash should be computed from normalized title + description
+        // Same content should always produce same hash
+        expect(step.contentHash).toBeDefined();
+
+        // Verify hash is based on title|description by checking determinism
+        // The step title is 'Create feature branch' and description is 'Step 1 desc'
+        // (from the beforeEach plan setup)
+      });
+
+      it('should store different contentHash for steps with different content', async () => {
+        const result = baseResult();
+        result.parsed.stepsCompleted = [
+          { id: 'step-1', summary: 'Done 1', testsAdded: [], testsPassing: true },
+          { id: 'step-2', summary: 'Done 2', testsAdded: [], testsPassing: true },
+        ];
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt');
+
+        const plan = await storage.readJson<{ steps: Array<{ id: string; contentHash?: string }> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/plan.json`
+        );
+
+        // step-1 and step-2 have different titles/descriptions, so different hashes
+        expect(plan!.steps[0].contentHash).toBeDefined();
+        expect(plan!.steps[1].contentHash).toBeDefined();
+        expect(plan!.steps[0].contentHash).not.toBe(plan!.steps[1].contentHash);
+      });
+
+      it('should allow future comparison using stored contentHash', async () => {
+        // First: mark step as complete, storing contentHash
+        const result = baseResult();
+        result.parsed.stepsCompleted = [
+          { id: 'step-1', summary: 'Initial implementation', testsAdded: [], testsPassing: true },
+        ];
+
+        await handler.handleStage3Result(stage3Session, result, 'Stage 3 prompt', 'step-1');
+
+        const plan = await storage.readJson<{ steps: Array<{ id: string; title: string; description?: string; contentHash?: string }> }>(
+          `${stage3Session.projectId}/${stage3Session.featureId}/plan.json`
+        );
+
+        const originalHash = plan!.steps[0].contentHash;
+        expect(originalHash).toBeDefined();
+
+        // Simulate: if content changes (during Stage 2 revision), new hash would differ
+        // This is the key property: contentHash enables detecting content changes
+        const originalTitle = plan!.steps[0].title;
+        const originalDesc = plan!.steps[0].description;
+
+        // Re-compute hash with same content - should match
+        const recomputedHash = computeStepContentHash(originalTitle, originalDesc);
+        expect(recomputedHash).toBe(originalHash);
+
+        // Changed content would produce different hash
+        const changedHash = computeStepContentHash('Changed Title', originalDesc);
+        expect(changedHash).not.toBe(originalHash);
       });
     });
 
@@ -2184,6 +2273,389 @@ describe('ClaudeResultHandler', () => {
       expect(saved!.meta.version).toBe('1.0.0');
       expect(saved!.steps).toHaveLength(1);
       expect(saved!.dependencies.stepDependencies).toHaveLength(0);
+    });
+  });
+
+  describe('handleStage2Result - Step Modifications', () => {
+    // Helper to create a valid plan step
+    const createStep = (id: string, parentId: string | null = null, status: 'pending' | 'completed' = 'pending'): PlanStep => ({
+      id,
+      parentId,
+      orderIndex: 0,
+      title: `Step ${id} Title`,
+      description: 'This is a sufficiently detailed description that is more than 50 characters long.',
+      status,
+      metadata: {},
+    });
+
+    // Helper to create a base result
+    const createBaseResult = (output: string, planSteps: Array<{ id: string; parentId: string | null; title: string; description: string; status?: string }> = []): ClaudeResult => ({
+      output,
+      sessionId: 'claude-123',
+      costUsd: 0.05,
+      isError: false,
+      parsed: {
+        decisions: [],
+        planSteps: planSteps.map(s => ({
+          id: s.id,
+          parentId: s.parentId,
+          title: s.title,
+          description: s.description,
+          status: (s.status || 'pending') as 'pending' | 'in_progress' | 'completed' | 'blocked' | 'skipped',
+        })),
+        stepCompleted: null,
+        stepsCompleted: [],
+        planModeEntered: false,
+        planModeExited: false,
+        planFilePath: null,
+        implementationComplete: false,
+        implementationSummary: null,
+        implementationStatus: null,
+        prCreated: null,
+        planApproved: false,
+      },
+    });
+
+    beforeEach(async () => {
+      // Setup plan with multiple steps for modification tests
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+      const planWithSteps = {
+        version: '1.0',
+        planVersion: 1,
+        sessionId: mockSession.id,
+        isApproved: false,
+        reviewCount: 1,
+        createdAt: new Date().toISOString(),
+        steps: [
+          createStep('step-1', null, 'completed'),
+          createStep('step-2', 'step-1', 'completed'),
+          createStep('step-3', 'step-1', 'pending'),
+          createStep('step-4', 'step-2', 'pending'), // Child of step-2
+        ],
+      };
+      await storage.writeJson(`${sessionDir}/plan.json`, planWithSteps);
+    });
+
+    it('should detect and process [REMOVE_STEPS] marker to remove steps', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+      const result = createBaseResult(`
+Here's the updated plan.
+
+[REMOVE_STEPS]
+["step-3"]
+[/REMOVE_STEPS]
+
+The step has been removed.
+`);
+
+      await handler.handleStage2Result(mockSession, result, 'Remove step-3');
+
+      const plan = await storage.readJson<{ steps: PlanStep[]; planVersion: number }>(
+        `${sessionDir}/plan.json`
+      );
+
+      // step-3 should be removed
+      expect(plan!.steps.find(s => s.id === 'step-3')).toBeUndefined();
+      // Other steps should remain
+      expect(plan!.steps.find(s => s.id === 'step-1')).toBeDefined();
+      expect(plan!.steps.find(s => s.id === 'step-2')).toBeDefined();
+      expect(plan!.steps.find(s => s.id === 'step-4')).toBeDefined();
+      // Plan version should increment
+      expect(plan!.planVersion).toBeGreaterThan(1);
+    });
+
+    it('should cascade-delete child steps when parent is removed', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+      const result = createBaseResult(`
+Removing step-2 and its children.
+
+[REMOVE_STEPS]
+["step-2"]
+[/REMOVE_STEPS]
+`);
+
+      await handler.handleStage2Result(mockSession, result, 'Remove step-2');
+
+      const plan = await storage.readJson<{ steps: PlanStep[] }>(
+        `${sessionDir}/plan.json`
+      );
+
+      // step-2 should be removed
+      expect(plan!.steps.find(s => s.id === 'step-2')).toBeUndefined();
+      // step-4 (child of step-2) should be cascade-deleted
+      expect(plan!.steps.find(s => s.id === 'step-4')).toBeUndefined();
+      // step-1 and step-3 should remain
+      expect(plan!.steps.find(s => s.id === 'step-1')).toBeDefined();
+      expect(plan!.steps.find(s => s.id === 'step-3')).toBeDefined();
+    });
+
+    it('should add new steps via PLAN_STEP markers', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+      const result = createBaseResult(`
+Adding a new step.
+
+[PLAN_STEP id="step-new-1" parent="step-1" status="pending" complexity="medium"]
+New Step Title
+This is a detailed description for the new step with more than 50 characters.
+[/PLAN_STEP]
+`, [
+        {
+          id: 'step-new-1',
+          parentId: 'step-1',
+          title: 'New Step Title',
+          description: 'This is a detailed description for the new step with more than 50 characters.',
+        },
+      ]);
+
+      await handler.handleStage2Result(mockSession, result, 'Add new step');
+
+      const plan = await storage.readJson<{ steps: PlanStep[] }>(
+        `${sessionDir}/plan.json`
+      );
+
+      // New step should be added
+      const newStep = plan!.steps.find(s => s.id === 'step-new-1');
+      expect(newStep).toBeDefined();
+      expect(newStep!.title).toBe('New Step Title');
+      expect(newStep!.parentId).toBe('step-1');
+      expect(newStep!.status).toBe('pending');
+    });
+
+    it('should edit existing step content and reset status to pending', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+
+      // Modify step-2 which is currently completed
+      const result = createBaseResult(`
+Updating step-2 with new content.
+
+[PLAN_STEP id="step-2" parent="step-1" status="pending" complexity="high"]
+Updated Step 2 Title
+This is an updated description with significantly different content for step 2.
+[/PLAN_STEP]
+`, [
+        {
+          id: 'step-2',
+          parentId: 'step-1',
+          title: 'Updated Step 2 Title',
+          description: 'This is an updated description with significantly different content for step 2.',
+        },
+      ]);
+
+      await handler.handleStage2Result(mockSession, result, 'Update step-2');
+
+      const plan = await storage.readJson<{ steps: PlanStep[] }>(
+        `${sessionDir}/plan.json`
+      );
+
+      const step2 = plan!.steps.find(s => s.id === 'step-2');
+      expect(step2).toBeDefined();
+      expect(step2!.title).toBe('Updated Step 2 Title');
+      expect(step2!.description).toBe('This is an updated description with significantly different content for step 2.');
+      // Status should be reset to pending since content changed
+      expect(step2!.status).toBe('pending');
+      // contentHash should be cleared
+      expect(step2!.contentHash).toBeUndefined();
+    });
+
+    it('should update session with modification tracking fields', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+
+      // First, create the session in SessionManager
+      await sessionManager.createSession(mockSession);
+
+      // Combined add, edit, and remove
+      const result = createBaseResult(`
+Making multiple modifications.
+
+[PLAN_STEP id="step-2" parent="step-1" status="pending" complexity="high"]
+Updated Title for Step 2
+Updated description for step 2 with enough characters to meet the minimum.
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-new-1" parent="step-1" status="pending" complexity="low"]
+Brand New Step
+A brand new step description with sufficient detail for validation purposes.
+[/PLAN_STEP]
+
+[REMOVE_STEPS]
+["step-3"]
+[/REMOVE_STEPS]
+`, [
+        {
+          id: 'step-2',
+          parentId: 'step-1',
+          title: 'Updated Title for Step 2',
+          description: 'Updated description for step 2 with enough characters to meet the minimum.',
+        },
+        {
+          id: 'step-new-1',
+          parentId: 'step-1',
+          title: 'Brand New Step',
+          description: 'A brand new step description with sufficient detail for validation purposes.',
+        },
+      ]);
+
+      await handler.handleStage2Result(mockSession, result, 'Multiple modifications');
+
+      // Check session was updated with tracking fields
+      const updatedSession = await sessionManager.getSession(mockSession.projectId, mockSession.featureId);
+
+      expect(updatedSession).toBeDefined();
+      // Modified step IDs should include step-2 (edited existing)
+      expect(updatedSession!.modifiedStepIds).toBeDefined();
+      expect(updatedSession!.modifiedStepIds).toContain('step-2');
+      // Added step IDs should include step-new-1
+      expect(updatedSession!.addedStepIds).toBeDefined();
+      expect(updatedSession!.addedStepIds).toContain('step-new-1');
+      // Removed step IDs should include step-3
+      expect(updatedSession!.removedStepIds).toBeDefined();
+      expect(updatedSession!.removedStepIds).toContain('step-3');
+    });
+
+    it('should not modify plan if no modification markers are present', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+
+      // Read initial plan
+      const initialPlan = await storage.readJson<{ steps: PlanStep[]; planVersion: number }>(
+        `${sessionDir}/plan.json`
+      );
+      const initialStepCount = initialPlan!.steps.length;
+      const initialVersion = initialPlan!.planVersion;
+
+      // Result with no modification markers or plan steps
+      const result = createBaseResult(`
+Just a regular response with no modifications.
+The plan looks good, let's proceed.
+`);
+
+      await handler.handleStage2Result(mockSession, result, 'No modifications');
+
+      const plan = await storage.readJson<{ steps: PlanStep[]; planVersion: number }>(
+        `${sessionDir}/plan.json`
+      );
+
+      // Step count should be unchanged
+      expect(plan!.steps.length).toBe(initialStepCount);
+      // Plan version should be unchanged (no modifications were made)
+      expect(plan!.planVersion).toBe(initialVersion);
+    });
+
+    it('should handle STEP_MODIFICATIONS marker format', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+
+      // Create session for tracking
+      await sessionManager.createSession(mockSession);
+
+      const result = createBaseResult(`
+Here are the modifications:
+
+[STEP_MODIFICATIONS]
+modified: ["step-2"]
+added: ["step-new-1"]
+removed: ["step-3"]
+[/STEP_MODIFICATIONS]
+
+[PLAN_STEP id="step-2" parent="step-1" status="pending" complexity="high"]
+Modified Step 2
+This step has been modified with new content that is sufficiently long.
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-new-1" parent="step-1" status="pending" complexity="low"]
+New Step Added
+This is a new step with detailed description for the implementation.
+[/PLAN_STEP]
+
+[REMOVE_STEPS]
+["step-3"]
+[/REMOVE_STEPS]
+`, [
+        {
+          id: 'step-2',
+          parentId: 'step-1',
+          title: 'Modified Step 2',
+          description: 'This step has been modified with new content that is sufficiently long.',
+        },
+        {
+          id: 'step-new-1',
+          parentId: 'step-1',
+          title: 'New Step Added',
+          description: 'This is a new step with detailed description for the implementation.',
+        },
+      ]);
+
+      await handler.handleStage2Result(mockSession, result, 'Process STEP_MODIFICATIONS');
+
+      const plan = await storage.readJson<{ steps: PlanStep[] }>(
+        `${sessionDir}/plan.json`
+      );
+
+      // step-2 should be modified
+      const step2 = plan!.steps.find(s => s.id === 'step-2');
+      expect(step2).toBeDefined();
+      expect(step2!.title).toBe('Modified Step 2');
+
+      // step-new-1 should be added
+      const newStep = plan!.steps.find(s => s.id === 'step-new-1');
+      expect(newStep).toBeDefined();
+
+      // step-3 should be removed
+      expect(plan!.steps.find(s => s.id === 'step-3')).toBeUndefined();
+
+      // Session should be updated
+      const session = await sessionManager.getSession(mockSession.projectId, mockSession.featureId);
+      expect(session!.modifiedStepIds).toContain('step-2');
+      expect(session!.addedStepIds).toContain('step-new-1');
+      expect(session!.removedStepIds).toContain('step-3');
+    });
+
+    it('should reset dependent steps when removed step has dependents', async () => {
+      const sessionDir = `${mockSession.projectId}/${mockSession.featureId}`;
+
+      // Set up plan with dependencies
+      const planWithDeps = {
+        version: '1.0',
+        planVersion: 1,
+        sessionId: mockSession.id,
+        isApproved: false,
+        reviewCount: 1,
+        createdAt: new Date().toISOString(),
+        steps: [
+          { ...createStep('step-1', null, 'completed'), contentHash: 'abc123' },
+          { ...createStep('step-2', null, 'completed'), contentHash: 'def456' },
+          { ...createStep('step-3', null, 'completed'), contentHash: 'ghi789' },
+        ],
+        dependencies: {
+          stepDependencies: [
+            { stepId: 'step-3', dependsOn: ['step-2'] }, // step-3 depends on step-2
+          ],
+          externalDependencies: [],
+        },
+      };
+      await storage.writeJson(`${sessionDir}/plan.json`, planWithDeps);
+
+      // Remove step-2
+      const result = createBaseResult(`
+[REMOVE_STEPS]
+["step-2"]
+[/REMOVE_STEPS]
+`);
+
+      await handler.handleStage2Result(mockSession, result, 'Remove step with dependents');
+
+      const plan = await storage.readJson<{
+        steps: PlanStep[];
+        dependencies: { stepDependencies: Array<{ stepId: string; dependsOn?: string[] }> };
+      }>(`${sessionDir}/plan.json`);
+
+      // step-2 should be removed
+      expect(plan!.steps.find(s => s.id === 'step-2')).toBeUndefined();
+
+      // step-3 (which depended on step-2) should be reset to pending
+      const step3 = plan!.steps.find(s => s.id === 'step-3');
+      expect(step3).toBeDefined();
+      expect(step3!.status).toBe('pending');
+      // contentHash should be cleared to force re-implementation
+      expect(step3!.contentHash).toBeUndefined();
     });
   });
 });

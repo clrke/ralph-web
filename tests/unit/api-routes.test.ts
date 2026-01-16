@@ -1368,6 +1368,49 @@ describe('API Routes', () => {
         expect(session!.currentStage).toBe(2);
         expect(session!.status).toBe('planning');
       });
+
+      it('should initialize isPlanModificationSession flag', async () => {
+        await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/final-approval`)
+          .send({ action: 'plan_changes', feedback: 'Need modifications' });
+
+        const session = await sessionManager.getSession(projectId, featureId);
+        expect(session!.isPlanModificationSession).toBe(true);
+      });
+
+      it('should clear previous modification tracking fields', async () => {
+        // First, set some modification tracking fields on the session
+        await sessionManager.updateSession(projectId, featureId, {
+          modifiedStepIds: ['old-step-1'],
+          addedStepIds: ['old-step-2'],
+          removedStepIds: ['old-step-3'],
+        });
+
+        await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/final-approval`)
+          .send({ action: 'plan_changes', feedback: 'Need modifications' });
+
+        const session = await sessionManager.getSession(projectId, featureId);
+        // Previous tracking should be cleared
+        expect(session!.modifiedStepIds).toBeUndefined();
+        expect(session!.addedStepIds).toBeUndefined();
+        expect(session!.removedStepIds).toBeUndefined();
+        // But new tracking should be initialized
+        expect(session!.isPlanModificationSession).toBe(true);
+      });
+
+      it('should return 400 if plan not found', async () => {
+        // Remove the plan
+        await storage.delete(`${projectId}/${featureId}/plan.json`);
+
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/final-approval`)
+          .send({ action: 'plan_changes', feedback: 'Need modifications' });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toMatch(/plan not found/i);
+      });
+
     });
 
     describe('Stage 6 → 5 transition (re_review)', () => {

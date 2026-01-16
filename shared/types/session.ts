@@ -100,6 +100,16 @@ export interface Session {
   backoutReason?: BackoutReason | null;
   /** Timestamp when the session was backed out (ISO string) */
   backoutTimestamp?: string | null;
+
+  // Step modification tracking fields (populated by Stage 2 revision, consumed by Stage 3)
+  /** IDs of steps that were edited during Stage 2 revision */
+  modifiedStepIds?: string[];
+  /** IDs of newly added steps during Stage 2 revision */
+  addedStepIds?: string[];
+  /** IDs of steps that were removed during Stage 2 revision */
+  removedStepIds?: string[];
+  /** Flag indicating this Stage 2 session is for plan modification (not initial planning) */
+  isPlanModificationSession?: boolean;
 }
 
 export interface SessionRuntimeStatus {

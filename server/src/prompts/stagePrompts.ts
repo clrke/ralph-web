@@ -390,6 +390,7 @@ How should we address this?
 /**
  * Build Stage 2: Plan Revision prompt
  * Revises plan based on user feedback.
+ * Supports step modifications: add, edit, and remove steps.
  */
 export function buildPlanRevisionPrompt(session: Session, plan: Plan, feedback: string): string {
   // Sanitize user-provided fields to prevent marker injection
@@ -399,7 +400,10 @@ export function buildPlanRevisionPrompt(session: Session, plan: Plan, feedback: 
   const planStepsText = plan.steps.length > 0
     ? plan.steps.map((step, i) => {
         const parentInfo = step.parentId ? ` (depends on: ${step.parentId})` : '';
-        return `${i + 1}. [${step.id}] ${step.title}${parentInfo}\n   ${step.description || 'No description'}`;
+        const complexityInfo = (step as { complexity?: string }).complexity
+          ? ` [${(step as { complexity?: string }).complexity} complexity]`
+          : '';
+        return `${i + 1}. [${step.id}] ${step.title}${parentInfo}${complexityInfo}\n   ${step.description || 'No description'}`;
       }).join('\n\n')
     : 'No plan steps defined.';
 
@@ -407,6 +411,65 @@ export function buildPlanRevisionPrompt(session: Session, plan: Plan, feedback: 
   const planFileReference = session.claudePlanFilePath
     ? `\n\n## Full Plan Reference\nFor complete plan details, read: ${session.claudePlanFilePath}`
     : '';
+
+  // Build composable plan structure documentation (matches buildStage2Prompt)
+  const composablePlanDocs = `
+## Composable Plan Structure
+Your revised plan should include these sections with structured markers:
+
+### Required Plan Sections:
+1. **Plan Steps** - Each step with complexity rating
+   \`\`\`
+   [PLAN_STEP id="step-X" parent="null|step-Y" status="pending" complexity="low|medium|high"]
+   Step Title
+   Detailed description (minimum 50 characters)
+   [/PLAN_STEP]
+   \`\`\`
+
+   **Complexity ratings:**
+   - \`low\`: Simple changes, single file, < 1 hour
+   - \`medium\`: Multiple files, moderate logic, 1-4 hours
+   - \`high\`: Complex logic, many files, > 4 hours
+
+2. **Plan Meta** - Plan metadata
+   \`\`\`
+   [PLAN_META]
+   version: 1.0.0
+   isApproved: false
+   [/PLAN_META]
+   \`\`\`
+
+3. **Dependencies** - Step and external dependencies
+   \`\`\`
+   [PLAN_DEPENDENCIES]
+   Step Dependencies:
+   - step-2 -> step-1: Must complete auth before routes
+
+   External Dependencies:
+   - npm:jsonwebtoken@9.0.0: JWT library
+   [/PLAN_DEPENDENCIES]
+   \`\`\`
+
+4. **Test Coverage** - Testing requirements
+   \`\`\`
+   [PLAN_TEST_COVERAGE]
+   Framework: vitest
+   Required Types: unit, integration
+
+   Step Coverage:
+   - step-1: unit (required)
+   - step-2: unit, integration (required)
+   [/PLAN_TEST_COVERAGE]
+   \`\`\`
+
+5. **Acceptance Mapping** - Link criteria to steps
+   \`\`\`
+   [PLAN_ACCEPTANCE_MAPPING]
+   - AC-1: "Users can login" -> step-2, step-3
+   - AC-2: "JWT tokens issued" -> step-1
+   [/PLAN_ACCEPTANCE_MAPPING]
+   \`\`\`
+`;
 
   return `You are revising an implementation plan based on user feedback.
 
@@ -419,27 +482,66 @@ ${planStepsText}${planFileReference}
 
 ## User Feedback
 ${sanitizedFeedback}
+${composablePlanDocs}
+## Step Modification Instructions
 
-## Instructions
-1. Carefully consider the user's feedback
-2. Revise the plan to address their concerns
-3. Output the revised plan steps using the format:
+You can **add**, **edit**, or **remove** steps based on the feedback.
 
-[PLAN_STEP id="step-id" parent="null|parent-id" status="pending"]
-Step title
-Step description
+### To Add or Edit Steps
+Output the step using the PLAN_STEP marker with the required complexity attribute:
+\`\`\`
+[PLAN_STEP id="step-new-1" parent="step-1" status="pending" complexity="medium"]
+New step title
+New step description with at least 50 characters of detailed implementation guidance.
 [/PLAN_STEP]
+\`\`\`
 
-4. If you have clarifying questions about the feedback, present them as decisions:
+- Use a new unique ID for new steps (e.g., "step-new-1", "step-7")
+- Use an existing ID to edit that step
+- Always include the \`complexity\` attribute (low|medium|high)
+- Step descriptions must be at least 50 characters
+
+### To Remove Steps
+Output the REMOVE_STEPS marker with a JSON array of step IDs to remove:
+\`\`\`
+[REMOVE_STEPS]
+["step-3", "step-4"]
+[/REMOVE_STEPS]
+\`\`\`
+
+**Important notes about step removal:**
+- Child steps (those with \`parentId\` pointing to a removed step) will be automatically cascade-deleted
+- Steps that depend on removed steps will be reset to "pending" status for re-implementation
+- Only remove steps that are truly no longer needed
+
+### Clarifying Questions
+If you need clarification before making modifications, ask first:
+\`\`\`
 [DECISION_NEEDED priority="1" category="scope"]
-Question about the feedback...
+Question about the feedback to clarify before modifying the plan...
 
 - Option A: Interpretation 1 (recommended)
 - Option B: Interpretation 2
 [/DECISION_NEEDED]
+\`\`\`
 
-5. After outputting revised [PLAN_STEP] markers, use the Edit tool to update the plan file: ${session.claudePlanFilePath}
-6. After revising the plan, continue with Stage 2 review process to find any remaining issues.`;
+### Output Step Modifications
+After outputting modifications via [PLAN_STEP] and [REMOVE_STEPS] markers:
+\`\`\`
+[STEP_MODIFICATIONS]
+modified: ["step-1", "step-2"]
+added: ["step-new-1"]
+removed: ["step-3"]
+[/STEP_MODIFICATIONS]
+\`\`\`
+
+## Workflow
+1. Review the user feedback carefully
+2. If clarification is needed, ask questions using DECISION_NEEDED markers
+3. Output any step modifications (adds, edits, removals)
+4. Output the [STEP_MODIFICATIONS] summary
+5. Use the Edit tool to update the plan file: ${session.claudePlanFilePath}
+6. Continue with Stage 2 review process to find any remaining issues`;
 }
 
 /**
@@ -716,14 +818,29 @@ interface CompletedStepSummary {
 }
 
 /**
+ * Context about step modifications during Stage 2 revision.
+ * Provides Claude with information about why a step is being re-implemented.
+ */
+export interface StepModificationContext {
+  /** Whether this step was modified during Stage 2 revision */
+  wasModified: boolean;
+  /** Whether this step was newly added during Stage 2 revision */
+  wasAdded: boolean;
+  /** IDs of steps that were removed and may have affected this step */
+  removedStepIds?: string[];
+}
+
+/**
  * Build a single-step implementation prompt for Stage 3.
  * Used for one-step-at-a-time execution (instead of all steps at once).
+ * @param modificationContext - Optional context about step modifications from Stage 2 revision
  */
 export function buildSingleStepPrompt(
   session: Session,
   plan: Plan,
   step: PlanStep,
-  completedSteps: CompletedStepSummary[]
+  completedSteps: CompletedStepSummary[],
+  modificationContext?: StepModificationContext
 ): string {
   // Sanitize user-provided fields to prevent prompt injection
   const sanitized = sanitizeSessionFields(session);
@@ -777,6 +894,19 @@ export function buildSingleStepPrompt(
     ? `\n**Dependency:** This step depends on [${step.parentId}] which is already completed.`
     : '';
 
+  // Build modification context section if this is a re-run after Stage 2 revision
+  let modificationSection = '';
+  if (modificationContext) {
+    if (modificationContext.wasModified) {
+      modificationSection = `\n\n**⚠️ MODIFIED STEP:** This step was modified during plan revision. The previous implementation is no longer valid. You must re-implement this step according to the updated description above.`;
+    } else if (modificationContext.wasAdded) {
+      modificationSection = `\n\n**🆕 NEW STEP:** This step was added during plan revision. This is a new step that has not been implemented before.`;
+    }
+    if (modificationContext.removedStepIds && modificationContext.removedStepIds.length > 0) {
+      modificationSection += `\n**Note:** The following steps were removed from the plan: ${modificationContext.removedStepIds.join(', ')}. Any code or tests related to these steps may need cleanup.`;
+    }
+  }
+
   return `You are implementing one step of an approved feature plan.
 
 ## Feature
@@ -790,7 +920,7 @@ ${planFileReference}
 ${completedSummary}
 
 ## Current Step: [${step.id}] ${step.title}${dependencyInfo}
-${step.description || 'No description provided.'}
+${step.description || 'No description provided.'}${modificationSection}
 
 ## Instructions
 
