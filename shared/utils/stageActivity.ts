@@ -149,7 +149,7 @@ function formatActionString(action: string): string {
 /**
  * Get the stage name for a given stage number.
  *
- * @param stage - Stage number (1-6)
+ * @param stage - Stage number (1-7)
  * @returns Stage name or "Unknown" for invalid stages
  */
 export function getStageName(stage: number): string {

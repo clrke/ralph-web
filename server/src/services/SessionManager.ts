@@ -351,6 +351,24 @@ export class SessionManager {
       delete safeUpdates[field];
     }
 
+    // Validate stage transitions if currentStage is being updated
+    if (safeUpdates.currentStage !== undefined && safeUpdates.currentStage !== session.currentStage) {
+      // Allow transition from stage 0 (queued) to stage 1 (discovery) when session starts
+      const isQueuedToStartTransition = session.currentStage === 0 && safeUpdates.currentStage === 1;
+      // Allow transition to stage 0 (queued) from any stage (for queuing)
+      const isTransitionToQueued = safeUpdates.currentStage === 0;
+
+      if (!isQueuedToStartTransition && !isTransitionToQueued) {
+        const validTargets = VALID_TRANSITIONS[session.currentStage] || [];
+        if (!validTargets.includes(safeUpdates.currentStage)) {
+          throw new Error(
+            `Invalid stage transition from ${session.currentStage} to ${safeUpdates.currentStage}. ` +
+            `Valid transitions: ${validTargets.join(', ') || 'none (terminal state)'}`
+          );
+        }
+      }
+    }
+
     const updatedSession: Session = {
       ...session,
       ...safeUpdates,

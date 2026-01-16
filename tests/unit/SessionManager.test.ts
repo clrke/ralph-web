@@ -368,6 +368,188 @@ describe('SessionManager', () => {
       expect(updated.createdAt).toBe(session.createdAt);
       expect(updated.version).toBe(session.version);
     });
+
+    describe('stage transition validation', () => {
+      it('should allow valid stage transition from 1 to 2', async () => {
+        const session = await manager.createSession({
+          title: 'Test Feature',
+          featureDescription: 'Test description',
+          projectPath: '/test/path',
+        });
+
+        const updated = await manager.updateSession(session.projectId, session.featureId, {
+          currentStage: 2,
+        });
+
+        expect(updated.currentStage).toBe(2);
+      });
+
+      it('should allow valid stage transition from 5 to 6', async () => {
+        const session = await manager.createSession({
+          title: 'Test Feature',
+          featureDescription: 'Test description',
+          projectPath: '/test/path',
+        });
+
+        // Progress session to stage 5
+        await manager.transitionStage(session.projectId, session.featureId, 2);
+        await manager.transitionStage(session.projectId, session.featureId, 3);
+        await manager.transitionStage(session.projectId, session.featureId, 4);
+        await manager.transitionStage(session.projectId, session.featureId, 5);
+
+        // Now try to update to stage 6 via updateSession
+        const updated = await manager.updateSession(session.projectId, session.featureId, {
+          currentStage: 6,
+        });
+
+        expect(updated.currentStage).toBe(6);
+      });
+
+      it('should allow valid stage transition from 6 to 7', async () => {
+        const session = await manager.createSession({
+          title: 'Test Feature',
+          featureDescription: 'Test description',
+          projectPath: '/test/path',
+        });
+
+        // Progress session to stage 6
+        await manager.transitionStage(session.projectId, session.featureId, 2);
+        await manager.transitionStage(session.projectId, session.featureId, 3);
+        await manager.transitionStage(session.projectId, session.featureId, 4);
+        await manager.transitionStage(session.projectId, session.featureId, 5);
+        await manager.transitionStage(session.projectId, session.featureId, 6);
+
+        // Now try to update to stage 7 via updateSession
+        const updated = await manager.updateSession(session.projectId, session.featureId, {
+          currentStage: 7,
+        });
+
+        expect(updated.currentStage).toBe(7);
+      });
+
+      it('should reject invalid stage transition from 1 to 3 (skipping stage 2)', async () => {
+        const session = await manager.createSession({
+          title: 'Test Feature',
+          featureDescription: 'Test description',
+          projectPath: '/test/path',
+        });
+
+        await expect(
+          manager.updateSession(session.projectId, session.featureId, {
+            currentStage: 3,
+          })
+        ).rejects.toThrow(/invalid stage transition/i);
+      });
+
+      it('should reject invalid stage transition from 1 to 7 (skipping all stages)', async () => {
+        const session = await manager.createSession({
+          title: 'Test Feature',
+          featureDescription: 'Test description',
+          projectPath: '/test/path',
+        });
+
+        await expect(
+          manager.updateSession(session.projectId, session.featureId, {
+            currentStage: 7,
+          })
+        ).rejects.toThrow(/invalid stage transition/i);
+      });
+
+      it('should reject transition from terminal stage 7', async () => {
+        const session = await manager.createSession({
+          title: 'Test Feature',
+          featureDescription: 'Test description',
+          projectPath: '/test/path',
+        });
+
+        // Progress to stage 7
+        await manager.transitionStage(session.projectId, session.featureId, 2);
+        await manager.transitionStage(session.projectId, session.featureId, 3);
+        await manager.transitionStage(session.projectId, session.featureId, 4);
+        await manager.transitionStage(session.projectId, session.featureId, 5);
+        await manager.transitionStage(session.projectId, session.featureId, 6);
+        await manager.transitionStage(session.projectId, session.featureId, 7);
+
+        // Try to go back to stage 2
+        await expect(
+          manager.updateSession(session.projectId, session.featureId, {
+            currentStage: 2,
+          })
+        ).rejects.toThrow(/invalid stage transition.*terminal/i);
+      });
+
+      it('should allow transition from queued (stage 0) to discovery (stage 1)', async () => {
+        const session = await manager.createSession({
+          title: 'Test Feature',
+          featureDescription: 'Test description',
+          projectPath: '/test/path',
+        });
+
+        // Put session in queued state (stage 0)
+        await manager.updateSession(session.projectId, session.featureId, {
+          currentStage: 0,
+          status: 'queued',
+        });
+
+        // Now start the session (stage 0 -> 1)
+        const updated = await manager.updateSession(session.projectId, session.featureId, {
+          currentStage: 1,
+          status: 'discovery',
+        });
+
+        expect(updated.currentStage).toBe(1);
+      });
+
+      it('should allow transition to queued (stage 0) from any stage', async () => {
+        const session = await manager.createSession({
+          title: 'Test Feature',
+          featureDescription: 'Test description',
+          projectPath: '/test/path',
+        });
+
+        // Progress to stage 2
+        await manager.transitionStage(session.projectId, session.featureId, 2);
+
+        // Queue the session (any stage -> 0)
+        const updated = await manager.updateSession(session.projectId, session.featureId, {
+          currentStage: 0,
+          status: 'queued',
+        });
+
+        expect(updated.currentStage).toBe(0);
+      });
+
+      it('should allow updating non-stage fields without triggering validation', async () => {
+        const session = await manager.createSession({
+          title: 'Test Feature',
+          featureDescription: 'Test description',
+          projectPath: '/test/path',
+        });
+
+        // Update other fields without changing stage
+        const updated = await manager.updateSession(session.projectId, session.featureId, {
+          technicalNotes: 'Updated notes',
+        });
+
+        expect(updated.technicalNotes).toBe('Updated notes');
+        expect(updated.currentStage).toBe(1); // Unchanged
+      });
+
+      it('should allow updating same stage (no transition)', async () => {
+        const session = await manager.createSession({
+          title: 'Test Feature',
+          featureDescription: 'Test description',
+          projectPath: '/test/path',
+        });
+
+        // Update to same stage
+        const updated = await manager.updateSession(session.projectId, session.featureId, {
+          currentStage: 1,
+        });
+
+        expect(updated.currentStage).toBe(1);
+      });
+    });
   });
 
   describe('listSessions', () => {

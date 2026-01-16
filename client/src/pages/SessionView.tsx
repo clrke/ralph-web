@@ -35,6 +35,8 @@ const SUBSTATE_LOADING_MESSAGES: Partial<Record<ExecutionSubState, Record<number
     3: 'Starting Claude agent for implementation...',
     4: 'Starting Claude agent for PR creation...',
     5: 'Starting Claude agent for PR review...',
+    6: 'Processing final approval...',
+    7: 'Finalizing session...',
   },
   processing_output: {
     1: 'Analyzing project structure and gathering context...',
@@ -42,6 +44,8 @@ const SUBSTATE_LOADING_MESSAGES: Partial<Record<ExecutionSubState, Record<number
     3: 'Implementing changes...',
     4: 'Generating PR description and summary...',
     5: 'Analyzing CI results and PR feedback...',
+    6: 'Processing approval decision...',
+    7: 'Completing session...',
   },
   parsing_response: {
     1: 'Processing discovery findings...',
@@ -49,6 +53,8 @@ const SUBSTATE_LOADING_MESSAGES: Partial<Record<ExecutionSubState, Record<number
     3: 'Processing implementation results...',
     4: 'Processing PR details...',
     5: 'Processing review comments...',
+    6: 'Processing approval response...',
+    7: 'Processing completion status...',
   },
   validating_output: {
     1: 'Validating analysis results...',
@@ -56,6 +62,8 @@ const SUBSTATE_LOADING_MESSAGES: Partial<Record<ExecutionSubState, Record<number
     3: 'Validating implementation changes...',
     4: 'Verifying PR was created successfully...',
     5: 'Validating review completeness...',
+    6: 'Validating approval...',
+    7: 'Validating completion...',
   },
   saving_results: {
     1: 'Saving discovery findings...',
@@ -63,6 +71,8 @@ const SUBSTATE_LOADING_MESSAGES: Partial<Record<ExecutionSubState, Record<number
     3: 'Saving implementation progress...',
     4: 'Saving PR information...',
     5: 'Saving review results...',
+    6: 'Saving approval decision...',
+    7: 'Saving final session state...',
   },
 };
 

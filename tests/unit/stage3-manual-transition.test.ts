@@ -26,8 +26,8 @@ describe('Stage 3 Manual Transition', () => {
       }
     });
 
-    it('should accept all valid stages (1-5)', () => {
-      for (let stage = 1; stage <= 5; stage++) {
+    it('should accept all valid stages (1-7)', () => {
+      for (let stage = 1; stage <= 7; stage++) {
         const result = StageTransitionInputSchema.safeParse({
           targetStage: stage,
         });

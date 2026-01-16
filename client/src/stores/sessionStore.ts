@@ -40,7 +40,7 @@ export interface ExecutionStatus {
   status: 'running' | 'idle' | 'error';
   action: string;
   timestamp: string;
-  /** Current stage number (1-6) */
+  /** Current stage number (1-7) */
   stage?: number;
   /** Granular sub-state within the current action */
   subState?: ExecutionSubState;
