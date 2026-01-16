@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Session, Plan, Question, PlanStepStatus, ImplementationProgressEvent, ValidationAction, ExecutionSubState, StepProgress } from '@claude-code-web/shared';
+import type { Session, Plan, Question, PlanStepStatus, ImplementationProgressEvent, ValidationAction, ExecutionSubState, StepProgress, BackoutAction, BackoutReason } from '@claude-code-web/shared';
 
 export type { ValidationAction } from '@claude-code-web/shared';
 
@@ -101,6 +101,8 @@ interface SessionState {
   requestPlanChanges: (feedback: string) => Promise<void>;
   retrySession: () => Promise<void>;
   reorderQueue: (projectId: string, orderedFeatureIds: string[]) => Promise<void>;
+  backoutSession: (projectId: string, featureId: string, action: BackoutAction, reason?: BackoutReason) => Promise<void>;
+  resumeSession: (projectId: string, featureId: string) => Promise<void>;
 }
 
 const initialState = {
@@ -410,6 +412,90 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         queuedSessions,
         isReorderingQueue: false,
         error: error instanceof Error ? error.message : 'Failed to reorder queue',
+      });
+      throw error;
+    }
+  },
+
+  backoutSession: async (projectId, featureId, action, reason) => {
+    set({ isLoading: true, error: null });
+
+    try {
+      const response = await fetch(
+        `/api/sessions/${projectId}/${featureId}/backout`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action, reason }),
+        }
+      );
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to back out session');
+      }
+
+      const data = await response.json();
+
+      // Update local session state with the backed out session
+      set({
+        session: data.session,
+        isLoading: false,
+      });
+
+      // If a session was promoted, update queued sessions list
+      if (data.promotedSession) {
+        set((state) => ({
+          queuedSessions: state.queuedSessions.filter(
+            (s) => s.featureId !== data.promotedSession.featureId
+          ),
+        }));
+      }
+    } catch (error) {
+      set({
+        error: error instanceof Error ? error.message : 'Failed to back out session',
+        isLoading: false,
+      });
+      throw error;
+    }
+  },
+
+  resumeSession: async (projectId, featureId) => {
+    set({ isLoading: true, error: null });
+
+    try {
+      const response = await fetch(
+        `/api/sessions/${projectId}/${featureId}/resume`,
+        {
+          method: 'POST',
+        }
+      );
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to resume session');
+      }
+
+      const data = await response.json();
+
+      // Update local session state with the resumed session
+      set({
+        session: data.session,
+        isLoading: false,
+      });
+
+      // If the session was queued, add it to queuedSessions
+      if (data.wasQueued) {
+        set((state) => ({
+          queuedSessions: [...state.queuedSessions, data.session].sort(
+            (a, b) => (a.queuePosition || 0) - (b.queuePosition || 0)
+          ),
+        }));
+      }
+    } catch (error) {
+      set({
+        error: error instanceof Error ? error.message : 'Failed to resume session',
+        isLoading: false,
       });
       throw error;
     }

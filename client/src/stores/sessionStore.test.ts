@@ -623,5 +623,283 @@ describe('sessionStore selector hooks', () => {
         expect(useSessionStore.getState().queuedSessions).toHaveLength(0);
       });
     });
+
+    describe('backoutSession', () => {
+      it('calls API with pause action', async () => {
+        const mockSession = createMockSession('feature-1', null);
+        mockSession.status = 'discovery';
+
+        act(() => {
+          useSessionStore.setState({ session: mockSession });
+        });
+
+        const backedOutSession = { ...mockSession, status: 'paused', backoutReason: 'user_requested' };
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve({ session: backedOutSession, promotedSession: null }),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          await useSessionStore.getState().backoutSession('test-project', 'feature-1', 'pause');
+        });
+
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/sessions/test-project/feature-1/backout',
+          expect.objectContaining({
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'pause', reason: undefined }),
+          })
+        );
+
+        const state = useSessionStore.getState();
+        expect(state.session?.status).toBe('paused');
+        expect(state.isLoading).toBe(false);
+      });
+
+      it('calls API with abandon action and reason', async () => {
+        const mockSession = createMockSession('feature-1', null);
+        mockSession.status = 'discovery';
+
+        act(() => {
+          useSessionStore.setState({ session: mockSession });
+        });
+
+        const backedOutSession = { ...mockSession, status: 'failed', backoutReason: 'blocked' };
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve({ session: backedOutSession, promotedSession: null }),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          await useSessionStore.getState().backoutSession('test-project', 'feature-1', 'abandon', 'blocked');
+        });
+
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/sessions/test-project/feature-1/backout',
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({ action: 'abandon', reason: 'blocked' }),
+          })
+        );
+
+        const state = useSessionStore.getState();
+        expect(state.session?.status).toBe('failed');
+      });
+
+      it('removes promoted session from queued sessions', async () => {
+        const activeSession = createMockSession('feature-1', null);
+        activeSession.status = 'discovery';
+
+        const queuedSession = createMockSession('feature-2', 1);
+
+        act(() => {
+          useSessionStore.setState({
+            session: activeSession,
+            queuedSessions: [queuedSession],
+          });
+        });
+
+        const backedOutSession = { ...activeSession, status: 'paused' };
+        const promotedSession = { ...queuedSession, status: 'discovery', queuePosition: null };
+
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve({ session: backedOutSession, promotedSession }),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          await useSessionStore.getState().backoutSession('test-project', 'feature-1', 'pause');
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.queuedSessions).toHaveLength(0);
+      });
+
+      it('sets error on API failure', async () => {
+        const mockSession = createMockSession('feature-1', null);
+        mockSession.status = 'discovery';
+
+        act(() => {
+          useSessionStore.setState({ session: mockSession });
+        });
+
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: false,
+          json: () => Promise.resolve({ error: 'Cannot back out completed session' }),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          try {
+            await useSessionStore.getState().backoutSession('test-project', 'feature-1', 'pause');
+          } catch {
+            // Expected to throw
+          }
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.error).toBe('Cannot back out completed session');
+        expect(state.isLoading).toBe(false);
+      });
+
+      it('sets loading state during API call', async () => {
+        const mockSession = createMockSession('feature-1', null);
+        mockSession.status = 'discovery';
+
+        act(() => {
+          useSessionStore.setState({ session: mockSession });
+        });
+
+        const fetchMock = vi.fn().mockImplementation(() =>
+          new Promise((resolve) => {
+            setTimeout(() => {
+              resolve({
+                ok: true,
+                json: () => Promise.resolve({ session: { ...mockSession, status: 'paused' }, promotedSession: null }),
+              });
+            }, 100);
+          })
+        );
+        global.fetch = fetchMock;
+
+        const backoutPromise = act(async () => {
+          return useSessionStore.getState().backoutSession('test-project', 'feature-1', 'pause');
+        });
+
+        // Check loading state is set
+        expect(useSessionStore.getState().isLoading).toBe(true);
+
+        await backoutPromise;
+
+        expect(useSessionStore.getState().isLoading).toBe(false);
+      });
+    });
+
+    describe('resumeSession', () => {
+      it('calls API and updates session on immediate resume', async () => {
+        const pausedSession = createMockSession('feature-1', null);
+        pausedSession.status = 'paused';
+
+        act(() => {
+          useSessionStore.setState({ session: pausedSession });
+        });
+
+        const resumedSession = { ...pausedSession, status: 'discovery', backoutReason: null, backoutTimestamp: null };
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve({ session: resumedSession, wasQueued: false }),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          await useSessionStore.getState().resumeSession('test-project', 'feature-1');
+        });
+
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/api/sessions/test-project/feature-1/resume',
+          expect.objectContaining({
+            method: 'POST',
+          })
+        );
+
+        const state = useSessionStore.getState();
+        expect(state.session?.status).toBe('discovery');
+        expect(state.isLoading).toBe(false);
+      });
+
+      it('adds session to queued sessions when queued on resume', async () => {
+        const pausedSession = createMockSession('feature-1', null);
+        pausedSession.status = 'paused';
+
+        const existingQueued = createMockSession('feature-2', 2);
+
+        act(() => {
+          useSessionStore.setState({
+            session: pausedSession,
+            queuedSessions: [existingQueued],
+          });
+        });
+
+        const queuedSession = { ...pausedSession, status: 'queued', queuePosition: 1 };
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve({ session: queuedSession, wasQueued: true }),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          await useSessionStore.getState().resumeSession('test-project', 'feature-1');
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.session?.status).toBe('queued');
+        expect(state.queuedSessions).toHaveLength(2);
+        expect(state.queuedSessions[0].featureId).toBe('feature-1'); // Inserted at front (position 1)
+        expect(state.queuedSessions[1].featureId).toBe('feature-2');
+      });
+
+      it('sets error on API failure', async () => {
+        const pausedSession = createMockSession('feature-1', null);
+        pausedSession.status = 'paused';
+
+        act(() => {
+          useSessionStore.setState({ session: pausedSession });
+        });
+
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: false,
+          json: () => Promise.resolve({ error: 'Cannot resume non-paused session' }),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          try {
+            await useSessionStore.getState().resumeSession('test-project', 'feature-1');
+          } catch {
+            // Expected to throw
+          }
+        });
+
+        const state = useSessionStore.getState();
+        expect(state.error).toBe('Cannot resume non-paused session');
+        expect(state.isLoading).toBe(false);
+      });
+
+      it('sets loading state during API call', async () => {
+        const pausedSession = createMockSession('feature-1', null);
+        pausedSession.status = 'paused';
+
+        act(() => {
+          useSessionStore.setState({ session: pausedSession });
+        });
+
+        const fetchMock = vi.fn().mockImplementation(() =>
+          new Promise((resolve) => {
+            setTimeout(() => {
+              resolve({
+                ok: true,
+                json: () => Promise.resolve({ session: { ...pausedSession, status: 'discovery' }, wasQueued: false }),
+              });
+            }, 100);
+          })
+        );
+        global.fetch = fetchMock;
+
+        const resumePromise = act(async () => {
+          return useSessionStore.getState().resumeSession('test-project', 'feature-1');
+        });
+
+        // Check loading state is set
+        expect(useSessionStore.getState().isLoading).toBe(true);
+
+        await resumePromise;
+
+        expect(useSessionStore.getState().isLoading).toBe(false);
+      });
+    });
   });
 });
