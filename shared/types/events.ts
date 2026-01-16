@@ -198,6 +198,37 @@ export interface SessionResumedEvent {
   timestamp: string;
 }
 
+/**
+ * Partial session fields that can be updated when editing a queued session
+ */
+export interface SessionUpdatedFields {
+  title?: string;
+  featureDescription?: string;
+  acceptanceCriteria?: Session['acceptanceCriteria'];
+  affectedFiles?: string[];
+  technicalNotes?: string;
+  baseBranch?: string;
+  preferences?: Session['preferences'];
+}
+
+/**
+ * Event emitted when a queued session is edited
+ */
+export interface SessionUpdatedEvent {
+  /** The project ID */
+  projectId: string;
+  /** The feature ID of the updated session */
+  featureId: string;
+  /** The session ID */
+  sessionId: string;
+  /** The fields that were updated (partial session) */
+  updatedFields: SessionUpdatedFields;
+  /** The new dataVersion after the update */
+  dataVersion: number;
+  /** Timestamp of the update */
+  timestamp: string;
+}
+
 // =============================================================================
 // Server-to-Client Socket Event Map
 // =============================================================================
@@ -217,6 +248,7 @@ export interface ServerToClientEvents {
   'queue.reordered': (data: QueueReorderedEvent) => void;
   'session.backedout': (data: SessionBackedOutEvent) => void;
   'session.resumed': (data: SessionResumedEvent) => void;
+  'session.updated': (data: SessionUpdatedEvent) => void;
 }
 
 // =============================================================================
