@@ -997,6 +997,110 @@ describe('SessionManager', () => {
         expect(next).not.toBeNull();
         expect(next!.id).toBe(second.id);
       });
+
+      it('should respect priority after reordering queue', async () => {
+        await manager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const first = await manager.createSession({
+          title: 'Originally First',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const second = await manager.createSession({
+          title: 'Originally Second',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const third = await manager.createSession({
+          title: 'Originally Third',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const projectId = manager.getProjectId(projectPath);
+
+        // Reorder: third becomes highest priority
+        await manager.reorderQueuedSessions(projectId, [
+          third.featureId,
+          second.featureId,
+          first.featureId,
+        ]);
+
+        const next = await manager.getNextQueuedSession(projectId);
+        expect(next).not.toBeNull();
+        expect(next!.title).toBe('Originally Third');
+        expect(next!.queuePosition).toBe(1);
+      });
+
+      it('should respect priority when session inserted at front', async () => {
+        await manager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        await manager.createSession({
+          title: 'Original First in Queue',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        // Insert new session at front
+        const frontSession = await manager.createSession({
+          title: 'Inserted at Front',
+          featureDescription: 'Test',
+          projectPath,
+          insertAtPosition: 'front',
+        });
+
+        const projectId = manager.getProjectId(projectPath);
+        const next = await manager.getNextQueuedSession(projectId);
+
+        expect(next).not.toBeNull();
+        expect(next!.id).toBe(frontSession.id);
+        expect(next!.title).toBe('Inserted at Front');
+        expect(next!.queuePosition).toBe(1);
+      });
+
+      it('should handle null queuePosition values gracefully', async () => {
+        await manager.createSession({
+          title: 'Active Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const queued = await manager.createSession({
+          title: 'Queued Feature',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const projectId = manager.getProjectId(projectPath);
+
+        // Manually set queuePosition to null to test edge case
+        await manager.updateSession(projectId, queued.featureId, {
+          queuePosition: null,
+        });
+
+        // Create another queued session with valid position
+        const another = await manager.createSession({
+          title: 'Another Queued',
+          featureDescription: 'Test',
+          projectPath,
+        });
+
+        const next = await manager.getNextQueuedSession(projectId);
+
+        // Session with valid queuePosition should be returned first
+        expect(next).not.toBeNull();
+        expect(next!.id).toBe(another.id);
+      });
     });
 
     describe('startQueuedSession', () => {

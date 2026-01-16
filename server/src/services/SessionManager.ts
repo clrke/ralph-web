@@ -415,20 +415,30 @@ export class SessionManager {
   }
 
   /**
-   * Get all queued sessions for a project, sorted by queue position
+   * Get all queued sessions for a project, sorted by priority (lowest queuePosition first).
+   * Sessions with lower queuePosition values have higher priority and will be processed first.
    */
   async getQueuedSessions(projectId: string): Promise<Session[]> {
     const sessions = await this.listSessions(projectId);
     return sessions
       .filter(s => s.status === 'queued')
-      .sort((a, b) => (a.queuePosition || 0) - (b.queuePosition || 0));
+      .sort((a, b) => {
+        // Sort by queuePosition ascending (lower position = higher priority)
+        // Null positions are treated as lowest priority (sorted to end)
+        const posA = a.queuePosition ?? Number.MAX_SAFE_INTEGER;
+        const posB = b.queuePosition ?? Number.MAX_SAFE_INTEGER;
+        return posA - posB;
+      });
   }
 
   /**
-   * Get the next queued session for a project (lowest queue position)
+   * Get the next queued session for a project (highest priority = lowest queuePosition).
+   * This is used by auto-selection to pick which session to start next when the
+   * current active session completes.
    */
   async getNextQueuedSession(projectId: string): Promise<Session | null> {
     const queuedSessions = await this.getQueuedSessions(projectId);
+    // Return the first session (lowest queuePosition = highest priority)
     return queuedSessions[0] || null;
   }
 
