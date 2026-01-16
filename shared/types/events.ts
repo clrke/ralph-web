@@ -1,6 +1,6 @@
 import { PlanStepStatus, Plan } from './plan';
 import { Question, QuestionAnswer } from './questions';
-import { Session } from './session';
+import { Session, BackoutReason } from './session';
 
 /**
  * Socket Event Types
@@ -146,6 +146,59 @@ export interface QueueReorderedEvent {
 }
 
 // =============================================================================
+// Session Backout/Resume Events
+// =============================================================================
+
+/** Action taken when backing out from a session */
+export type BackoutAction = 'pause' | 'abandon';
+
+/**
+ * Event emitted when a session is backed out (paused or abandoned)
+ */
+export interface SessionBackedOutEvent {
+  /** The project ID */
+  projectId: string;
+  /** The feature ID of the backed out session */
+  featureId: string;
+  /** The session ID */
+  sessionId: string;
+  /** The action taken: 'pause' or 'abandon' */
+  action: BackoutAction;
+  /** The reason for backing out */
+  reason: BackoutReason;
+  /** The new status of the session ('paused' or 'failed') */
+  newStatus: Session['status'];
+  /** The stage the session was at when backed out */
+  previousStage: number;
+  /** Feature ID of the next session that was auto-started (if any) */
+  nextSessionId: string | null;
+  /** Timestamp of the backout */
+  timestamp: string;
+}
+
+/**
+ * Event emitted when a paused session is resumed
+ */
+export interface SessionResumedEvent {
+  /** The project ID */
+  projectId: string;
+  /** The feature ID of the resumed session */
+  featureId: string;
+  /** The session ID */
+  sessionId: string;
+  /** The new status of the session */
+  newStatus: Session['status'];
+  /** The stage the session resumed to */
+  resumedStage: number;
+  /** Whether the session was queued (true) or immediately started (false) */
+  wasQueued: boolean;
+  /** Queue position if queued (null if not queued) */
+  queuePosition: number | null;
+  /** Timestamp of the resume */
+  timestamp: string;
+}
+
+// =============================================================================
 // Server-to-Client Socket Event Map
 // =============================================================================
 
@@ -162,6 +215,8 @@ export interface ServerToClientEvents {
   'step.completed': (data: StepCompletedEvent) => void;
   'implementation.progress': (data: ImplementationProgressEvent) => void;
   'queue.reordered': (data: QueueReorderedEvent) => void;
+  'session.backedout': (data: SessionBackedOutEvent) => void;
+  'session.resumed': (data: SessionResumedEvent) => void;
 }
 
 // =============================================================================
