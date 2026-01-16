@@ -1318,18 +1318,15 @@ async function handleStage3Completion(
   }
 
   // Clear modification tracking fields from Stage 2 revision (no longer needed)
+  // Note: The subsequent Stage 4 transition broadcasts the updated session to clients
   if (session.modifiedStepIds || session.addedStepIds || session.removedStepIds ||
       session.isPlanModificationSession) {
-    const clearedSession = await sessionManager.updateSession(session.projectId, session.featureId, {
+    await sessionManager.updateSession(session.projectId, session.featureId, {
       modifiedStepIds: undefined,
       addedStepIds: undefined,
       removedStepIds: undefined,
       isPlanModificationSession: undefined,
     });
-    // Notify clients that modification session has ended
-    if (clearedSession) {
-      eventBroadcaster?.sessionUpdated(clearedSession);
-    }
     console.log(`Cleared step modification tracking for ${session.featureId}`);
   }
 
