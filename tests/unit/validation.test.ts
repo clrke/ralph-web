@@ -5,6 +5,11 @@ import {
   AnswerQuestionInputSchema,
   RequestChangesInputSchema,
   QueueReorderInputSchema,
+  BackoutSessionInputSchema,
+  BackoutActionSchema,
+  BackoutReasonSchema,
+  isBackoutAllowedForStatus,
+  BACKOUT_ALLOWED_STATUS_LIST,
 } from '../../server/src/validation/schemas';
 
 describe('Validation Schemas', () => {
@@ -575,6 +580,271 @@ describe('Validation Schemas', () => {
         orderedFeatureIds: ['a'.repeat(100)],
       });
       expect(result.success).toBe(true);
+    });
+  });
+
+  describe('BackoutSessionInputSchema', () => {
+    describe('action field', () => {
+      it('should accept "pause" action', () => {
+        const result = BackoutSessionInputSchema.safeParse({
+          action: 'pause',
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.action).toBe('pause');
+        }
+      });
+
+      it('should accept "abandon" action', () => {
+        const result = BackoutSessionInputSchema.safeParse({
+          action: 'abandon',
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.action).toBe('abandon');
+        }
+      });
+
+      it('should reject missing action field', () => {
+        const result = BackoutSessionInputSchema.safeParse({});
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject invalid action value', () => {
+        const result = BackoutSessionInputSchema.safeParse({
+          action: 'cancel',
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject empty string action', () => {
+        const result = BackoutSessionInputSchema.safeParse({
+          action: '',
+        });
+        expect(result.success).toBe(false);
+      });
+    });
+
+    describe('reason field', () => {
+      it('should accept "user_requested" reason', () => {
+        const result = BackoutSessionInputSchema.safeParse({
+          action: 'pause',
+          reason: 'user_requested',
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.reason).toBe('user_requested');
+        }
+      });
+
+      it('should accept "blocked" reason', () => {
+        const result = BackoutSessionInputSchema.safeParse({
+          action: 'pause',
+          reason: 'blocked',
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.reason).toBe('blocked');
+        }
+      });
+
+      it('should accept "deprioritized" reason', () => {
+        const result = BackoutSessionInputSchema.safeParse({
+          action: 'abandon',
+          reason: 'deprioritized',
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.reason).toBe('deprioritized');
+        }
+      });
+
+      it('should allow omitting reason (optional field)', () => {
+        const result = BackoutSessionInputSchema.safeParse({
+          action: 'pause',
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.reason).toBeUndefined();
+        }
+      });
+
+      it('should reject invalid reason value', () => {
+        const result = BackoutSessionInputSchema.safeParse({
+          action: 'pause',
+          reason: 'invalid_reason',
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject empty string reason', () => {
+        const result = BackoutSessionInputSchema.safeParse({
+          action: 'pause',
+          reason: '',
+        });
+        expect(result.success).toBe(false);
+      });
+    });
+
+    describe('combined action and reason', () => {
+      it('should accept pause with user_requested', () => {
+        const result = BackoutSessionInputSchema.safeParse({
+          action: 'pause',
+          reason: 'user_requested',
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.action).toBe('pause');
+          expect(result.data.reason).toBe('user_requested');
+        }
+      });
+
+      it('should accept abandon with blocked', () => {
+        const result = BackoutSessionInputSchema.safeParse({
+          action: 'abandon',
+          reason: 'blocked',
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.action).toBe('abandon');
+          expect(result.data.reason).toBe('blocked');
+        }
+      });
+
+      it('should accept abandon with deprioritized', () => {
+        const result = BackoutSessionInputSchema.safeParse({
+          action: 'abandon',
+          reason: 'deprioritized',
+        });
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.action).toBe('abandon');
+          expect(result.data.reason).toBe('deprioritized');
+        }
+      });
+    });
+  });
+
+  describe('BackoutActionSchema', () => {
+    it('should accept "pause"', () => {
+      const result = BackoutActionSchema.safeParse('pause');
+      expect(result.success).toBe(true);
+    });
+
+    it('should accept "abandon"', () => {
+      const result = BackoutActionSchema.safeParse('abandon');
+      expect(result.success).toBe(true);
+    });
+
+    it('should reject other values', () => {
+      expect(BackoutActionSchema.safeParse('cancel').success).toBe(false);
+      expect(BackoutActionSchema.safeParse('stop').success).toBe(false);
+      expect(BackoutActionSchema.safeParse('').success).toBe(false);
+    });
+  });
+
+  describe('BackoutReasonSchema', () => {
+    it('should accept "user_requested"', () => {
+      const result = BackoutReasonSchema.safeParse('user_requested');
+      expect(result.success).toBe(true);
+    });
+
+    it('should accept "blocked"', () => {
+      const result = BackoutReasonSchema.safeParse('blocked');
+      expect(result.success).toBe(true);
+    });
+
+    it('should accept "deprioritized"', () => {
+      const result = BackoutReasonSchema.safeParse('deprioritized');
+      expect(result.success).toBe(true);
+    });
+
+    it('should reject invalid reasons', () => {
+      expect(BackoutReasonSchema.safeParse('invalid').success).toBe(false);
+      expect(BackoutReasonSchema.safeParse('').success).toBe(false);
+      expect(BackoutReasonSchema.safeParse('BLOCKED').success).toBe(false);
+    });
+  });
+
+  describe('isBackoutAllowedForStatus', () => {
+    describe('should allow backout for stages 1-6', () => {
+      it('should allow queued status', () => {
+        expect(isBackoutAllowedForStatus('queued')).toBe(true);
+      });
+
+      it('should allow discovery status (stage 1)', () => {
+        expect(isBackoutAllowedForStatus('discovery')).toBe(true);
+      });
+
+      it('should allow planning status (stage 2)', () => {
+        expect(isBackoutAllowedForStatus('planning')).toBe(true);
+      });
+
+      it('should allow implementing status (stage 3)', () => {
+        expect(isBackoutAllowedForStatus('implementing')).toBe(true);
+      });
+
+      it('should allow pr_creation status (stage 4)', () => {
+        expect(isBackoutAllowedForStatus('pr_creation')).toBe(true);
+      });
+
+      it('should allow pr_review status (stage 5)', () => {
+        expect(isBackoutAllowedForStatus('pr_review')).toBe(true);
+      });
+
+      it('should allow final_approval status (stage 6)', () => {
+        expect(isBackoutAllowedForStatus('final_approval')).toBe(true);
+      });
+    });
+
+    describe('should NOT allow backout for terminal states', () => {
+      it('should not allow completed status (stage 7)', () => {
+        expect(isBackoutAllowedForStatus('completed')).toBe(false);
+      });
+
+      it('should not allow paused status (already backed out)', () => {
+        expect(isBackoutAllowedForStatus('paused')).toBe(false);
+      });
+
+      it('should not allow failed status', () => {
+        expect(isBackoutAllowedForStatus('failed')).toBe(false);
+      });
+    });
+
+    describe('should handle invalid statuses', () => {
+      it('should not allow invalid status', () => {
+        expect(isBackoutAllowedForStatus('invalid')).toBe(false);
+      });
+
+      it('should not allow empty string', () => {
+        expect(isBackoutAllowedForStatus('')).toBe(false);
+      });
+    });
+  });
+
+  describe('BACKOUT_ALLOWED_STATUS_LIST', () => {
+    it('should contain all stages 1-6 statuses plus queued', () => {
+      expect(BACKOUT_ALLOWED_STATUS_LIST).toContain('queued');
+      expect(BACKOUT_ALLOWED_STATUS_LIST).toContain('discovery');
+      expect(BACKOUT_ALLOWED_STATUS_LIST).toContain('planning');
+      expect(BACKOUT_ALLOWED_STATUS_LIST).toContain('implementing');
+      expect(BACKOUT_ALLOWED_STATUS_LIST).toContain('pr_creation');
+      expect(BACKOUT_ALLOWED_STATUS_LIST).toContain('pr_review');
+      expect(BACKOUT_ALLOWED_STATUS_LIST).toContain('final_approval');
+    });
+
+    it('should have exactly 7 allowed statuses', () => {
+      expect(BACKOUT_ALLOWED_STATUS_LIST).toHaveLength(7);
+    });
+
+    it('should NOT contain terminal states', () => {
+      expect(BACKOUT_ALLOWED_STATUS_LIST).not.toContain('completed');
+      expect(BACKOUT_ALLOWED_STATUS_LIST).not.toContain('paused');
+      expect(BACKOUT_ALLOWED_STATUS_LIST).not.toContain('failed');
+    });
+
+    it('should be a valid array for iteration', () => {
+      expect(Array.isArray(BACKOUT_ALLOWED_STATUS_LIST)).toBe(true);
     });
   });
 });

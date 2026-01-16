@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BACKOUT_REASONS } from '../../../shared/types/session';
 
 /**
  * Input validation schemas based on README lines 2146-2176
@@ -134,6 +135,45 @@ export const QueueReorderInputSchema = z.object({
   orderedFeatureIds: z.array(z.string().min(1).max(100)).max(1000, 'Cannot reorder more than 1000 sessions at once'),
 });
 
+// Valid session statuses that can be backed out (stages 1-6, including queued)
+const BACKOUT_ALLOWED_STATUSES = [
+  'queued',
+  'discovery',
+  'planning',
+  'implementing',
+  'pr_creation',
+  'pr_review',
+  'final_approval',
+] as const;
+
+/** Schema for backout action types */
+export const BackoutActionSchema = z.enum(['pause', 'abandon']);
+
+/** Schema for backout reason (uses shared BACKOUT_REASONS constant) */
+export const BackoutReasonSchema = z.enum(BACKOUT_REASONS as unknown as [string, ...string[]]);
+
+/**
+ * Input schema for backing out from a session
+ * - action: 'pause' keeps the session for later, 'abandon' marks it as won't do
+ * - reason: Optional backout reason from predefined list (user_requested, blocked, deprioritized)
+ */
+export const BackoutSessionInputSchema = z.object({
+  action: BackoutActionSchema,
+  reason: BackoutReasonSchema.optional(),
+});
+
+/**
+ * Helper function to validate if a session status allows backout
+ * Backout is only allowed from stages 1-6 (queued through final_approval)
+ * Not allowed for: completed, paused, failed
+ */
+export function isBackoutAllowedForStatus(status: string): boolean {
+  return (BACKOUT_ALLOWED_STATUSES as readonly string[]).includes(status);
+}
+
+/** Array of statuses that allow backout, exported for use in validation messages */
+export const BACKOUT_ALLOWED_STATUS_LIST = [...BACKOUT_ALLOWED_STATUSES];
+
 export type CreateSessionInput = z.infer<typeof CreateSessionInputSchema>;
 export type UpdateSessionInput = z.infer<typeof UpdateSessionInputSchema>;
 export type StageTransitionInput = z.infer<typeof StageTransitionInputSchema>;
@@ -142,3 +182,6 @@ export type BatchAnswersInput = z.infer<typeof BatchAnswersInputSchema>;
 export type RequestChangesInput = z.infer<typeof RequestChangesInputSchema>;
 export type UserPreferencesInput = z.infer<typeof UserPreferencesSchema>;
 export type QueueReorderInput = z.infer<typeof QueueReorderInputSchema>;
+export type BackoutSessionInput = z.infer<typeof BackoutSessionInputSchema>;
+export type BackoutAction = z.infer<typeof BackoutActionSchema>;
+export type BackoutReasonInput = z.infer<typeof BackoutReasonSchema>;
