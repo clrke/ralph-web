@@ -42,9 +42,9 @@ describe('Stage 3 Manual Transition', () => {
       expect(result.success).toBe(false);
     });
 
-    it('should reject stage 6', () => {
+    it('should reject stage 8 (above max)', () => {
       const result = StageTransitionInputSchema.safeParse({
-        targetStage: 6,
+        targetStage: 8,
       });
       expect(result.success).toBe(false);
     });
