@@ -56,6 +56,13 @@ export interface BackoutResult {
   promotedSession: Session | null;
 }
 
+export interface ResumeResult {
+  /** The updated session after resuming */
+  session: Session;
+  /** Whether the session was queued (true) or immediately started (false) */
+  wasQueued: boolean;
+}
+
 export class SessionManager {
   private readonly options: SessionManagerOptions;
 
@@ -678,6 +685,107 @@ export class SessionManager {
     return {
       session: updatedSession,
       promotedSession,
+    };
+  }
+
+  /**
+   * Resume a paused session.
+   * - Validates session is in 'paused' status
+   * - Restores the appropriate status based on currentStage
+   * - Clears backout metadata
+   * - If another session is active, queues this session at the front
+   * - Otherwise, starts the session immediately
+   *
+   * @param projectId - The project ID
+   * @param featureId - The feature ID
+   * @returns ResumeResult with updated session and queue status
+   * @throws Error if session not found or not in paused status
+   */
+  async resumeSession(
+    projectId: string,
+    featureId: string
+  ): Promise<ResumeResult> {
+    const session = await this.getSession(projectId, featureId);
+
+    if (!session) {
+      throw new Error(`Session not found: ${projectId}/${featureId}`);
+    }
+
+    // Validate that session is paused
+    if (session.status !== 'paused') {
+      throw new Error(
+        `Cannot resume session with status '${session.status}'. ` +
+        `Only paused sessions can be resumed.`
+      );
+    }
+
+    const now = new Date().toISOString();
+
+    // Check if there's an active session for this project
+    const activeSession = await this.getActiveSessionForProject(projectId);
+    const wasQueued = activeSession !== null;
+
+    // Determine the appropriate status based on currentStage
+    // Stage 0 means the session was queued when it was paused
+    const targetStatus: SessionStatus = wasQueued
+      ? 'queued'
+      : session.currentStage === 0
+        ? 'discovery' // If it was queued before, start fresh at discovery
+        : STAGE_STATUS_MAP[session.currentStage] || 'discovery';
+
+    // Determine the target stage
+    const targetStage = wasQueued
+      ? 0 // Queued sessions have stage 0
+      : session.currentStage === 0
+        ? 1 // If it was queued before, start at stage 1
+        : session.currentStage;
+
+    // Calculate queue position if being queued (insert at front)
+    let queuePosition: number | null = null;
+    let queuedAt: string | null = null;
+    if (wasQueued) {
+      // Get current queued sessions and shift them
+      const queuedSessions = await this.getQueuedSessions(projectId);
+      queuePosition = 1; // Insert at front
+
+      // Shift existing queued sessions
+      for (const queuedSession of queuedSessions) {
+        const pos = queuedSession.queuePosition;
+        if (pos != null) {
+          await this.updateSession(projectId, queuedSession.featureId, {
+            queuePosition: pos + 1,
+          });
+        }
+      }
+      queuedAt = now;
+    }
+
+    // Update the session
+    const updatedSession = await this.updateSession(projectId, featureId, {
+      status: targetStatus,
+      currentStage: targetStage,
+      backoutReason: null,
+      backoutTimestamp: null,
+      queuePosition,
+      queuedAt,
+    });
+
+    // Update status.json to reflect the resume
+    const sessionPath = this.getSessionPath(projectId, featureId);
+    const statusPath = `${sessionPath}/status.json`;
+    const statusFile = await this.storage.readJson<Record<string, unknown>>(statusPath);
+    if (statusFile) {
+      statusFile.status = wasQueued ? 'queued' : 'idle';
+      statusFile.currentStage = targetStage;
+      statusFile.timestamp = now;
+      statusFile.lastAction = wasQueued ? 'session_queued' : 'session_resumed';
+      statusFile.lastActionAt = now;
+      await this.storage.writeJson(statusPath, statusFile);
+    }
+
+    return {
+      session: updatedSession,
+      wasQueued,
     };
   }
 }

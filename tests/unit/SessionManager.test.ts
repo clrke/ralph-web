@@ -1,4 +1,4 @@
-import { SessionManager, BackoutResult } from '../../server/src/services/SessionManager';
+import { SessionManager, BackoutResult, ResumeResult } from '../../server/src/services/SessionManager';
 import { FileStorageService } from '../../server/src/data/FileStorageService';
 import { CreateSessionInput, Session, UserPreferences, DEFAULT_USER_PREFERENCES, BackoutReason } from '../../shared/types/session';
 import * as fs from 'fs-extra';
@@ -2314,6 +2314,440 @@ describe('SessionManager', () => {
 
           expect(updatedQueued1!.queuePosition).toBe(1);
           expect(updatedQueued3!.queuePosition).toBe(2);
+        });
+      });
+    });
+
+    describe('resumeSession', () => {
+      describe('basic resume functionality', () => {
+        it('should resume a paused session to its previous stage', async () => {
+          const session = await manager.createSession({
+            title: 'Paused Feature',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          // Progress to stage 2
+          await manager.transitionStage(session.projectId, session.featureId, 2);
+
+          // Pause the session
+          await manager.backoutSession(session.projectId, session.featureId, 'pause');
+
+          // Verify it's paused
+          const paused = await manager.getSession(session.projectId, session.featureId);
+          expect(paused!.status).toBe('paused');
+          expect(paused!.currentStage).toBe(2);
+
+          // Resume the session
+          const result = await manager.resumeSession(session.projectId, session.featureId);
+
+          expect(result.session.status).toBe('planning');
+          expect(result.session.currentStage).toBe(2);
+          expect(result.session.backoutReason).toBeNull();
+          expect(result.session.backoutTimestamp).toBeNull();
+          expect(result.wasQueued).toBe(false);
+        });
+
+        it('should resume a paused session from stage 1', async () => {
+          const session = await manager.createSession({
+            title: 'Stage 1 Paused',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          // Pause at stage 1
+          await manager.backoutSession(session.projectId, session.featureId, 'pause');
+
+          // Resume
+          const result = await manager.resumeSession(session.projectId, session.featureId);
+
+          expect(result.session.status).toBe('discovery');
+          expect(result.session.currentStage).toBe(1);
+          expect(result.wasQueued).toBe(false);
+        });
+
+        it('should resume a paused session from stage 3', async () => {
+          const session = await manager.createSession({
+            title: 'Stage 3 Paused',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          // Progress to stage 3
+          await manager.transitionStage(session.projectId, session.featureId, 2);
+          await manager.transitionStage(session.projectId, session.featureId, 3);
+
+          // Pause
+          await manager.backoutSession(session.projectId, session.featureId, 'pause');
+
+          // Resume
+          const result = await manager.resumeSession(session.projectId, session.featureId);
+
+          expect(result.session.status).toBe('implementing');
+          expect(result.session.currentStage).toBe(3);
+        });
+
+        it('should clear backout metadata on resume', async () => {
+          const session = await manager.createSession({
+            title: 'Metadata Test',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          // Pause with reason
+          await manager.backoutSession(session.projectId, session.featureId, 'pause', 'blocked');
+
+          // Verify metadata is set
+          const paused = await manager.getSession(session.projectId, session.featureId);
+          expect(paused!.backoutReason).toBe('blocked');
+          expect(paused!.backoutTimestamp).toBeDefined();
+
+          // Resume
+          const result = await manager.resumeSession(session.projectId, session.featureId);
+
+          expect(result.session.backoutReason).toBeNull();
+          expect(result.session.backoutTimestamp).toBeNull();
+        });
+      });
+
+      describe('status validation', () => {
+        it('should throw when trying to resume a non-paused session', async () => {
+          const session = await manager.createSession({
+            title: 'Active Feature',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          await expect(
+            manager.resumeSession(session.projectId, session.featureId)
+          ).rejects.toThrow(/cannot resume.*discovery/i);
+        });
+
+        it('should throw when trying to resume a completed session', async () => {
+          const session = await manager.createSession({
+            title: 'Completed Feature',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          await manager.updateSession(session.projectId, session.featureId, {
+            status: 'completed',
+          });
+
+          await expect(
+            manager.resumeSession(session.projectId, session.featureId)
+          ).rejects.toThrow(/cannot resume.*completed/i);
+        });
+
+        it('should throw when trying to resume a failed session', async () => {
+          const session = await manager.createSession({
+            title: 'Failed Feature',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          await manager.updateSession(session.projectId, session.featureId, {
+            status: 'failed',
+          });
+
+          await expect(
+            manager.resumeSession(session.projectId, session.featureId)
+          ).rejects.toThrow(/cannot resume.*failed/i);
+        });
+
+        it('should throw for non-existent session', async () => {
+          await expect(
+            manager.resumeSession('nonexistent', 'session')
+          ).rejects.toThrow(/session not found/i);
+        });
+      });
+
+      describe('queue handling', () => {
+        it('should queue resumed session when another session is active', async () => {
+          // Create and keep an active session
+          const active = await manager.createSession({
+            title: 'Active Feature',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          // Create and pause another session
+          const paused = await manager.createSession({
+            title: 'Paused Feature',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          // Pause it
+          await manager.backoutSession(paused.projectId, paused.featureId, 'pause');
+
+          // Resume it - should be queued since active exists
+          const result = await manager.resumeSession(paused.projectId, paused.featureId);
+
+          expect(result.wasQueued).toBe(true);
+          expect(result.session.status).toBe('queued');
+          expect(result.session.currentStage).toBe(0);
+          expect(result.session.queuePosition).toBe(1);
+          expect(result.session.queuedAt).toBeDefined();
+        });
+
+        it('should insert resumed session at front of queue', async () => {
+          // Create active session
+          await manager.createSession({
+            title: 'Active Feature',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          // Create queued session
+          const queued = await manager.createSession({
+            title: 'Queued Feature',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          expect(queued.queuePosition).toBe(1);
+
+          // Create and pause another session
+          const paused = await manager.createSession({
+            title: 'Paused Feature',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          await manager.backoutSession(paused.projectId, paused.featureId, 'pause');
+
+          // Resume it - should be at front of queue
+          const result = await manager.resumeSession(paused.projectId, paused.featureId);
+
+          expect(result.session.queuePosition).toBe(1);
+
+          // Original queued session should be shifted to position 2
+          const updatedQueued = await manager.getSession(queued.projectId, queued.featureId);
+          expect(updatedQueued!.queuePosition).toBe(2);
+        });
+
+        it('should shift multiple queued sessions when resuming', async () => {
+          // Create active session
+          await manager.createSession({
+            title: 'Active Feature',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          // Create multiple queued sessions
+          const queued1 = await manager.createSession({
+            title: 'Queued One',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          const queued2 = await manager.createSession({
+            title: 'Queued Two',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          // Create and pause a session
+          const paused = await manager.createSession({
+            title: 'Paused Feature',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          await manager.backoutSession(paused.projectId, paused.featureId, 'pause');
+
+          // Resume - should be at front
+          await manager.resumeSession(paused.projectId, paused.featureId);
+
+          // Verify positions
+          const projectId = manager.getProjectId(projectPath);
+          const allQueued = await manager.getQueuedSessions(projectId);
+
+          expect(allQueued).toHaveLength(3);
+          expect(allQueued[0].title).toBe('Paused Feature');
+          expect(allQueued[0].queuePosition).toBe(1);
+          expect(allQueued[1].title).toBe('Queued One');
+          expect(allQueued[1].queuePosition).toBe(2);
+          expect(allQueued[2].title).toBe('Queued Two');
+          expect(allQueued[2].queuePosition).toBe(3);
+        });
+
+        it('should start immediately when no active session exists', async () => {
+          const session = await manager.createSession({
+            title: 'Only Session',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          // Progress to stage 2
+          await manager.transitionStage(session.projectId, session.featureId, 2);
+
+          // Pause
+          await manager.backoutSession(session.projectId, session.featureId, 'pause');
+
+          // Resume - should start immediately
+          const result = await manager.resumeSession(session.projectId, session.featureId);
+
+          expect(result.wasQueued).toBe(false);
+          expect(result.session.status).toBe('planning');
+          expect(result.session.queuePosition).toBeNull();
+          expect(result.session.queuedAt).toBeNull();
+        });
+      });
+
+      describe('status.json updates', () => {
+        it('should update status.json when resuming immediately', async () => {
+          const session = await manager.createSession({
+            title: 'Status Test',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          await manager.backoutSession(session.projectId, session.featureId, 'pause');
+          await manager.resumeSession(session.projectId, session.featureId);
+
+          // Read status.json directly
+          const statusPath = path.join(
+            testDir,
+            session.projectId,
+            session.featureId,
+            'status.json'
+          );
+          const statusFile = await fs.readJson(statusPath);
+
+          expect(statusFile.status).toBe('idle');
+          expect(statusFile.lastAction).toBe('session_resumed');
+          expect(statusFile.currentStage).toBe(1);
+        });
+
+        it('should update status.json when resuming to queue', async () => {
+          // Create active session
+          await manager.createSession({
+            title: 'Active Feature',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          // Create and pause another session
+          const paused = await manager.createSession({
+            title: 'Paused Feature',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          await manager.backoutSession(paused.projectId, paused.featureId, 'pause');
+          await manager.resumeSession(paused.projectId, paused.featureId);
+
+          // Read status.json directly
+          const statusPath = path.join(
+            testDir,
+            paused.projectId,
+            paused.featureId,
+            'status.json'
+          );
+          const statusFile = await fs.readJson(statusPath);
+
+          expect(statusFile.status).toBe('queued');
+          expect(statusFile.lastAction).toBe('session_queued');
+          expect(statusFile.currentStage).toBe(0);
+        });
+      });
+
+      describe('resuming previously queued sessions', () => {
+        it('should handle resuming a session that was queued when paused', async () => {
+          // Create active session
+          await manager.createSession({
+            title: 'Active Feature',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          // Create a queued session
+          const queued = await manager.createSession({
+            title: 'Queued Feature',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          expect(queued.status).toBe('queued');
+          expect(queued.currentStage).toBe(0);
+
+          // Pause the queued session
+          await manager.backoutSession(queued.projectId, queued.featureId, 'pause');
+
+          // Resume it
+          const result = await manager.resumeSession(queued.projectId, queued.featureId);
+
+          // Should be queued again since active session still exists
+          expect(result.wasQueued).toBe(true);
+          expect(result.session.status).toBe('queued');
+          expect(result.session.queuePosition).toBe(1);
+        });
+      });
+
+      describe('resume from different stages', () => {
+        it('should resume from stage 4 (pr_creation)', async () => {
+          const session = await manager.createSession({
+            title: 'Stage 4 Session',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          // Progress to stage 4
+          await manager.transitionStage(session.projectId, session.featureId, 2);
+          await manager.transitionStage(session.projectId, session.featureId, 3);
+          await manager.transitionStage(session.projectId, session.featureId, 4);
+
+          // Pause and resume
+          await manager.backoutSession(session.projectId, session.featureId, 'pause');
+          const result = await manager.resumeSession(session.projectId, session.featureId);
+
+          expect(result.session.status).toBe('pr_creation');
+          expect(result.session.currentStage).toBe(4);
+        });
+
+        it('should resume from stage 5 (pr_review)', async () => {
+          const session = await manager.createSession({
+            title: 'Stage 5 Session',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          // Progress to stage 5
+          await manager.transitionStage(session.projectId, session.featureId, 2);
+          await manager.transitionStage(session.projectId, session.featureId, 3);
+          await manager.transitionStage(session.projectId, session.featureId, 4);
+          await manager.transitionStage(session.projectId, session.featureId, 5);
+
+          // Pause and resume
+          await manager.backoutSession(session.projectId, session.featureId, 'pause');
+          const result = await manager.resumeSession(session.projectId, session.featureId);
+
+          expect(result.session.status).toBe('pr_review');
+          expect(result.session.currentStage).toBe(5);
+        });
+
+        it('should resume from stage 6 (final_approval)', async () => {
+          const session = await manager.createSession({
+            title: 'Stage 6 Session',
+            featureDescription: 'Test',
+            projectPath,
+          });
+
+          // Progress to stage 6
+          await manager.transitionStage(session.projectId, session.featureId, 2);
+          await manager.transitionStage(session.projectId, session.featureId, 3);
+          await manager.transitionStage(session.projectId, session.featureId, 4);
+          await manager.transitionStage(session.projectId, session.featureId, 5);
+          await manager.transitionStage(session.projectId, session.featureId, 6);
+
+          // Pause and resume
+          await manager.backoutSession(session.projectId, session.featureId, 'pause');
+          const result = await manager.resumeSession(session.projectId, session.featureId);
+
+          expect(result.session.status).toBe('final_approval');
+          expect(result.session.currentStage).toBe(6);
         });
       });
     });
