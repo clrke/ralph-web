@@ -1092,6 +1092,11 @@ export function buildStage5Prompt(session: Session, plan: Plan, prInfo: { title:
     ? `\n\n## Full Plan Reference\nFor complete plan details, read: ${session.claudePlanFilePath}`
     : '';
 
+  // Get the plan.json path from the plan.md path
+  const planJsonPath = session.claudePlanFilePath
+    ? session.claudePlanFilePath.replace(/plan\.md$/, 'plan.json')
+    : null;
+
   return `You are reviewing a pull request. Be objective and thorough.
 
 IMPORTANT: You are reviewing this code with fresh eyes. Evaluate it as if you did not write it.
@@ -1119,6 +1124,8 @@ When spawning Task subagents in this stage, instruct them to use READ-ONLY tools
 - Allowed: Read, Glob, Grep, Bash (read-only: git diff, git log, gh pr checks)
 - NOT allowed: Edit, Write, Bash with modifications (no commits, no file changes)
 Include this restriction in each subagent prompt to prevent unintended modifications.
+
+**Note:** You (main agent) can edit plan files directly - see "Plan Step Editing" section below.
 
 1. **Frontend Agent**: Review UI/client-side changes.
    - Run: git diff main...HEAD -- '*.tsx' '*.ts' '*.css' (client paths)
@@ -1196,6 +1203,25 @@ Check Name: Status
 [/CI_STATUS]
 \`\`\`
 
+### Plan Step Editing (When Needed)
+If during review you find that plan step descriptions don't match the actual implementation, or the step structure is incorrect, you can edit the plan directly.
+
+**When to Edit Plan Steps:**
+- Step description doesn't accurately reflect what was implemented
+- Step complexity rating is incorrect (actual work was harder/easier)
+- Steps need to be reordered or dependencies corrected
+- A step should be split or combined based on implementation
+
+**How to Edit (Use Edit tool directly):**
+1. Read the current plan file: ${session.claudePlanFilePath || '~/.claude-web/<session>/plan.md'}
+2. Use the Edit tool to modify plan.md with updated step content
+3. Update plan.json (${planJsonPath || 'same directory'}) to match your changes
+
+**What Happens After Editing:**
+The system automatically detects changes to plan files. After you edit the plan, the session will return to Stage 2 (Plan Review) to validate your changes before continuing.
+
+**IMPORTANT:** You can ONLY edit plan files in ~/.claude-web/. You cannot edit the codebase itself in this stage.
+
 ### Phase 4: Decision
 Based on findings and CI status:
 
@@ -1209,7 +1235,7 @@ This requires returning to Stage 2 to fix the issues.
 [/CI_FAILED]
 \`\`\`
 
-**If issues found that require fixes:**
+**If issues found that require code fixes:**
 Present as \`[DECISION_NEEDED]\` blocks and wait for user response.
 If user chooses to fix, output:
 \`\`\`
@@ -1217,6 +1243,10 @@ If user chooses to fix, output:
 Reason: Brief description of what needs to be fixed
 [/RETURN_TO_STAGE_2]
 \`\`\`
+
+**If plan steps need correction (no code changes needed):**
+Use the Edit tool to modify the plan files directly as described above.
+The system will automatically detect changes and return to Stage 2.
 
 **If CI passes and no blocking issues:**
 \`\`\`
@@ -1236,7 +1266,8 @@ Summary:
 2. Check CI status before approving
 3. Present issues as prioritized decisions
 4. CI failures MUST return to Stage 2
-5. Only output PR_APPROVED when CI passes AND no blocking issues`;
+5. Only output PR_APPROVED when CI passes AND no blocking issues
+6. Edit plan files directly when step descriptions need correction`;
 }
 
 // ============================================================================
