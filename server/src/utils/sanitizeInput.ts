@@ -30,7 +30,7 @@ const ESCAPE_MARKERS = [
   // Plan mode markers (deprecated - parsed but not used for business logic)
   '[PLAN_MODE_ENTERED]',
   '[PLAN_MODE_EXITED]',
-  // Step modification markers
+  // Step modification markers (deprecated but still escaped for security)
   '[REMOVE_STEPS]',
   '[STEP_MODIFICATIONS]',
 ];

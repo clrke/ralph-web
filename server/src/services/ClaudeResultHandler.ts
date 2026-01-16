@@ -313,6 +313,12 @@ export class ClaudeResultHandler {
    * Process step modifications during Stage 2 revision.
    * Handles step removals (with cascade deletion), edits, and additions.
    * Updates session with tracking fields for Stage 3 consumption.
+   *
+   * NOTE: This method handles the deprecated marker-based approach
+   * ([STEP_MODIFICATIONS], [REMOVE_STEPS]). The preferred approach is
+   * for Claude to use the Edit tool directly on plan.md, which is then
+   * synced via syncPlanJsonFromMarkdown() called after this method.
+   * Both approaches are currently supported for backward compatibility.
    */
   private async processStepModificationsForStage2(
     sessionDir: string,

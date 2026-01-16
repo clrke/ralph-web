@@ -59,7 +59,8 @@ function createMockPlan(steps: PlanStep[], planVersion = 1): Plan {
 
 function createMockSession(overrides: Partial<Session> = {}): Session {
   return {
-    version: '1.0',
+    version: '1.0.0',
+    dataVersion: 1,
     id: 'session-123',
     projectId: 'project-abc',
     featureId: 'test-feature',
@@ -76,8 +77,10 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
     currentStage: 5,
     replanningCount: 0,
     claudeSessionId: 'claude-session-123',
+    claudeStage3SessionId: null,
     claudePlanFilePath: null,
     currentPlanVersion: 1,
+    prUrl: null,
     sessionExpiresAt: new Date(Date.now() + 86400000).toISOString(),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),

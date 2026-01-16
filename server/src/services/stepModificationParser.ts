@@ -2,6 +2,25 @@
  * Parser for step modification markers in Claude's output.
  * Handles [STEP_MODIFICATIONS] and [REMOVE_STEPS] markers,
  * and implements cascade deletion logic for child steps.
+ *
+ * DEPRECATION NOTE (2025-01):
+ * The marker-based approach ([STEP_MODIFICATIONS], [REMOVE_STEPS]) is deprecated
+ * in favor of Claude using the Edit tool directly on plan.md files.
+ *
+ * The direct-edit approach:
+ * - Claude edits plan.md using the Edit tool
+ * - syncPlanFromMarkdown() syncs changes to plan.json
+ * - Hash comparison detects changes for stage transitions
+ *
+ * This marker parsing code is kept for backward compatibility with:
+ * - Older sessions that may still use markers
+ * - Edge cases where Claude outputs markers
+ * - Fallback parsing if direct-edit detection fails
+ *
+ * Functions that remain actively used (not deprecated):
+ * - findCascadeDeletedSteps() - Used for cascade deletion logic
+ * - validateStepModifications() - Validation utilities
+ * - detectModifiedStepsFromPlanSteps() - PLAN_STEP marker detection
  */
 
 import type { PlanStep } from '@claude-code-web/shared';
@@ -37,6 +56,10 @@ export interface StepModificationResult {
 /**
  * Parse [STEP_MODIFICATIONS] marker from Claude's output.
  *
+ * @deprecated Marker-based step modifications are deprecated.
+ * Prefer using the Edit tool directly on plan.md with syncPlanFromMarkdown().
+ * This function is kept for backward compatibility with older sessions.
+ *
  * Expected format:
  * ```
  * [STEP_MODIFICATIONS]
@@ -70,6 +93,10 @@ export function parseStepModifications(input: string): ParsedStepModifications |
 
 /**
  * Parse [REMOVE_STEPS] marker from Claude's output.
+ *
+ * @deprecated Marker-based step modifications are deprecated.
+ * Prefer using the Edit tool directly on plan.md with syncPlanFromMarkdown().
+ * This function is kept for backward compatibility with older sessions.
  *
  * Expected format:
  * ```
@@ -287,6 +314,15 @@ export function validateStepModifications(
  * Process step modifications from Claude's output.
  * Parses both STEP_MODIFICATIONS and REMOVE_STEPS markers,
  * validates modifications, and computes cascade deletions.
+ *
+ * @deprecated Marker-based step modifications are deprecated.
+ * Prefer using the Edit tool directly on plan.md with syncPlanFromMarkdown().
+ * This function is kept for backward compatibility with older sessions.
+ *
+ * The new flow is:
+ * 1. Claude edits plan.md using the Edit tool
+ * 2. syncPlanFromMarkdown() syncs plan.json
+ * 3. Hash comparison detects changes
  */
 export function processStepModifications(
   input: string,
@@ -357,6 +393,9 @@ export function processStepModifications(
 
 /**
  * Check if the input contains any step modification markers.
+ *
+ * @deprecated Marker-based step modifications are deprecated.
+ * This function is kept for backward compatibility.
  */
 export function hasStepModificationMarkers(input: string): boolean {
   return (
