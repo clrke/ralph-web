@@ -668,7 +668,7 @@ describe('NewSession', () => {
 
     it('should include insertAtPosition in API call when session is queued', async () => {
       const user = userEvent.setup();
-      const fetchMock = vi.fn().mockImplementation((url: string, options?: RequestInit) => {
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
         if (url.includes('/check-queue')) {
           return Promise.resolve({
             ok: true,

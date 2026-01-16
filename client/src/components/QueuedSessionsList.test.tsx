@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import type { ReactElement } from 'react';
 import QueuedSessionsList from './QueuedSessionsList';
 import type { Session } from '@claude-code-web/shared';
 

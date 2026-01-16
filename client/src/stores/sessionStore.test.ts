@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { useSessionStore, usePlanStep, useQuestion, type ExecutionStatus } from './sessionStore';
 import type { Plan, PlanStep, Question, Session } from '@claude-code-web/shared';
 

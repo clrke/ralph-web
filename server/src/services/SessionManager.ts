@@ -317,9 +317,10 @@ export class SessionManager {
     if (isQueued && queuePosition !== null && queuePosition <= queuedSessions.length) {
       // Shift sessions that are at or after the insertion position
       for (const queuedSession of queuedSessions) {
-        if (queuedSession.queuePosition !== null && queuedSession.queuePosition >= queuePosition) {
+        const pos = queuedSession.queuePosition;
+        if (pos != null && pos >= queuePosition) {
           await this.updateSession(projectId, queuedSession.featureId, {
-            queuePosition: queuedSession.queuePosition + 1,
+            queuePosition: pos + 1,
           });
         }
       }
