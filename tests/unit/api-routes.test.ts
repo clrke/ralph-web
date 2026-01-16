@@ -1861,7 +1861,7 @@ describe('API Routes', () => {
       it('should restore planning status for Stage 2', async () => {
         // Update to Stage 2 and re-pause
         const sessionPath = `${projectId}/${featureId}/session.json`;
-        let sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+        const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
         sessionData!.currentStage = 2;
         sessionData!.status = 'paused';
         await storage.writeJson(sessionPath, sessionData);
@@ -1875,7 +1875,7 @@ describe('API Routes', () => {
 
       it('should restore implementing status for Stage 3', async () => {
         const sessionPath = `${projectId}/${featureId}/session.json`;
-        let sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+        const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
         sessionData!.currentStage = 3;
         sessionData!.status = 'paused';
         await storage.writeJson(sessionPath, sessionData);
