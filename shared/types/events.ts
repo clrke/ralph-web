@@ -87,7 +87,7 @@ export interface ExecutionStatusEvent {
   status: 'running' | 'idle' | 'error';
   action: string;
   timestamp: string;
-  /** Current stage number (1-5) for context */
+  /** Current stage number (1-7) for context */
   stage?: number;
   /** Granular sub-state within the current action */
   subState?: ExecutionSubState;

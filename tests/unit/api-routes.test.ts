@@ -1258,4 +1258,248 @@ describe('API Routes', () => {
       expect(response.body.error).toMatch(/validation failed/i);
     });
   });
+
+  describe('POST /api/sessions/:projectId/:featureId/final-approval (Stage 6 transitions)', () => {
+    let projectId: string;
+    let featureId: string;
+
+    beforeEach(async () => {
+      // Create a session
+      const session = await sessionManager.createSession({
+        title: 'Test Feature',
+        featureDescription: 'Test description',
+        projectPath: '/test/project',
+      });
+      projectId = session.projectId;
+      featureId = session.featureId;
+
+      // Set up session in Stage 6
+      const sessionPath = `${projectId}/${featureId}/session.json`;
+      const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+      sessionData!.currentStage = 6;
+      sessionData!.status = 'final_approval';
+      await storage.writeJson(sessionPath, sessionData);
+
+      // Add plan.json (required for some transitions)
+      await storage.writeJson(`${projectId}/${featureId}/plan.json`, {
+        version: '1.0',
+        planVersion: 1,
+        sessionId: session.id,
+        isApproved: true,
+        reviewCount: 1,
+        steps: [
+          { id: 'step-1', title: 'Step 1', status: 'completed' },
+        ],
+      });
+
+      // Add pr.json (required for re_review)
+      await storage.writeJson(`${projectId}/${featureId}/pr.json`, {
+        title: 'Test PR',
+        branch: 'feature/test',
+        url: 'https://github.com/test/repo/pull/1',
+        createdAt: '2026-01-11T12:00:00Z',
+      });
+    });
+
+    describe('Stage 6 → 7 transition (merge)', () => {
+      it('should transition to Stage 7 when action is merge', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/final-approval`)
+          .send({ action: 'merge' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.success).toBe(true);
+        expect(response.body.session.currentStage).toBe(7);
+        expect(response.body.session.status).toBe('completed');
+      });
+
+      it('should accept optional feedback when merging', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/final-approval`)
+          .send({ action: 'merge', feedback: 'Great work!' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.success).toBe(true);
+        expect(response.body.session.currentStage).toBe(7);
+      });
+
+      it('should persist Stage 7 to storage', async () => {
+        await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/final-approval`)
+          .send({ action: 'merge' });
+
+        const session = await sessionManager.getSession(projectId, featureId);
+        expect(session!.currentStage).toBe(7);
+        expect(session!.status).toBe('completed');
+      });
+    });
+
+    describe('Stage 6 → 2 transition (plan_changes)', () => {
+      it('should transition to Stage 2 when action is plan_changes', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/final-approval`)
+          .send({ action: 'plan_changes', feedback: 'Need to refactor the auth module' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.success).toBe(true);
+        expect(response.body.session.currentStage).toBe(2);
+        expect(response.body.session.status).toBe('planning');
+      });
+
+      it('should require feedback for plan_changes', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/final-approval`)
+          .send({ action: 'plan_changes' });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toMatch(/feedback.*required/i);
+      });
+
+      it('should persist Stage 2 transition to storage', async () => {
+        await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/final-approval`)
+          .send({ action: 'plan_changes', feedback: 'Change the approach' });
+
+        const session = await sessionManager.getSession(projectId, featureId);
+        expect(session!.currentStage).toBe(2);
+        expect(session!.status).toBe('planning');
+      });
+    });
+
+    describe('Stage 6 → 5 transition (re_review)', () => {
+      it('should transition to Stage 5 when action is re_review', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/final-approval`)
+          .send({ action: 're_review', feedback: 'Please check edge cases more carefully' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.success).toBe(true);
+        expect(response.body.session.currentStage).toBe(5);
+        expect(response.body.session.status).toBe('pr_review');
+      });
+
+      it('should require feedback for re_review', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/final-approval`)
+          .send({ action: 're_review' });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toMatch(/feedback.*required/i);
+      });
+
+      it('should persist Stage 5 transition to storage', async () => {
+        await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/final-approval`)
+          .send({ action: 're_review', feedback: 'Check error handling' });
+
+        const session = await sessionManager.getSession(projectId, featureId);
+        expect(session!.currentStage).toBe(5);
+        expect(session!.status).toBe('pr_review');
+      });
+    });
+
+    describe('Validation and error handling', () => {
+      it('should return 404 for non-existent session', async () => {
+        const response = await request(app)
+          .post('/api/sessions/nonexistent/session/final-approval')
+          .send({ action: 'merge' });
+
+        expect(response.status).toBe(404);
+        expect(response.body.error).toMatch(/session not found/i);
+      });
+
+      it('should return 400 if session is not in Stage 6', async () => {
+        // Set session to Stage 3
+        const sessionPath = `${projectId}/${featureId}/session.json`;
+        const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+        sessionData!.currentStage = 3;
+        sessionData!.status = 'implementing';
+        await storage.writeJson(sessionPath, sessionData);
+
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/final-approval`)
+          .send({ action: 'merge' });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toMatch(/stage 6/i);
+      });
+
+      it('should return 400 for invalid action', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/final-approval`)
+          .send({ action: 'invalid_action' });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toMatch(/invalid action/i);
+      });
+
+      it('should return 400 for missing action', async () => {
+        const response = await request(app)
+          .post(`/api/sessions/${projectId}/${featureId}/final-approval`)
+          .send({});
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toMatch(/invalid action/i);
+      });
+    });
+  });
+
+  describe('Stage 5 → 6 transition (validation schema allows it)', () => {
+    let projectId: string;
+    let featureId: string;
+
+    beforeEach(async () => {
+      // Create a session
+      const session = await sessionManager.createSession({
+        title: 'Test Feature',
+        featureDescription: 'Test description',
+        projectPath: '/test/project',
+      });
+      projectId = session.projectId;
+      featureId = session.featureId;
+
+      // Set up session in Stage 5
+      const sessionPath = `${projectId}/${featureId}/session.json`;
+      const sessionData = await storage.readJson<Record<string, unknown>>(sessionPath);
+      sessionData!.currentStage = 5;
+      sessionData!.status = 'pr_review';
+      await storage.writeJson(sessionPath, sessionData);
+    });
+
+    it('should allow updating session to Stage 6 via PATCH', async () => {
+      // This tests that the validation schema now accepts Stage 6
+      const response = await request(app)
+        .patch(`/api/sessions/${projectId}/${featureId}`)
+        .send({ currentStage: 6, status: 'final_approval' });
+
+      expect(response.status).toBe(200);
+      expect(response.body.currentStage).toBe(6);
+      expect(response.body.status).toBe('final_approval');
+    });
+
+    it('should allow updating session to Stage 7 via PATCH', async () => {
+      // First transition to Stage 6
+      await request(app)
+        .patch(`/api/sessions/${projectId}/${featureId}`)
+        .send({ currentStage: 6, status: 'final_approval' });
+
+      // Then transition to Stage 7
+      const response = await request(app)
+        .patch(`/api/sessions/${projectId}/${featureId}`)
+        .send({ currentStage: 7, status: 'completed' });
+
+      expect(response.status).toBe(200);
+      expect(response.body.currentStage).toBe(7);
+      expect(response.body.status).toBe('completed');
+    });
+
+    it('should reject Stage 8 via PATCH (out of range)', async () => {
+      const response = await request(app)
+        .patch(`/api/sessions/${projectId}/${featureId}`)
+        .send({ currentStage: 8 });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/validation failed/i);
+    });
+  });
 });

@@ -2,7 +2,7 @@ import type { ExecutionSubState } from '@shared/events';
 import { getActivityLabel, getStageName, isErrorAction, isWaitingAction } from '@shared-utils/stageActivity';
 
 export interface StageStatusBadgeProps {
-  /** Current stage number (1-6) */
+  /** Current stage number (1-7) */
   stage: number;
   /** Execution status */
   status: 'running' | 'idle' | 'error';

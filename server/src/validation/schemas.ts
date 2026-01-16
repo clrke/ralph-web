@@ -88,8 +88,8 @@ export const CreateSessionInputSchema = z.object({
 
 // Update session input schema (partial, for PATCH requests)
 export const UpdateSessionInputSchema = z.object({
-  status: z.enum(['discovery', 'planning', 'implementing', 'pr_creation', 'pr_review', 'completed', 'paused', 'error']).optional(),
-  currentStage: z.number().int().min(1).max(5).optional(),
+  status: z.enum(['queued', 'discovery', 'planning', 'implementing', 'pr_creation', 'pr_review', 'final_approval', 'completed', 'paused', 'failed']).optional(),
+  currentStage: z.number().int().min(1).max(7).optional(),
   technicalNotes: z.string().max(5000).optional(),
   claudeSessionId: z.string().nullable().optional(),
   claudePlanFilePath: z.string().nullable().optional(),
@@ -98,7 +98,7 @@ export const UpdateSessionInputSchema = z.object({
 
 // Stage transition input schema
 export const StageTransitionInputSchema = z.object({
-  targetStage: z.number().int().min(1).max(5),
+  targetStage: z.number().int().min(1).max(7),
 });
 
 // Answer question input schema (single question)

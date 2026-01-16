@@ -239,6 +239,56 @@ describe('Validation Schemas', () => {
       expect(result.success).toBe(true);
     });
 
+    it('should accept stage 6 (final_approval)', () => {
+      const result = UpdateSessionInputSchema.safeParse({
+        currentStage: 6,
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.currentStage).toBe(6);
+      }
+    });
+
+    it('should accept stage 7 (completed)', () => {
+      const result = UpdateSessionInputSchema.safeParse({
+        currentStage: 7,
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.currentStage).toBe(7);
+      }
+    });
+
+    it('should accept final_approval status', () => {
+      const result = UpdateSessionInputSchema.safeParse({
+        status: 'final_approval',
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.status).toBe('final_approval');
+      }
+    });
+
+    it('should accept queued status', () => {
+      const result = UpdateSessionInputSchema.safeParse({
+        status: 'queued',
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.status).toBe('queued');
+      }
+    });
+
+    it('should accept failed status', () => {
+      const result = UpdateSessionInputSchema.safeParse({
+        status: 'failed',
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.status).toBe('failed');
+      }
+    });
+
     it('should reject invalid status', () => {
       const result = UpdateSessionInputSchema.safeParse({
         status: 'invalid',
@@ -248,7 +298,21 @@ describe('Validation Schemas', () => {
 
     it('should reject stage out of range', () => {
       const result = UpdateSessionInputSchema.safeParse({
-        currentStage: 6,
+        currentStage: 8,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject stage 0', () => {
+      const result = UpdateSessionInputSchema.safeParse({
+        currentStage: 0,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject negative stage', () => {
+      const result = UpdateSessionInputSchema.safeParse({
+        currentStage: -1,
       });
       expect(result.success).toBe(false);
     });
@@ -359,6 +423,26 @@ describe('Validation Schemas', () => {
       expect(result.success).toBe(true);
     });
 
+    it('should accept stage 6 (final_approval)', () => {
+      const result = StageTransitionInputSchema.safeParse({
+        targetStage: 6,
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.targetStage).toBe(6);
+      }
+    });
+
+    it('should accept stage 7 (completed)', () => {
+      const result = StageTransitionInputSchema.safeParse({
+        targetStage: 7,
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.targetStage).toBe(7);
+      }
+    });
+
     it('should reject stage below 1', () => {
       const result = StageTransitionInputSchema.safeParse({
         targetStage: 0,
@@ -366,9 +450,16 @@ describe('Validation Schemas', () => {
       expect(result.success).toBe(false);
     });
 
-    it('should reject stage above 5', () => {
+    it('should reject negative stage', () => {
       const result = StageTransitionInputSchema.safeParse({
-        targetStage: 6,
+        targetStage: -1,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject stage above 7', () => {
+      const result = StageTransitionInputSchema.safeParse({
+        targetStage: 8,
       });
       expect(result.success).toBe(false);
     });

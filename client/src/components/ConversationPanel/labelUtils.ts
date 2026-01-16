@@ -130,6 +130,8 @@ export function getStageColor(stage: number, postProcessingType?: string): strin
     3: 'bg-green-600',
     4: 'bg-yellow-600',
     5: 'bg-orange-600',
+    6: 'bg-emerald-600',
+    7: 'bg-teal-600',
   };
   return colors[stage] || 'bg-gray-600';
 }
