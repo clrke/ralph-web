@@ -13,7 +13,9 @@ import {
   CreateSessionInput,
   ExitSignals,
   UserPreferences,
+  BackoutReason,
 } from '@claude-code-web/shared';
+import { isBackoutAllowedForStatus, BackoutAction } from '../validation/schemas';
 
 const STAGE_STATUS_MAP: Record<number, SessionStatus> = {
   1: 'discovery',
@@ -45,6 +47,13 @@ export interface SessionManagerOptions {
 export interface GitInfo {
   currentBranch: string;
   headCommitSha: string;
+}
+
+export interface BackoutResult {
+  /** The updated session after backout */
+  session: Session;
+  /** The next session that was promoted (if any) */
+  promotedSession: Session | null;
 }
 
 export class SessionManager {
@@ -588,5 +597,87 @@ export class SessionManager {
           ? session.replanningCount + 1
           : session.replanningCount,
     });
+  }
+
+  /**
+   * Back out from a session by pausing or abandoning it.
+   * - 'pause': Sets status to 'paused', keeps session for later resumption
+   * - 'abandon': Sets status to 'failed', marks session as won't do
+   *
+   * Automatically promotes the next queued session for the project.
+   *
+   * @param projectId - The project ID
+   * @param featureId - The feature ID
+   * @param action - 'pause' or 'abandon'
+   * @param reason - Optional reason for backing out
+   * @returns BackoutResult with updated session and any promoted session
+   * @throws Error if session not found or backout not allowed for current status
+   */
+  async backoutSession(
+    projectId: string,
+    featureId: string,
+    action: BackoutAction,
+    reason?: BackoutReason
+  ): Promise<BackoutResult> {
+    const session = await this.getSession(projectId, featureId);
+
+    if (!session) {
+      throw new Error(`Session not found: ${projectId}/${featureId}`);
+    }
+
+    // Validate that backout is allowed for current status
+    if (!isBackoutAllowedForStatus(session.status)) {
+      throw new Error(
+        `Cannot back out from session with status '${session.status}'. ` +
+        `Backout is only allowed for active sessions (stages 1-6 or queued).`
+      );
+    }
+
+    const now = new Date().toISOString();
+    const newStatus: SessionStatus = action === 'pause' ? 'paused' : 'failed';
+
+    // Update the session with backout information
+    const updatedSession = await this.updateSession(projectId, featureId, {
+      status: newStatus,
+      backoutReason: reason || 'user_requested',
+      backoutTimestamp: now,
+      // Clear queue-related fields if session was queued
+      queuePosition: null,
+      queuedAt: null,
+    });
+
+    // Update status.json to reflect the backout
+    const sessionPath = this.getSessionPath(projectId, featureId);
+    const statusPath = `${sessionPath}/status.json`;
+    const statusFile = await this.storage.readJson<Record<string, unknown>>(statusPath);
+    if (statusFile) {
+      statusFile.status = action === 'pause' ? 'paused' : 'error';
+      statusFile.timestamp = now;
+      statusFile.lastAction = `session_${action === 'pause' ? 'paused' : 'abandoned'}`;
+      statusFile.lastActionAt = now;
+      await this.storage.writeJson(statusPath, statusFile);
+    }
+
+    // Recalculate queue positions if session was queued
+    await this.recalculateQueuePositions(projectId);
+
+    // Check if we should promote the next queued session
+    let promotedSession: Session | null = null;
+
+    // Only promote if there's no other active session
+    const activeSession = await this.getActiveSessionForProject(projectId);
+    if (!activeSession) {
+      const nextSession = await this.getNextQueuedSession(projectId);
+      if (nextSession) {
+        promotedSession = await this.startQueuedSession(projectId, nextSession.featureId);
+        // Recalculate again after promotion
+        await this.recalculateQueuePositions(projectId);
+      }
+    }
+
+    return {
+      session: updatedSession,
+      promotedSession,
+    };
   }
 }
