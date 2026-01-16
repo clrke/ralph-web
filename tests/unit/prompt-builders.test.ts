@@ -1397,12 +1397,6 @@ describe('Lean Prompt Builders', () => {
       expect(prompt).toContain('[CI_FAILED]');
     });
 
-    it('should reference RETURN_TO_STAGE_2 marker', () => {
-      const prompt = buildStage5PromptLean(prInfo);
-
-      expect(prompt).toContain('[RETURN_TO_STAGE_2]');
-    });
-
     it('should reference PR_APPROVED marker', () => {
       const prompt = buildStage5PromptLean(prInfo);
 

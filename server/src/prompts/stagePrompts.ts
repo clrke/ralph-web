@@ -1217,10 +1217,7 @@ If during review you find that plan step descriptions don't match the actual imp
 2. Use the Edit tool to modify plan.md with updated step content
 3. Update plan.json (${planJsonPath || 'same directory'}) to match your changes
 
-**What Happens After Editing:**
-The system automatically detects changes to plan files. After you edit the plan, the session will return to Stage 2 (Plan Review) to validate your changes before continuing.
-
-**IMPORTANT:** You can ONLY edit plan files in ~/.claude-web/. You cannot edit the codebase itself in this stage.
+**IMPORTANT:** You can ONLY edit plan files in ~/.claude-web/. You cannot edit the codebase itself.
 
 ### Phase 4: Decision
 Based on findings and CI status:
@@ -1231,22 +1228,15 @@ Based on findings and CI status:
 The following CI checks are failing:
 - Check name: Error message
 
-This requires returning to Stage 2 to fix the issues.
+These failures need to be addressed.
 [/CI_FAILED]
 \`\`\`
 
 **If issues found that require code fixes:**
 Present as \`[DECISION_NEEDED]\` blocks and wait for user response.
-If user chooses to fix, output:
-\`\`\`
-[RETURN_TO_STAGE_2]
-Reason: Brief description of what needs to be fixed
-[/RETURN_TO_STAGE_2]
-\`\`\`
 
 **If plan steps need correction (no code changes needed):**
 Use the Edit tool to modify the plan files directly as described above.
-The system will automatically detect changes and return to Stage 2.
 
 **If CI passes and no blocking issues:**
 \`\`\`
@@ -1265,9 +1255,8 @@ Summary:
 1. Be objective - review as if you didn't write the code
 2. Check CI status before approving
 3. Present issues as prioritized decisions
-4. CI failures MUST return to Stage 2
-5. Only output PR_APPROVED when CI passes AND no blocking issues
-6. Edit plan files directly when step descriptions need correction`;
+4. Only output PR_APPROVED when CI passes AND no blocking issues
+5. Edit plan files directly when step descriptions need correction`;
 }
 
 // ============================================================================
@@ -1357,8 +1346,7 @@ Title: ${prInfo.title}
 2. Check CI: gh pr checks
 3. Report findings as [DECISION_NEEDED] with priority/category
 4. CI failing → [CI_FAILED]
-5. Issues to fix → [RETURN_TO_STAGE_2]
-6. All good → [PR_APPROVED]`;
+5. All good → [PR_APPROVED]`;
 }
 
 /**

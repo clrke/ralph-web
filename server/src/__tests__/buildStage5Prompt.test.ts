@@ -151,19 +151,6 @@ describe('buildStage5Prompt', () => {
       expect(prompt).toContain('/home/user/.claude-web/abc123/feature/plan.json');
     });
 
-    it('should explain what happens after editing', () => {
-      const session = createMockSession();
-      const plan = createMockPlan([createMockStep('step-1')]);
-      const prInfo = createMockPrInfo();
-
-      const prompt = buildStage5Prompt(session, plan, prInfo);
-
-      expect(prompt).toContain('What Happens After Editing');
-      expect(prompt).toContain('automatically detects changes');
-      expect(prompt).toContain('return to Stage 2');
-      expect(prompt).toContain('Plan Review');
-    });
-
     it('should restrict editing to plan files only', () => {
       const session = createMockSession();
       const plan = createMockPlan([createMockStep('step-1')]);
@@ -189,14 +176,14 @@ describe('buildStage5Prompt', () => {
       expect(prompt).toContain('no code changes needed');
     });
 
-    it('should still include RETURN_TO_STAGE_2 for code fixes', () => {
+    it('should include DECISION_NEEDED for code fixes', () => {
       const session = createMockSession();
       const plan = createMockPlan([createMockStep('step-1')]);
       const prInfo = createMockPrInfo();
 
       const prompt = buildStage5Prompt(session, plan, prInfo);
 
-      expect(prompt).toContain('[RETURN_TO_STAGE_2]');
+      expect(prompt).toContain('[DECISION_NEEDED]');
       expect(prompt).toContain('require code fixes');
     });
   });
