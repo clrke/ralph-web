@@ -322,6 +322,22 @@ describe('EventBroadcaster', () => {
       }));
     });
 
+    it('should include autoTransitionTo and reason for plan_changes_detected', () => {
+      broadcaster.executionStatus('project-abc', 'add-auth', 'running', 'plan_changes_detected', {
+        stage: 5,
+        autoTransitionTo: 2,
+        reason: 'Plan steps modified during PR Review',
+      });
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('execution.status', expect.objectContaining({
+        status: 'running',
+        action: 'plan_changes_detected',
+        stage: 5,
+        autoTransitionTo: 2,
+        reason: 'Plan steps modified during PR Review',
+      }));
+    });
+
     describe('granular sub-states', () => {
       it('should emit spawning_agent sub-state', () => {
         broadcaster.executionStatus('project-abc', 'add-auth', 'running', 'stage1_started', {

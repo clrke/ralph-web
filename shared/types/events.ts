@@ -97,6 +97,10 @@ export interface ExecutionStatusEvent {
   progress?: StepProgress;
   /** Marks rapid intermediate updates for client-side batching/filtering */
   isIntermediate?: boolean;
+  /** Target stage for auto-transitions (e.g., plan_changes_detected) */
+  autoTransitionTo?: number;
+  /** Reason for the status change (e.g., plan_changes_detected) */
+  reason?: string;
 }
 
 export interface ClaudeOutputEvent {

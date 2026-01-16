@@ -1777,6 +1777,15 @@ async function handleStage5Result(
     if (changeResult?.changed) {
       console.log(`[Stage 5] Plan changed during PR review for ${session.featureId} - transitioning to Stage 2`);
 
+      // Broadcast plan change detection event to notify client of auto-transition
+      eventBroadcaster?.executionStatus(
+        session.projectId,
+        session.featureId,
+        'running',
+        'plan_changes_detected',
+        { stage: 5, autoTransitionTo: 2, reason: 'Plan steps modified during PR Review' }
+      );
+
       // Clean up snapshot
       deletePlanSnapshot(physicalSessionDir);
 
