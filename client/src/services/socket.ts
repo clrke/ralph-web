@@ -51,3 +51,24 @@ export function disconnect(): void {
     socket.disconnect();
   }
 }
+
+export function connectToProject(projectId: string): Socket<ServerToClientEvents, ClientToServerEvents> {
+  const socket = getSocket();
+
+  if (!socket.connected) {
+    socket.connect();
+  }
+
+  // Join the project room for queue events
+  socket.emit('join-session', projectId);
+
+  return socket;
+}
+
+export function disconnectFromProject(projectId: string): void {
+  const socket = getSocket();
+
+  if (socket.connected) {
+    socket.emit('leave-session', projectId);
+  }
+}

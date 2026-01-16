@@ -133,6 +133,19 @@ export interface ImplementationProgressEvent {
 }
 
 // =============================================================================
+// Queue Events
+// =============================================================================
+
+export interface QueueReorderedEvent {
+  projectId: string;
+  queuedSessions: Array<{
+    featureId: string;
+    queuePosition: number;
+  }>;
+  timestamp: string;
+}
+
+// =============================================================================
 // Server-to-Client Socket Event Map
 // =============================================================================
 
@@ -148,6 +161,7 @@ export interface ServerToClientEvents {
   'step.started': (data: StepStartedEvent) => void;
   'step.completed': (data: StepCompletedEvent) => void;
   'implementation.progress': (data: ImplementationProgressEvent) => void;
+  'queue.reordered': (data: QueueReorderedEvent) => void;
 }
 
 // =============================================================================

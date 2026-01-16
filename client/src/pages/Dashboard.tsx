@@ -1,8 +1,9 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import type { Session } from '@claude-code-web/shared';
+import type { Session, QueueReorderedEvent } from '@claude-code-web/shared';
 import { useSessionStore } from '../stores/sessionStore';
 import QueuedSessionsList from '../components/QueuedSessionsList';
+import { connectToProject, disconnectFromProject, getSocket } from '../services/socket';
 
 const STAGE_LABELS: Record<number, string> = {
   0: 'Queued',
@@ -102,6 +103,52 @@ export default function Dashboard() {
     if (queuedSessions.length > 0) return queuedSessions[0].projectId;
     return null;
   }, [activeSession, queuedSessions]);
+
+  // Track connected project for cleanup
+  const connectedProjectRef = useRef<string | null>(null);
+
+  // Connect to Socket.IO for real-time queue updates
+  useEffect(() => {
+    if (!projectId) return;
+
+    // Connect to project room
+    connectToProject(projectId);
+    connectedProjectRef.current = projectId;
+
+    const socket = getSocket();
+
+    // Listen for queue reorder events from other clients
+    const handleQueueReordered = (event: QueueReorderedEvent) => {
+      if (event.projectId === projectId) {
+        // Update queued sessions with new positions using store's method
+        const { queuedSessions: currentSessions } = useSessionStore.getState();
+        const updatedSessions = currentSessions.map((session) => {
+          const update = event.queuedSessions.find(
+            (q) => q.featureId === session.featureId
+          );
+          if (update) {
+            return { ...session, queuePosition: update.queuePosition };
+          }
+          return session;
+        });
+        // Sort by queue position and update store
+        const sortedSessions = updatedSessions.sort(
+          (a, b) => (a.queuePosition ?? 0) - (b.queuePosition ?? 0)
+        );
+        setQueuedSessions(sortedSessions);
+      }
+    };
+
+    socket.on('queue.reordered', handleQueueReordered);
+
+    return () => {
+      socket.off('queue.reordered', handleQueueReordered);
+      if (connectedProjectRef.current) {
+        disconnectFromProject(connectedProjectRef.current);
+        connectedProjectRef.current = null;
+      }
+    };
+  }, [projectId, setQueuedSessions]);
 
   const handleReorder = useCallback(
     async (orderedFeatureIds: string[]) => {

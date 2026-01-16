@@ -10,6 +10,7 @@ import {
   ExecutionStatusEvent,
   ExecutionSubState,
   StepProgress,
+  QueueReorderedEvent,
 } from '@claude-code-web/shared';
 
 /**
@@ -233,14 +234,14 @@ export class EventBroadcaster {
    */
   queueReordered(projectId: string, reorderedSessions: Session[]): void {
     // Broadcast to project room (all clients watching this project)
-    this.io.to(projectId).emit('queue.reordered', {
+    const event: QueueReorderedEvent = {
       projectId,
-      sessions: reorderedSessions.map(s => ({
+      queuedSessions: reorderedSessions.map(s => ({
         featureId: s.featureId,
-        title: s.title,
-        queuePosition: s.queuePosition,
+        queuePosition: s.queuePosition ?? 0,
       })),
       timestamp: new Date().toISOString(),
-    });
+    };
+    this.io.to(projectId).emit('queue.reordered', event);
   }
 }

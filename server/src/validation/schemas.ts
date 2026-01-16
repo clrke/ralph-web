@@ -131,7 +131,7 @@ export const RequestChangesInputSchema = z.object({
 
 // Queue reorder input schema
 export const QueueReorderInputSchema = z.object({
-  orderedFeatureIds: z.array(z.string().min(1).max(100)),
+  orderedFeatureIds: z.array(z.string().min(1).max(100)).max(1000, 'Cannot reorder more than 1000 sessions at once'),
 });
 
 export type CreateSessionInput = z.infer<typeof CreateSessionInputSchema>;
