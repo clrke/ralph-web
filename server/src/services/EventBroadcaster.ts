@@ -13,6 +13,8 @@ import {
   QueueReorderedEvent,
   SessionBackedOutEvent,
   SessionResumedEvent,
+  SessionUpdatedEvent,
+  SessionUpdatedFields,
   BackoutReason,
   BackoutAction,
 } from '@claude-code-web/shared';
@@ -305,5 +307,29 @@ export class EventBroadcaster {
     this.io.to(room).emit('session.resumed', event);
     // Also emit to project room so all watchers know about queue changes
     this.io.to(projectId).emit('session.resumed', event);
+  }
+
+  /**
+   * Broadcast session updated event (when a queued session is edited)
+   */
+  sessionUpdated(
+    projectId: string,
+    featureId: string,
+    sessionId: string,
+    updatedFields: SessionUpdatedFields,
+    dataVersion: number
+  ): void {
+    const room = this.getRoom(projectId, featureId);
+    const event: SessionUpdatedEvent = {
+      projectId,
+      featureId,
+      sessionId,
+      updatedFields,
+      dataVersion,
+      timestamp: new Date().toISOString(),
+    };
+    this.io.to(room).emit('session.updated', event);
+    // Also emit to project room so all watchers (e.g., Dashboard) know about the update
+    this.io.to(projectId).emit('session.updated', event);
   }
 }

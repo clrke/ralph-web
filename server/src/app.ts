@@ -2191,10 +2191,16 @@ export function createApp(
 
       const result = await sessionManager.editQueuedSession(projectId, featureId, dataVersion, updates);
 
-      // TODO: Broadcast sessionUpdated event (will be implemented in step-4/step-5)
-      // if (eventBroadcaster) {
-      //   eventBroadcaster.sessionUpdated(projectId, featureId, result.session.id, updates);
-      // }
+      // Broadcast sessionUpdated event for real-time sync
+      if (eventBroadcaster) {
+        eventBroadcaster.sessionUpdated(
+          projectId,
+          featureId,
+          result.session.id,
+          updates,
+          result.session.dataVersion
+        );
+      }
 
       res.json(result.session);
     } catch (error) {

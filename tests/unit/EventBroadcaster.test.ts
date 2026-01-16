@@ -688,4 +688,175 @@ describe('EventBroadcaster', () => {
       }));
     });
   });
+
+  describe('sessionUpdated', () => {
+    it('should emit session.updated event to both session room and project room', () => {
+      broadcaster.sessionUpdated(
+        'project-abc',
+        'add-auth',
+        'session-123',
+        { title: 'Updated Title' },
+        2
+      );
+
+      // Should emit to session room
+      expect(mockIo.to).toHaveBeenCalledWith('project-abc/add-auth');
+      // Should emit to project room
+      expect(mockIo.to).toHaveBeenCalledWith('project-abc');
+      expect(mockRoom.emit).toHaveBeenCalledWith('session.updated', expect.objectContaining({
+        projectId: 'project-abc',
+        featureId: 'add-auth',
+        sessionId: 'session-123',
+        updatedFields: { title: 'Updated Title' },
+        dataVersion: 2,
+      }));
+    });
+
+    it('should include timestamp in the event', () => {
+      broadcaster.sessionUpdated(
+        'project-abc',
+        'add-auth',
+        'session-123',
+        { title: 'Test' },
+        1
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('session.updated', expect.objectContaining({
+        timestamp: expect.any(String),
+      }));
+    });
+
+    it('should handle single field update', () => {
+      broadcaster.sessionUpdated(
+        'project-abc',
+        'add-auth',
+        'session-123',
+        { featureDescription: 'New description' },
+        3
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('session.updated', expect.objectContaining({
+        updatedFields: { featureDescription: 'New description' },
+        dataVersion: 3,
+      }));
+    });
+
+    it('should handle multiple fields update', () => {
+      const updatedFields = {
+        title: 'New Title',
+        featureDescription: 'New description',
+        technicalNotes: 'New notes',
+        baseBranch: 'develop',
+      };
+
+      broadcaster.sessionUpdated(
+        'project-abc',
+        'add-auth',
+        'session-123',
+        updatedFields,
+        5
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('session.updated', expect.objectContaining({
+        updatedFields,
+        dataVersion: 5,
+      }));
+    });
+
+    it('should handle acceptanceCriteria update', () => {
+      const updatedFields = {
+        acceptanceCriteria: [
+          { text: 'AC 1', checked: false, type: 'manual' as const },
+          { text: 'AC 2', checked: true, type: 'automated' as const },
+        ],
+      };
+
+      broadcaster.sessionUpdated(
+        'project-abc',
+        'add-auth',
+        'session-123',
+        updatedFields,
+        2
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('session.updated', expect.objectContaining({
+        updatedFields: {
+          acceptanceCriteria: expect.arrayContaining([
+            expect.objectContaining({ text: 'AC 1' }),
+            expect.objectContaining({ text: 'AC 2' }),
+          ]),
+        },
+      }));
+    });
+
+    it('should handle affectedFiles update', () => {
+      broadcaster.sessionUpdated(
+        'project-abc',
+        'add-auth',
+        'session-123',
+        { affectedFiles: ['src/app.ts', 'src/utils.ts'] },
+        4
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('session.updated', expect.objectContaining({
+        updatedFields: {
+          affectedFiles: ['src/app.ts', 'src/utils.ts'],
+        },
+      }));
+    });
+
+    it('should handle preferences update', () => {
+      const preferences = {
+        riskComfort: 'high' as const,
+        speedVsQuality: 'quality' as const,
+        scopeFlexibility: 'open' as const,
+        detailLevel: 'detailed' as const,
+        autonomyLevel: 'autonomous' as const,
+      };
+
+      broadcaster.sessionUpdated(
+        'project-abc',
+        'add-auth',
+        'session-123',
+        { preferences },
+        6
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('session.updated', expect.objectContaining({
+        updatedFields: { preferences },
+        dataVersion: 6,
+      }));
+    });
+
+    it('should handle empty updatedFields', () => {
+      broadcaster.sessionUpdated(
+        'project-abc',
+        'add-auth',
+        'session-123',
+        {},
+        1
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('session.updated', expect.objectContaining({
+        updatedFields: {},
+        dataVersion: 1,
+      }));
+    });
+
+    it('should emit to both rooms for dashboard synchronization', () => {
+      broadcaster.sessionUpdated(
+        'project-xyz',
+        'feature-456',
+        'session-789',
+        { title: 'Dashboard Test' },
+        2
+      );
+
+      // Verify both session room and project room receive the event
+      const calls = mockIo.to.mock.calls;
+      const roomNames = calls.map(call => call[0]);
+      expect(roomNames).toContain('project-xyz/feature-456'); // Session room
+      expect(roomNames).toContain('project-xyz'); // Project room
+    });
+  });
 });
