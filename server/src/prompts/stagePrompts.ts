@@ -391,6 +391,7 @@ How should we address this?
  * Build Stage 2: Plan Revision prompt
  * Revises plan based on user feedback.
  * Supports step modifications: add, edit, and remove steps.
+ * Uses direct Edit tool modifications instead of marker-based output.
  */
 export function buildPlanRevisionPrompt(session: Session, plan: Plan, feedback: string): string {
   // Sanitize user-provided fields to prevent marker injection
@@ -412,63 +413,34 @@ export function buildPlanRevisionPrompt(session: Session, plan: Plan, feedback: 
     ? `\n\n## Full Plan Reference\nFor complete plan details, read: ${session.claudePlanFilePath}`
     : '';
 
+  // Get the plan.json path from the plan.md path
+  const planJsonPath = session.claudePlanFilePath
+    ? session.claudePlanFilePath.replace(/plan\.md$/, 'plan.json')
+    : null;
+
   // Build composable plan structure documentation (matches buildStage2Prompt)
   const composablePlanDocs = `
-## Composable Plan Structure
-Your revised plan should include these sections with structured markers:
+## Plan File Structure Reference
+The plan.md file uses these structured markers:
 
-### Required Plan Sections:
-1. **Plan Steps** - Each step with complexity rating
-   \`\`\`
-   [PLAN_STEP id="step-X" parent="null|step-Y" status="pending" complexity="low|medium|high"]
-   Step Title
-   Detailed description (minimum 50 characters)
-   [/PLAN_STEP]
-   \`\`\`
+### Plan Steps Format
+\`\`\`
+[PLAN_STEP id="step-X" parent="null|step-Y" status="pending" complexity="low|medium|high"]
+Step Title
+Detailed description (minimum 50 characters)
+[/PLAN_STEP]
+\`\`\`
 
-   **Complexity ratings:**
-   - \`low\`: Simple changes, single file, < 1 hour
-   - \`medium\`: Multiple files, moderate logic, 1-4 hours
-   - \`high\`: Complex logic, many files, > 4 hours
+**Complexity ratings:**
+- \`low\`: Simple changes, single file, < 1 hour
+- \`medium\`: Multiple files, moderate logic, 1-4 hours
+- \`high\`: Complex logic, many files, > 4 hours
 
-2. **Plan Meta** - Plan metadata
-   \`\`\`
-   [PLAN_META]
-   version: 1.0.0
-   isApproved: false
-   [/PLAN_META]
-   \`\`\`
-
-3. **Dependencies** - Step and external dependencies
-   \`\`\`
-   [PLAN_DEPENDENCIES]
-   Step Dependencies:
-   - step-2 -> step-1: Must complete auth before routes
-
-   External Dependencies:
-   - npm:jsonwebtoken@9.0.0: JWT library
-   [/PLAN_DEPENDENCIES]
-   \`\`\`
-
-4. **Test Coverage** - Testing requirements
-   \`\`\`
-   [PLAN_TEST_COVERAGE]
-   Framework: vitest
-   Required Types: unit, integration
-
-   Step Coverage:
-   - step-1: unit (required)
-   - step-2: unit, integration (required)
-   [/PLAN_TEST_COVERAGE]
-   \`\`\`
-
-5. **Acceptance Mapping** - Link criteria to steps
-   \`\`\`
-   [PLAN_ACCEPTANCE_MAPPING]
-   - AC-1: "Users can login" -> step-2, step-3
-   - AC-2: "JWT tokens issued" -> step-1
-   [/PLAN_ACCEPTANCE_MAPPING]
-   \`\`\`
+### Other Plan Sections
+- \`[PLAN_META]\` - Plan metadata (version, isApproved)
+- \`[PLAN_DEPENDENCIES]\` - Step and external dependencies
+- \`[PLAN_TEST_COVERAGE]\` - Testing requirements
+- \`[PLAN_ACCEPTANCE_MAPPING]\` - Link acceptance criteria to steps
 `;
 
   return `You are revising an implementation plan based on user feedback.
@@ -485,34 +457,51 @@ ${sanitizedFeedback}
 ${composablePlanDocs}
 ## Step Modification Instructions
 
-You can **add**, **edit**, or **remove** steps based on the feedback.
+You can **add**, **edit**, or **remove** steps based on the feedback using the Edit tool directly.
 
-### To Add or Edit Steps
-Output the step using the PLAN_STEP marker with the required complexity attribute:
+### Workflow (IMPORTANT - Use Edit Tool Directly)
+1. **Read** the current plan file: ${session.claudePlanFilePath}
+2. **Analyze** the user feedback and determine what changes are needed
+3. **Use the Edit tool** to modify plan.md directly:
+   - To add a step: Insert a new \`[PLAN_STEP]\` block in the appropriate location
+   - To edit a step: Modify the existing \`[PLAN_STEP]\` block content
+   - To remove a step: Delete the entire \`[PLAN_STEP]\` block
+4. **Update plan.json** (${planJsonPath || 'same directory as plan.md'}) to reflect your changes:
+   - Add/modify/remove entries in the "steps" array
+   - Each step should have: id, parentId, orderIndex, title, description, status, metadata, complexity
+5. If clarification is needed, ask questions using DECISION_NEEDED markers first
+6. Continue with Stage 2 review process
+
+### Step Structure for plan.md
+When adding or editing steps in plan.md, use this format:
 \`\`\`
-[PLAN_STEP id="step-new-1" parent="step-1" status="pending" complexity="medium"]
-New step title
-New step description with at least 50 characters of detailed implementation guidance.
+[PLAN_STEP id="step-X" parent="null|step-Y" status="pending" complexity="low|medium|high"]
+Step Title
+Detailed description with at least 50 characters of implementation guidance.
 [/PLAN_STEP]
 \`\`\`
 
-- Use a new unique ID for new steps (e.g., "step-new-1", "step-7")
-- Use an existing ID to edit that step
-- Always include the \`complexity\` attribute (low|medium|high)
-- Step descriptions must be at least 50 characters
-
-### To Remove Steps
-Output the REMOVE_STEPS marker with a JSON array of step IDs to remove:
+### Step Structure for plan.json
+When updating plan.json, each step should have this structure:
+\`\`\`json
+{
+  "id": "step-X",
+  "parentId": null,
+  "orderIndex": 0,
+  "title": "Step Title",
+  "description": "Detailed description...",
+  "status": "pending",
+  "metadata": {},
+  "complexity": "medium"
+}
 \`\`\`
-[REMOVE_STEPS]
-["step-3", "step-4"]
-[/REMOVE_STEPS]
-\`\`\`
 
-**Important notes about step removal:**
-- Child steps (those with \`parentId\` pointing to a removed step) will be automatically cascade-deleted
-- Steps that depend on removed steps will be reset to "pending" status for re-implementation
-- Only remove steps that are truly no longer needed
+### Important Notes
+- **Use unique IDs** for new steps (e.g., "step-new-1", "step-7")
+- **Update orderIndex** values to maintain proper sequence
+- **Update parentId references** if removing a parent step
+- **Child steps** that reference a removed parent should either be removed or have their parentId updated
+- **Always keep both files in sync** - plan.md and plan.json must match
 
 ### Clarifying Questions
 If you need clarification before making modifications, ask first:
@@ -525,23 +514,7 @@ Question about the feedback to clarify before modifying the plan...
 [/DECISION_NEEDED]
 \`\`\`
 
-### Output Step Modifications
-After outputting modifications via [PLAN_STEP] and [REMOVE_STEPS] markers:
-\`\`\`
-[STEP_MODIFICATIONS]
-modified: ["step-1", "step-2"]
-added: ["step-new-1"]
-removed: ["step-3"]
-[/STEP_MODIFICATIONS]
-\`\`\`
-
-## Workflow
-1. Review the user feedback carefully
-2. If clarification is needed, ask questions using DECISION_NEEDED markers
-3. Output any step modifications (adds, edits, removals)
-4. Output the [STEP_MODIFICATIONS] summary
-5. Use the Edit tool to update the plan file: ${session.claudePlanFilePath}
-6. Continue with Stage 2 review process to find any remaining issues`;
+The system will automatically detect changes to the plan files and process them accordingly.`;
 }
 
 /**

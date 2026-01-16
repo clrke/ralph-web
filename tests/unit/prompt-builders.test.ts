@@ -508,59 +508,71 @@ The plan structure is incomplete. Please address the following issues:
         expect(prompt).toContain('`high`: Complex logic');
       });
 
-      it('should include PLAN_META marker documentation', () => {
+      it('should reference PLAN_META in Other Plan Sections', () => {
         const prompt = buildPlanRevisionPrompt(mockSession, mockPlan, 'feedback');
 
         expect(prompt).toContain('[PLAN_META]');
-        expect(prompt).toContain('[/PLAN_META]');
+        // Compact format references markers without full examples
+        expect(prompt).toContain('Plan metadata');
       });
 
-      it('should include PLAN_DEPENDENCIES marker documentation', () => {
+      it('should reference PLAN_DEPENDENCIES in Other Plan Sections', () => {
         const prompt = buildPlanRevisionPrompt(mockSession, mockPlan, 'feedback');
 
         expect(prompt).toContain('[PLAN_DEPENDENCIES]');
-        expect(prompt).toContain('[/PLAN_DEPENDENCIES]');
+        // Compact format references markers without full examples
+        expect(prompt).toContain('dependencies');
       });
 
-      it('should include PLAN_TEST_COVERAGE marker documentation', () => {
+      it('should reference PLAN_TEST_COVERAGE in Other Plan Sections', () => {
         const prompt = buildPlanRevisionPrompt(mockSession, mockPlan, 'feedback');
 
         expect(prompt).toContain('[PLAN_TEST_COVERAGE]');
-        expect(prompt).toContain('[/PLAN_TEST_COVERAGE]');
+        // Compact format references markers without full examples
+        expect(prompt).toContain('Testing requirements');
       });
 
-      it('should include PLAN_ACCEPTANCE_MAPPING marker documentation', () => {
+      it('should reference PLAN_ACCEPTANCE_MAPPING in Other Plan Sections', () => {
         const prompt = buildPlanRevisionPrompt(mockSession, mockPlan, 'feedback');
 
         expect(prompt).toContain('[PLAN_ACCEPTANCE_MAPPING]');
-        expect(prompt).toContain('[/PLAN_ACCEPTANCE_MAPPING]');
+        // Compact format references markers without full examples
+        expect(prompt).toContain('acceptance criteria');
       });
     });
 
     describe('step modification instructions', () => {
-      it('should include instructions for adding/editing steps', () => {
+      it('should include instructions for using Edit tool directly', () => {
         const prompt = buildPlanRevisionPrompt(mockSession, mockPlan, 'feedback');
 
-        expect(prompt).toContain('To Add or Edit Steps');
-        expect(prompt).toContain('Use a new unique ID for new steps');
-        expect(prompt).toContain('Use an existing ID to edit that step');
-        expect(prompt).toContain('Always include the `complexity` attribute');
+        expect(prompt).toContain('Use the Edit tool');
+        expect(prompt).toContain('modify plan.md directly');
+        expect(prompt).toContain('Use unique IDs');
       });
 
-      it('should include REMOVE_STEPS marker documentation', () => {
+      it('should include step structure for plan.md', () => {
         const prompt = buildPlanRevisionPrompt(mockSession, mockPlan, 'feedback');
 
-        expect(prompt).toContain('[REMOVE_STEPS]');
-        expect(prompt).toContain('[/REMOVE_STEPS]');
-        expect(prompt).toContain('["step-3", "step-4"]');
+        expect(prompt).toContain('Step Structure for plan.md');
+        expect(prompt).toContain('[PLAN_STEP');
+        expect(prompt).toContain('[/PLAN_STEP]');
       });
 
-      it('should explain cascade deletion behavior', () => {
+      it('should include step structure for plan.json', () => {
+        const prompt = buildPlanRevisionPrompt(mockSession, mockPlan, 'feedback');
+
+        expect(prompt).toContain('Step Structure for plan.json');
+        expect(prompt).toContain('"id":');
+        expect(prompt).toContain('"parentId":');
+        expect(prompt).toContain('"complexity":');
+      });
+
+      it('should explain keeping files in sync', () => {
         const prompt = buildPlanRevisionPrompt(mockSession, mockPlan, 'feedback');
 
         expect(prompt).toContain('Child steps');
-        expect(prompt).toContain('cascade-deleted');
-        expect(prompt).toContain('Steps that depend on removed steps will be reset to "pending"');
+        expect(prompt).toContain('parentId');
+        expect(prompt).toContain('keep both files in sync');
       });
 
       it('should include DECISION_NEEDED marker for clarifying questions', () => {
@@ -572,24 +584,25 @@ The plan structure is incomplete. Please address the following issues:
         expect(prompt).toContain('Option B:');
       });
 
-      it('should include STEP_MODIFICATIONS marker documentation', () => {
+      it('should NOT include STEP_MODIFICATIONS marker documentation (removed in favor of Edit tool)', () => {
         const prompt = buildPlanRevisionPrompt(mockSession, mockPlan, 'feedback');
 
-        expect(prompt).toContain('[STEP_MODIFICATIONS]');
-        expect(prompt).toContain('[/STEP_MODIFICATIONS]');
-        expect(prompt).toContain('modified:');
-        expect(prompt).toContain('added:');
-        expect(prompt).toContain('removed:');
+        // STEP_MODIFICATIONS marker was removed - now uses Edit tool directly
+        expect(prompt).not.toContain('[STEP_MODIFICATIONS]');
+        expect(prompt).not.toContain('[/STEP_MODIFICATIONS]');
+        expect(prompt).not.toContain('[REMOVE_STEPS]');
       });
 
-      it('should include workflow steps', () => {
+      it('should include workflow steps for Edit tool approach', () => {
         const prompt = buildPlanRevisionPrompt(mockSession, mockPlan, 'feedback');
 
         expect(prompt).toContain('Workflow');
-        expect(prompt).toContain('Review the user feedback carefully');
+        expect(prompt).toContain('Read');
+        expect(prompt).toContain('Analyze');
+        expect(prompt).toContain('Use the Edit tool');
+        expect(prompt).toContain('Update plan.json');
         expect(prompt).toContain('ask questions using DECISION_NEEDED markers');
-        expect(prompt).toContain('Output any step modifications');
-        expect(prompt).toContain('Output the [STEP_MODIFICATIONS] summary');
+        expect(prompt).toContain('automatically detect changes');
       });
     });
 
