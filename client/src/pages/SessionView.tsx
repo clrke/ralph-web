@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useSessionStore, type ExecutionStatus } from '../stores/sessionStore';
+import BackoutModal from '../components/BackoutModal';
+import type { BackoutAction, BackoutReason } from '@claude-code-web/shared';
 import { TimelineView } from '../components/PlanEditor';
 import { ConversationPanel } from '../components/ConversationPanel';
 import { connectToSession, disconnectFromSession, getSocket } from '../services/socket';
@@ -273,13 +275,20 @@ export default function SessionView() {
     updateStepStatus,
     setImplementationProgress,
     retrySession,
+    backoutSession,
+    resumeSession,
   } = useSessionStore();
+
+  const navigate = useNavigate();
 
   // Modal state (must be before early returns to maintain hooks order)
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [showBackoutModal, setShowBackoutModal] = useState(false);
+  const [isBackingOut, setIsBackingOut] = useState(false);
+  const [isResuming, setIsResuming] = useState(false);
 
   // Socket.IO event handlers
   const handleExecutionStatus = useCallback((data: ExecutionStatusEvent) => {
@@ -361,6 +370,37 @@ export default function SessionView() {
     }
   }, [projectId, featureId, isTransitioning, setSession]);
 
+  // Backout handler
+  const handleBackout = useCallback(async (action: BackoutAction, reason: BackoutReason) => {
+    if (!projectId || !featureId) return;
+
+    setIsBackingOut(true);
+    try {
+      await backoutSession(projectId, featureId, action, reason);
+      setShowBackoutModal(false);
+      // Navigate to dashboard after successful backout
+      navigate('/');
+    } catch (error) {
+      console.error('Backout failed:', error);
+    } finally {
+      setIsBackingOut(false);
+    }
+  }, [projectId, featureId, backoutSession, navigate]);
+
+  // Resume handler
+  const handleResume = useCallback(async () => {
+    if (!projectId || !featureId) return;
+
+    setIsResuming(true);
+    try {
+      await resumeSession(projectId, featureId);
+    } catch (error) {
+      console.error('Resume failed:', error);
+    } finally {
+      setIsResuming(false);
+    }
+  }, [projectId, featureId, resumeSession]);
+
   // Fetch session data and conversations
   useEffect(() => {
     if (projectId && featureId) {
@@ -431,6 +471,14 @@ export default function SessionView() {
     {showPlanModal && plan && (
       <PlanModal plan={plan} onClose={() => setShowPlanModal(false)} />
     )}
+    {/* Backout Modal */}
+    <BackoutModal
+      isOpen={showBackoutModal}
+      onClose={() => setShowBackoutModal(false)}
+      onConfirm={handleBackout}
+      sessionTitle={session.title}
+      isLoading={isBackingOut}
+    />
     <div className="container mx-auto px-4 py-8">
       {/* Header */}
       <header className="mb-8">
@@ -449,6 +497,20 @@ export default function SessionView() {
               {session.queuePosition && (
                 <span className="text-sm opacity-80">#{session.queuePosition} in queue</span>
               )}
+            </div>
+          ) : session.status === 'paused' ? (
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-orange-600/20 text-orange-300 border-orange-500/30" data-testid="paused-badge">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="font-medium">On Hold</span>
+            </div>
+          ) : session.status === 'failed' ? (
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-red-600/20 text-red-300 border-red-500/30" data-testid="failed-badge">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="font-medium">Abandoned</span>
             </div>
           ) : currentStage === 7 || session.status === 'completed' ? (
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-green-600/20 text-green-300 border-green-500/30">
@@ -485,6 +547,47 @@ export default function SessionView() {
                 : null
             }
           />
+          {/* Back Out button - visible for active sessions in stages 1-6 */}
+          {currentStage >= 1 && currentStage <= 6 && session.status !== 'paused' && session.status !== 'failed' && session.status !== 'completed' && session.status !== 'queued' && (
+            <button
+              onClick={() => setShowBackoutModal(true)}
+              className="px-3 py-1 rounded-full text-sm transition-colors flex items-center gap-2 bg-gray-600 hover:bg-gray-500 text-white"
+              data-testid="backout-button"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Back Out
+            </button>
+          )}
+          {/* Resume button - visible for paused sessions */}
+          {session.status === 'paused' && (
+            <button
+              onClick={handleResume}
+              disabled={isResuming}
+              className={`px-3 py-1 rounded-full text-sm transition-colors flex items-center gap-2 ${
+                isResuming
+                  ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                  : 'bg-green-600 hover:bg-green-500 text-white'
+              }`}
+              data-testid="resume-button"
+            >
+              {isResuming ? (
+                <>
+                  <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Resuming...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Resume Session
+                </>
+              )}
+            </button>
+          )}
         </div>
         <h1 className="text-3xl font-bold">{session.title}</h1>
         <p className="text-gray-400 mt-2 line-clamp-2" title={session.featureDescription}>
@@ -532,6 +635,51 @@ export default function SessionView() {
                   </p>
                   <p className="text-yellow-300/60 text-sm mt-3">
                     Discovery will start automatically when the current session completes.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Paused Session - on hold */}
+          {session.status === 'paused' && (
+            <div className="bg-orange-900/20 border border-orange-700/50 rounded-lg p-6" data-testid="paused-section">
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-orange-600/30 rounded-full">
+                  <svg className="w-6 h-6 text-orange-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-orange-200 text-lg">Session On Hold</h3>
+                  <p className="text-orange-300/80 mt-1">
+                    This session has been put on hold. All progress has been preserved.
+                  </p>
+                  <p className="text-orange-300/60 text-sm mt-3">
+                    Click the "Resume Session" button above to continue work on this feature.
+                    The session will be placed at the front of the queue.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Failed/Abandoned Session */}
+          {session.status === 'failed' && (
+            <div className="bg-red-900/20 border border-red-700/50 rounded-lg p-6" data-testid="failed-section">
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-red-600/30 rounded-full">
+                  <svg className="w-6 h-6 text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-red-200 text-lg">Session Abandoned</h3>
+                  <p className="text-red-300/80 mt-1">
+                    This session was marked as "Won't Do" and has been abandoned.
+                  </p>
+                  <p className="text-red-300/60 text-sm mt-3">
+                    This action cannot be undone. You can create a new session if you want to implement this feature later.
                   </p>
                 </div>
               </div>

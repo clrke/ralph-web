@@ -878,4 +878,223 @@ describe('SessionView', () => {
       });
     });
   });
+
+  describe('Backout functionality', () => {
+    it('shows Back Out button for active session in stage 1-6', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 2, status: 'planning' }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('backout-button')).toBeInTheDocument();
+      });
+    });
+
+    it('hides Back Out button for queued sessions', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 0, status: 'queued', queuePosition: 1 }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Queued')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId('backout-button')).not.toBeInTheDocument();
+    });
+
+    it('hides Back Out button for completed sessions', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 7, status: 'completed' }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Stage 7: Completed')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId('backout-button')).not.toBeInTheDocument();
+    });
+
+    it('hides Back Out button for paused sessions', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 2, status: 'paused' }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('paused-badge')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId('backout-button')).not.toBeInTheDocument();
+    });
+
+    it('opens BackoutModal when Back Out button is clicked', async () => {
+      const user = userEvent.setup();
+
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 2, status: 'planning' }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('backout-button')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId('backout-button'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('backout-modal')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('Paused session display', () => {
+    it('shows On Hold badge for paused sessions', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 2, status: 'paused' }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('paused-badge')).toBeInTheDocument();
+        expect(screen.getByText('On Hold')).toBeInTheDocument();
+      });
+    });
+
+    it('shows paused section content', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 2, status: 'paused' }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('paused-section')).toBeInTheDocument();
+        expect(screen.getByText('Session On Hold')).toBeInTheDocument();
+        expect(screen.getByText(/progress has been preserved/i)).toBeInTheDocument();
+      });
+    });
+
+    it('shows Resume button for paused sessions', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 2, status: 'paused' }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('resume-button')).toBeInTheDocument();
+        expect(screen.getByText('Resume Session')).toBeInTheDocument();
+      });
+    });
+
+    it('calls resumeSession when Resume button is clicked', async () => {
+      const user = userEvent.setup();
+      const mockResumeSession = vi.fn().mockResolvedValue(undefined);
+
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 2, status: 'paused' }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+        resumeSession: mockResumeSession,
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('resume-button')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId('resume-button'));
+
+      await waitFor(() => {
+        expect(mockResumeSession).toHaveBeenCalledWith('proj1', 'feat1');
+      });
+    });
+  });
+
+  describe('Failed/Abandoned session display', () => {
+    it('shows Abandoned badge for failed sessions', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 2, status: 'failed' }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('failed-badge')).toBeInTheDocument();
+        expect(screen.getByText('Abandoned')).toBeInTheDocument();
+      });
+    });
+
+    it('shows failed section content', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 2, status: 'failed' }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('failed-section')).toBeInTheDocument();
+        expect(screen.getByText('Session Abandoned')).toBeInTheDocument();
+        expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument();
+      });
+    });
+
+    it('hides Resume button for failed sessions', async () => {
+      useSessionStore.setState({
+        session: createMockSession({ currentStage: 2, status: 'failed' }),
+        isLoading: false,
+        fetchSession: vi.fn(),
+        fetchConversations: vi.fn(),
+      });
+
+      renderWithRouter(<SessionView />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('failed-badge')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId('resume-button')).not.toBeInTheDocument();
+    });
+  });
 });
