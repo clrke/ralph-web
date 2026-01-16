@@ -1546,14 +1546,14 @@ describe('SessionManager', () => {
         expect(reordered[1].queuePosition).toBe(2);
       });
 
-      it('should throw error for non-queued session IDs', async () => {
+      it('should silently ignore non-queued session IDs', async () => {
         const active = await manager.createSession({
           title: 'Active Feature',
           featureDescription: 'Test',
           projectPath,
         });
 
-        await manager.createSession({
+        const queued = await manager.createSession({
           title: 'Queued Feature',
           featureDescription: 'Test',
           projectPath,
@@ -1561,20 +1561,22 @@ describe('SessionManager', () => {
 
         const projectId = manager.getProjectId(projectPath);
 
-        // Try to reorder with active session ID (not queued)
-        await expect(
-          manager.reorderQueuedSessions(projectId, [active.featureId])
-        ).rejects.toThrow(/not queued sessions/i);
+        // Reorder with active session ID (not queued) - should be ignored
+        const result = await manager.reorderQueuedSessions(projectId, [active.featureId]);
+
+        // Should only return queued sessions, ignoring the non-queued ID
+        expect(result).toHaveLength(1);
+        expect(result[0].featureId).toBe(queued.featureId);
       });
 
-      it('should throw error for non-existent feature IDs', async () => {
+      it('should silently ignore non-existent feature IDs', async () => {
         await manager.createSession({
           title: 'Active Feature',
           featureDescription: 'Test',
           projectPath,
         });
 
-        await manager.createSession({
+        const queued = await manager.createSession({
           title: 'Queued Feature',
           featureDescription: 'Test',
           projectPath,
@@ -1582,9 +1584,12 @@ describe('SessionManager', () => {
 
         const projectId = manager.getProjectId(projectPath);
 
-        await expect(
-          manager.reorderQueuedSessions(projectId, ['non-existent-feature'])
-        ).rejects.toThrow(/not queued sessions/i);
+        // Reorder with non-existent ID - should be ignored
+        const result = await manager.reorderQueuedSessions(projectId, ['non-existent-feature']);
+
+        // Should only return queued sessions
+        expect(result).toHaveLength(1);
+        expect(result[0].featureId).toBe(queued.featureId);
       });
 
       it('should handle partial reordering (only subset of queued sessions)', async () => {

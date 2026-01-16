@@ -554,25 +554,16 @@ export class SessionManager {
       const queuedSessions = await this.getQueuedSessions(projectId);
       const queuedFeatureIds = new Set(queuedSessions.map(s => s.featureId));
 
-      // Validate all provided IDs are actually queued sessions
-      const invalidIds: string[] = [];
-      for (const featureId of uniqueFeatureIds) {
-        if (!queuedFeatureIds.has(featureId)) {
-          invalidIds.push(featureId);
-        }
-      }
-
-      if (invalidIds.length > 0) {
-        throw new Error(`Invalid feature IDs (not queued sessions): ${invalidIds.join(', ')}`);
-      }
+      // Filter to only queued sessions (silently ignore non-queued IDs)
+      const validFeatureIds = uniqueFeatureIds.filter(id => queuedFeatureIds.has(id));
 
       // Build new order: provided IDs first (in order), then any remaining queued sessions
-      const orderedSet = new Set(uniqueFeatureIds);
+      const orderedSet = new Set(validFeatureIds);
       const remainingQueued = queuedSessions
         .filter(s => !orderedSet.has(s.featureId))
         .map(s => s.featureId);
 
-      const finalOrder = [...uniqueFeatureIds, ...remainingQueued];
+      const finalOrder = [...validFeatureIds, ...remainingQueued];
 
       // Update queue positions
       const updatedSessions: Session[] = [];

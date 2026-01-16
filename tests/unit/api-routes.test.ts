@@ -985,7 +985,7 @@ describe('API Routes', () => {
       expect(response.body[1].queuePosition).toBe(2);
     });
 
-    it('should return 400 for invalid feature IDs', async () => {
+    it('should silently ignore invalid feature IDs', async () => {
       // Create active session
       await sessionManager.createSession({
         title: 'Active Feature',
@@ -994,7 +994,7 @@ describe('API Routes', () => {
       });
 
       // Create queued session
-      await sessionManager.createSession({
+      const queued = await sessionManager.createSession({
         title: 'Queued Feature',
         featureDescription: 'Test',
         projectPath,
@@ -1004,11 +1004,13 @@ describe('API Routes', () => {
         .put(`/api/sessions/${projectId}/queue-order`)
         .send({ orderedFeatureIds: ['non-existent-feature'] });
 
-      expect(response.status).toBe(400);
-      expect(response.body.error).toMatch(/not queued sessions/i);
+      // Should succeed and return remaining queued sessions
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveLength(1);
+      expect(response.body[0].featureId).toBe(queued.featureId);
     });
 
-    it('should return 400 for non-queued session IDs', async () => {
+    it('should silently ignore non-queued session IDs', async () => {
       // Create active session
       const active = await sessionManager.createSession({
         title: 'Active Feature',
@@ -1017,19 +1019,21 @@ describe('API Routes', () => {
       });
 
       // Create queued session
-      await sessionManager.createSession({
+      const queued = await sessionManager.createSession({
         title: 'Queued Feature',
         featureDescription: 'Test',
         projectPath,
       });
 
-      // Try to reorder with active session ID
+      // Try to reorder with active session ID - should be silently filtered
       const response = await request(app)
         .put(`/api/sessions/${projectId}/queue-order`)
         .send({ orderedFeatureIds: [active.featureId] });
 
-      expect(response.status).toBe(400);
-      expect(response.body.error).toMatch(/not queued sessions/i);
+      // Should succeed and return remaining queued sessions
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveLength(1);
+      expect(response.body[0].featureId).toBe(queued.featureId);
     });
 
     it('should handle duplicate feature IDs gracefully', async () => {
