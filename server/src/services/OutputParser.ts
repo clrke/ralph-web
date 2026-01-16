@@ -219,9 +219,11 @@ export class OutputParser {
         ? attrs.estimatedFiles.split(',').map(s => s.trim()).filter(Boolean)
         : undefined;
 
+      // Accept both 'parent' and 'parentId' attributes for compatibility
+      const parentAttr = attrs.parent || attrs.parentId;
       steps.push({
         id: attrs.id || '',
-        parentId: attrs.parent === 'null' ? null : (attrs.parent || null),
+        parentId: parentAttr === 'null' ? null : (parentAttr || null),
         status: attrs.status || 'pending',
         title: lines[0] || '',
         description: lines.slice(1).join('\n').trim(),
