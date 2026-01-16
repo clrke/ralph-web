@@ -1,7 +1,7 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
 import path from 'path';
 import crypto from 'crypto';
-import { computeStepHash, isStepContentUnchanged } from './utils/stepContentHash';
+import { computeStepHash, isStepContentUnchanged, computePlanHash, savePlanSnapshot } from './utils/stepContentHash';
 import { readFile } from 'fs/promises';
 import { ZodSchema, ZodError } from 'zod';
 import { FileStorageService } from './data/FileStorageService';
@@ -1647,6 +1647,16 @@ async function spawnStage5PRReview(
   console.log(`Starting Stage 5 PR review for ${session.featureId}`);
   const sessionDir = `${session.projectId}/${session.featureId}`;
   const statusPath = `${sessionDir}/status.json`;
+
+  // Save plan snapshot before Stage 5 for change detection
+  // This allows us to detect if Claude edits plan files during PR review
+  const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+  if (plan) {
+    const planHash = computePlanHash(plan);
+    const physicalSessionDir = storage.getAbsolutePath(sessionDir);
+    savePlanSnapshot(physicalSessionDir, planHash, plan.planVersion);
+    console.log(`Saved plan snapshot for ${session.featureId} (hash: ${planHash.substring(0, 8)}...)`);
+  }
 
   // Update status to running
   const status = await storage.readJson<Record<string, unknown>>(statusPath);
