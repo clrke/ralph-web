@@ -51,7 +51,7 @@ const STAGE_TOOLS: Record<number, string[]> = {
   2: ['Read', 'Glob', 'Grep', 'Task', 'WebFetch', 'WebSearch', 'Edit(~/.claude-web/**/plan.md)'],  // Plan review - read-only + web + plan.md edit
   3: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'Task'],  // Implementation - full access including Task for complex multi-step work
   4: ['Read', 'Bash(git:*)', 'Bash(gh:*)'],  // Restricted to git and gh commands for PR creation
-  5: ['Read', 'Glob', 'Grep', 'Task', 'Bash(git:diff*)', 'Bash(gh:pr*)', 'WebFetch', 'WebSearch'],  // PR review - read-only with limited diff/PR access
+  5: ['Read', 'Glob', 'Grep', 'Task', 'Bash(git:diff*)', 'Bash(gh:pr*)', 'WebFetch', 'WebSearch', 'Edit(~/.claude-web/**/plan.md)', 'Edit(~/.claude-web/**/plan.json)'],  // PR review - read-only with limited diff/PR access + plan file edit
 };
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes

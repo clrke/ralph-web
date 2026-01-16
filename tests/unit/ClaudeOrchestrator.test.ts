@@ -235,7 +235,7 @@ Create authentication
       expect(tools).not.toContain('Write');
     });
 
-    it('should return read-only + PR tools for Stage 5', () => {
+    it('should return read-only + PR tools + plan file Edit for Stage 5', () => {
       const tools = orchestrator.getStageTools(5);
 
       expect(tools).toContain('Read');
@@ -243,6 +243,11 @@ Create authentication
       expect(tools).toContain('Bash(gh:pr*)');
       expect(tools).toContain('Task');  // Task allowed but prompts restrict subagent to read-only
       expect(tools).not.toContain('Write');
+      // Stage 5 can edit plan files to modify steps during PR review
+      expect(tools).toContain('Edit(~/.claude-web/**/plan.md)');
+      expect(tools).toContain('Edit(~/.claude-web/**/plan.json)');
+      // But should NOT have unrestricted Edit access
+      expect(tools).not.toContain('Edit');
     });
   });
 
