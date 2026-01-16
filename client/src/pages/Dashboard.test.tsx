@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import Dashboard from './Dashboard';
 import { useSessionStore } from '../stores/sessionStore';
 import type { Session } from '@claude-code-web/shared';
@@ -465,6 +465,132 @@ describe('Dashboard', () => {
       await waitFor(() => {
         // With no truly active session, active filter should show 0
         expect(screen.getByTestId('filter-active')).toHaveTextContent('Active (0)');
+      });
+    });
+  });
+
+  describe('Edit button for queued sessions', () => {
+    it('shows Edit button for queued sessions in the queue section', async () => {
+      const sessions = [
+        createMockSession({ featureId: 'queued-feat', status: 'queued', queuePosition: 1 }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('edit-session-queued-feat')).toBeInTheDocument();
+      });
+    });
+
+    it('shows Edit button for all queued sessions', async () => {
+      const sessions = [
+        createMockSession({ featureId: 'queued-1', status: 'queued', queuePosition: 1 }),
+        createMockSession({ featureId: 'queued-2', status: 'queued', queuePosition: 2 }),
+        createMockSession({ featureId: 'queued-3', status: 'queued', queuePosition: 3 }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('edit-session-queued-1')).toBeInTheDocument();
+        expect(screen.getByTestId('edit-session-queued-2')).toBeInTheDocument();
+        expect(screen.getByTestId('edit-session-queued-3')).toBeInTheDocument();
+      });
+    });
+
+    it('does not show Edit button for non-queued sessions', async () => {
+      const sessions = [
+        createMockSession({ featureId: 'discovery-feat', status: 'discovery', title: 'Discovery Session' }),
+        createMockSession({ featureId: 'planning-feat', status: 'planning', title: 'Planning Session' }),
+        createMockSession({ featureId: 'paused-feat', status: 'paused', title: 'Paused Session' }),
+        createMockSession({ featureId: 'completed-feat', status: 'completed', currentStage: 7, title: 'Completed Session' }),
+        createMockSession({ featureId: 'failed-feat', status: 'failed', title: 'Failed Session' }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        expect(screen.getByText('Discovery Session')).toBeInTheDocument();
+      });
+
+      // None of these should have edit buttons
+      expect(screen.queryByTestId('edit-session-discovery-feat')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('edit-session-planning-feat')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('edit-session-paused-feat')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('edit-session-completed-feat')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('edit-session-failed-feat')).not.toBeInTheDocument();
+    });
+
+    it('shows Edit button only for queued sessions in mixed list', async () => {
+      const sessions = [
+        createMockSession({ featureId: 'queued-feat', status: 'queued', queuePosition: 1 }),
+        createMockSession({ featureId: 'active-feat', status: 'discovery' }),
+        createMockSession({ featureId: 'completed-feat', status: 'completed', currentStage: 7 }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        // Queued session should have edit button
+        expect(screen.getByTestId('edit-session-queued-feat')).toBeInTheDocument();
+      });
+
+      // Non-queued sessions should not have edit buttons
+      expect(screen.queryByTestId('edit-session-active-feat')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('edit-session-completed-feat')).not.toBeInTheDocument();
+    });
+
+    it('Edit button navigates to edit page when clicked', async () => {
+      const user = userEvent.setup();
+      const sessions = [
+        createMockSession({ featureId: 'queued-feat', status: 'queued', queuePosition: 1 }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      render(
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route
+              path="/session/:projectId/:featureId/edit"
+              element={<div data-testid="edit-page">Edit Page</div>}
+            />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('edit-session-queued-feat')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTestId('edit-session-queued-feat'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('edit-page')).toBeInTheDocument();
       });
     });
   });
