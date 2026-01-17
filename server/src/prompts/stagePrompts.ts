@@ -1449,6 +1449,7 @@ Note: Git push already done. Check if PR exists first with gh pr list.`;
 /**
  * Lean Stage 5 prompt.
  * Claude knows the review format from context.
+ * Uses [PLAN_STEP] for findings (not [DECISION_NEEDED]) to trigger auto-return to Stage 2.
  */
 export function buildStage5PromptLean(
   prInfo: { title: string; url: string }
@@ -1458,7 +1459,7 @@ Title: ${prInfo.title}
 
 1. Run parallel review agents (code, security, tests, integration)
 2. Check CI: gh pr checks
-3. Report findings as [DECISION_NEEDED] with priority/category
+3. Document findings as [PLAN_STEP] markers (do NOT use DECISION_NEEDED)
 4. CI failing → [CI_FAILED]
 5. All good → [PR_APPROVED]`;
 }

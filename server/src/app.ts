@@ -1729,7 +1729,9 @@ async function spawnStage4PRCreation(
       // Read plan for Stage 5 prompt and auto-start review
       const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
       if (plan) {
-        const stage5Prompt = updatedSession.claudeSessionId
+        // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
+        const useLeanStage5 = updatedSession.claudeSessionId && (updatedSession.prReviewCount || 0) > 0;
+        const stage5Prompt = useLeanStage5
           ? buildStage5PromptLean(prInfo)
           : buildStage5Prompt(updatedSession, plan, prInfo);
         await spawnStage5PRReview(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, stage5Prompt);
@@ -1844,6 +1846,13 @@ async function handleStage5Result(
   eventBroadcaster: EventBroadcaster | undefined
 ): Promise<void> {
   const statusPath = `${sessionDir}/status.json`;
+
+  // Increment prReviewCount after each Stage 5 execution (mirrors replanningCount for Stage 2)
+  // This ensures the first PR review uses the full prompt, subsequent reviews use lean prompt
+  const currentPrReviewCount = session.prReviewCount || 0;
+  await sessionManager.updateSession(session.projectId, session.featureId, {
+    prReviewCount: currentPrReviewCount + 1,
+  });
 
   // Broadcast saving_results before saving conversation
   eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage5_started', { stage: 5, subState: 'saving_results' });
@@ -2631,7 +2640,9 @@ export function createApp(
         }
 
         // Build Stage 5 prompt and spawn PR review
-        const prompt = session.claudeSessionId
+        // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
+        const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
+        const prompt = useLeanStage5
           ? buildStage5PromptLean(prInfo)
           : buildStage5Prompt(session, plan, prInfo);
         await spawnStage5PRReview(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
@@ -2840,7 +2851,9 @@ export function createApp(
           branch: updatedSession.featureBranch,
         };
 
-        const basePrompt = updatedSession.claudeSessionId
+        // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
+        const useLeanStage5 = updatedSession.claudeSessionId && (updatedSession.prReviewCount || 0) > 0;
+        const basePrompt = useLeanStage5
           ? buildStage5PromptLean(prInfo)
           : buildStage5Prompt(updatedSession, plan, prInfo);
         const prompt = basePrompt + `
@@ -3998,7 +4011,11 @@ Please ensure you output proper completion markers when done.`;
             url: session.prUrl,
             branch: session.featureBranch,
           };
-          const stage5Prompt = buildStage5Prompt(session, plan, prInfo);
+          // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
+          const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
+          const stage5Prompt = useLeanStage5
+            ? buildStage5PromptLean(prInfo)
+            : buildStage5Prompt(session, plan, prInfo);
           eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage5_retry', { stage: 5, subState: 'spawning_agent' });
           spawnStage5PRReview(session, storage, sessionManager, resultHandler, eventBroadcaster, stage5Prompt);
           break;
@@ -4048,7 +4065,9 @@ Please ensure you output proper completion markers when done.`;
       res.json({ success: true, remarks: remarks || null });
 
       // Build Stage 5 prompt with user remarks
-      let prompt = session.claudeSessionId
+      // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
+      const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
+      let prompt = useLeanStage5
         ? buildStage5PromptLean(prInfo)
         : buildStage5Prompt(session, plan, prInfo);
       if (remarks && remarks.trim()) {
@@ -4279,7 +4298,9 @@ Please ensure you output proper completion markers when done.`;
               if (!plan) break;
               const prInfo = await storage.readJson<{ title: string; branch: string; url: string }>(`${sessionDir}/pr.json`);
               if (!prInfo) break;
-              const prompt = session.claudeSessionId
+              // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
+              const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
+              const prompt = useLeanStage5
                 ? buildStage5PromptLean(prInfo)
                 : buildStage5Prompt(session, plan, prInfo);
               await spawnStage5PRReview(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);

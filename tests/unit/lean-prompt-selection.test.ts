@@ -21,6 +21,7 @@ describe('Lean Prompt Selection Logic', () => {
   // Base mock session without Claude session IDs
   const baseSession: Session = {
     version: '1.0',
+    dataVersion: 1,
     id: 'test-session-id',
     projectId: 'test-project',
     featureId: 'add-auth',
@@ -155,14 +156,16 @@ describe('Lean Prompt Selection Logic', () => {
 
   /**
    * Simulates the Stage 5 prompt selection logic from app.ts
-   * Uses lean prompt when claudeSessionId exists
+   * Uses lean prompt when claudeSessionId exists AND prReviewCount > 0
+   * (mirrors Stage 2's reviewCount pattern)
    */
   function selectStage5Prompt(
     session: Session,
     plan: Plan,
     prInfo: { title: string; url: string; branch: string }
   ): { type: 'lean' | 'full'; prompt: string } {
-    if (session.claudeSessionId) {
+    const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
+    if (useLeanStage5) {
       return {
         type: 'lean',
         prompt: buildStage5PromptLean(prInfo),
@@ -345,10 +348,38 @@ describe('Lean Prompt Selection Logic', () => {
       expect(result.prompt).toContain('Phase 1: Parallel Review');
     });
 
-    it('should use lean prompt when claudeSessionId exists', () => {
+    it('should use full prompt when claudeSessionId exists but prReviewCount is 0 (first review)', () => {
       const sessionWithId = {
         ...baseSession,
         claudeSessionId: 'claude-session-123',
+        prReviewCount: 0,
+      };
+
+      const result = selectStage5Prompt(sessionWithId, mockPlan, prInfo);
+
+      expect(result.type).toBe('full');
+      expect(result.prompt).toContain('You are reviewing a pull request');
+      expect(result.prompt).toContain('Phase 1: Parallel Review');
+    });
+
+    it('should use full prompt when claudeSessionId exists but prReviewCount is undefined (first review)', () => {
+      const sessionWithId = {
+        ...baseSession,
+        claudeSessionId: 'claude-session-123',
+        // prReviewCount not set (undefined)
+      };
+
+      const result = selectStage5Prompt(sessionWithId, mockPlan, prInfo);
+
+      expect(result.type).toBe('full');
+      expect(result.prompt).toContain('You are reviewing a pull request');
+    });
+
+    it('should use lean prompt when claudeSessionId exists AND prReviewCount > 0 (subsequent reviews)', () => {
+      const sessionWithId = {
+        ...baseSession,
+        claudeSessionId: 'claude-session-123',
+        prReviewCount: 1,
       };
 
       const result = selectStage5Prompt(sessionWithId, mockPlan, prInfo);
@@ -362,6 +393,7 @@ describe('Lean Prompt Selection Logic', () => {
       const sessionWithId = {
         ...baseSession,
         claudeSessionId: 'claude-session-123',
+        prReviewCount: 1,
       };
 
       const result = selectStage5Prompt(sessionWithId, mockPlan, prInfo);
@@ -373,11 +405,25 @@ describe('Lean Prompt Selection Logic', () => {
       const sessionWithId = {
         ...baseSession,
         claudeSessionId: 'claude-session-123',
+        prReviewCount: 1,
       };
 
       const result = selectStage5Prompt(sessionWithId, mockPlan, prInfo);
 
       expect(result.prompt).toContain('feat: Add JWT authentication');
+    });
+
+    it('should use lean prompt on multiple subsequent reviews (prReviewCount > 1)', () => {
+      const sessionWithMultipleReviews = {
+        ...baseSession,
+        claudeSessionId: 'claude-session-123',
+        prReviewCount: 3,
+      };
+
+      const result = selectStage5Prompt(sessionWithMultipleReviews, mockPlan, prInfo);
+
+      expect(result.type).toBe('lean');
+      expect(result.prompt).toContain('Review PR:');
     });
   });
 
@@ -417,7 +463,7 @@ describe('Lean Prompt Selection Logic', () => {
 
     it('Stage 5: lean prompt should be significantly smaller than full', () => {
       const full = selectStage5Prompt(baseSession, mockPlan, prInfo);
-      const sessionWithId = { ...baseSession, claudeSessionId: 'test' };
+      const sessionWithId = { ...baseSession, claudeSessionId: 'test', prReviewCount: 1 };
       const lean = selectStage5Prompt(sessionWithId, mockPlan, prInfo);
 
       expect(lean.prompt.length).toBeLessThan(full.prompt.length * 0.2);

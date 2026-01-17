@@ -1403,10 +1403,12 @@ describe('Lean Prompt Builders', () => {
       expect(prompt).toContain('[PR_APPROVED]');
     });
 
-    it('should reference DECISION_NEEDED marker', () => {
+    it('should reference PLAN_STEP marker for findings (not DECISION_NEEDED)', () => {
       const prompt = buildStage5PromptLean(prInfo);
 
-      expect(prompt).toContain('[DECISION_NEEDED]');
+      // Lean prompt should use PLAN_STEP for findings, not DECISION_NEEDED
+      expect(prompt).toContain('[PLAN_STEP]');
+      expect(prompt).toContain('do NOT use DECISION_NEEDED');
     });
 
     it('should be significantly shorter than full Stage 5 prompt', () => {

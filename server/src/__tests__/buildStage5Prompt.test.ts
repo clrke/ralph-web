@@ -1,11 +1,13 @@
 /**
- * Unit tests for buildStage5Prompt function
+ * Unit tests for buildStage5Prompt and buildStage5PromptLean functions
  *
  * Tests the updated prompt that instructs Claude to use the Edit tool directly
  * on plan.md and plan.json files during PR review when step corrections are needed.
+ *
+ * Also tests the lean prompt's marker guidance and selection logic.
  */
 
-import { buildStage5Prompt } from '../prompts/stagePrompts';
+import { buildStage5Prompt, buildStage5PromptLean } from '../prompts/stagePrompts';
 import type { Session, Plan, PlanStep } from '@claude-code-web/shared';
 
 // =============================================================================
@@ -67,6 +69,7 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
     claudePlanFilePath: '/home/user/.claude-web/abc123/test-feature/plan.md',
     currentPlanVersion: 1,
     claudeStage3SessionId: 'claude-stage3-789',
+    prReviewCount: 0,
     prUrl: 'https://github.com/test/repo/pull/42',
     sessionExpiresAt: '2024-01-16T10:00:00Z',
     createdAt: '2024-01-15T10:00:00Z',
@@ -423,6 +426,182 @@ describe('buildStage5Prompt', () => {
       const prompt = buildStage5Prompt(session, plan, prInfo);
 
       expect(prompt).toContain('No description');
+    });
+  });
+});
+
+// =============================================================================
+// Lean Prompt Tests
+// =============================================================================
+
+describe('buildStage5PromptLean', () => {
+  describe('marker guidance', () => {
+    it('should use PLAN_STEP for findings, NOT DECISION_NEEDED', () => {
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5PromptLean(prInfo);
+
+      // Should contain correct marker guidance
+      expect(prompt).toContain('[PLAN_STEP]');
+      expect(prompt).toContain('do NOT use DECISION_NEEDED');
+      // Should NOT contain the old incorrect guidance
+      expect(prompt).not.toContain('Report findings as [DECISION_NEEDED]');
+    });
+
+    it('should include PR_APPROVED marker', () => {
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5PromptLean(prInfo);
+
+      expect(prompt).toContain('[PR_APPROVED]');
+    });
+
+    it('should include CI_FAILED marker', () => {
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5PromptLean(prInfo);
+
+      expect(prompt).toContain('[CI_FAILED]');
+    });
+
+    it('should include parallel review agents instruction', () => {
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5PromptLean(prInfo);
+
+      expect(prompt).toContain('parallel review agents');
+    });
+
+    it('should include CI check instruction', () => {
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5PromptLean(prInfo);
+
+      expect(prompt).toContain('gh pr checks');
+    });
+  });
+
+  describe('PR info inclusion', () => {
+    it('should include PR URL', () => {
+      const prInfo = createMockPrInfo({
+        url: 'https://github.com/test/repo/pull/123',
+      });
+
+      const prompt = buildStage5PromptLean(prInfo);
+
+      expect(prompt).toContain('https://github.com/test/repo/pull/123');
+    });
+
+    it('should include PR title', () => {
+      const prInfo = createMockPrInfo({
+        title: 'feat: Add new authentication feature',
+      });
+
+      const prompt = buildStage5PromptLean(prInfo);
+
+      expect(prompt).toContain('feat: Add new authentication feature');
+    });
+  });
+
+  describe('lean prompt size', () => {
+    it('should be significantly smaller than full prompt', () => {
+      const session = createMockSession();
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const fullPrompt = buildStage5Prompt(session, plan, prInfo);
+      const leanPrompt = buildStage5PromptLean(prInfo);
+
+      // Lean prompt should be less than 10% of full prompt
+      expect(leanPrompt.length).toBeLessThan(fullPrompt.length * 0.1);
+    });
+  });
+});
+
+// =============================================================================
+// Prompt Selection Logic Tests (prReviewCount)
+// =============================================================================
+
+describe('Stage 5 prompt selection logic', () => {
+  describe('prReviewCount-based selection', () => {
+    it('should use full prompt when prReviewCount is 0 (first review)', () => {
+      const session = createMockSession({
+        claudeSessionId: 'existing-session',
+        prReviewCount: 0,
+      });
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      // Simulate the selection logic from app.ts
+      const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
+
+      expect(useLeanStage5).toBe(false);
+
+      // Verify the full prompt has the comprehensive content
+      const fullPrompt = buildStage5Prompt(session, plan, prInfo);
+      expect(fullPrompt).toContain('Frontend Agent');
+      expect(fullPrompt).toContain('Security:');
+    });
+
+    it('should use full prompt when prReviewCount is undefined (first review)', () => {
+      const session = createMockSession({
+        claudeSessionId: 'existing-session',
+      });
+      // Remove prReviewCount to simulate undefined
+      delete (session as Partial<Session>).prReviewCount;
+
+      // Simulate the selection logic from app.ts
+      const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
+
+      expect(useLeanStage5).toBe(false);
+    });
+
+    it('should use lean prompt when prReviewCount > 0 (subsequent reviews)', () => {
+      const session = createMockSession({
+        claudeSessionId: 'existing-session',
+        prReviewCount: 1,
+      });
+
+      // Simulate the selection logic from app.ts
+      const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
+
+      expect(useLeanStage5).toBe(true);
+    });
+
+    it('should use full prompt when claudeSessionId is null (fresh session)', () => {
+      const session = createMockSession({
+        claudeSessionId: null,
+        prReviewCount: 5, // Even with high count, should use full if no sessionId
+      });
+
+      // Simulate the selection logic from app.ts
+      const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
+
+      // Should be falsy (null or false) - meaning full prompt is used
+      expect(useLeanStage5).toBeFalsy();
+    });
+  });
+
+  describe('comparison with Stage 2 pattern', () => {
+    it('should mirror Stage 2 reviewCount pattern', () => {
+      // Stage 2 pattern: useLean = session.claudeSessionId && currentIteration > 1
+      // Stage 5 pattern: useLean = session.claudeSessionId && prReviewCount > 0
+
+      // Both patterns ensure first execution uses full prompt
+      const sessionFirstReview = createMockSession({
+        claudeSessionId: 'existing-session',
+        prReviewCount: 0,
+      });
+      const sessionSubsequentReview = createMockSession({
+        claudeSessionId: 'existing-session',
+        prReviewCount: 2,
+      });
+
+      const useLeanFirst = sessionFirstReview.claudeSessionId && (sessionFirstReview.prReviewCount || 0) > 0;
+      const useLeanSubsequent = sessionSubsequentReview.claudeSessionId && (sessionSubsequentReview.prReviewCount || 0) > 0;
+
+      expect(useLeanFirst).toBe(false); // First review uses full
+      expect(useLeanSubsequent).toBe(true); // Subsequent uses lean
     });
   });
 });

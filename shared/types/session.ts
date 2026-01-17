@@ -82,6 +82,8 @@ export interface Session {
   claudePlanFilePath: string | null;
   currentPlanVersion: number;
   claudeStage3SessionId: string | null; // Fresh sessionId for Stage 3 execution
+  /** Number of times Stage 5 PR review has been executed (mirrors replanningCount for Stage 2) */
+  prReviewCount?: number;
   prUrl: string | null; // URL to the created PR (set in Stage 4)
   sessionExpiresAt: string;
   createdAt: string;
