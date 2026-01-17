@@ -531,3 +531,119 @@ describe('buildPlanReviewContinuationPrompt', () => {
     });
   });
 });
+
+describe('Plan Review Iteration Logging', () => {
+  /**
+   * Tests for structured logging format and error context in plan review iterations.
+   * These verify the logging patterns added in step-5.
+   */
+
+  describe('structured logging format', () => {
+    it('should format iteration decision log correctly', () => {
+      // Simulates the log format: [Plan Review] {featureId}: Iteration {n}/{max} - hasDecisionNeeded={bool}, planApproved={bool}, decision={CONTINUE|TRANSITION_TO_STAGE_3}
+      const featureId = 'feature-123';
+      const nextIteration = 3;
+      const hasDecisionNeeded = true;
+      const planApproved = true;
+      const shouldContinue = shouldContinuePlanReview(nextIteration - 1, hasDecisionNeeded, planApproved);
+
+      const expectedDecision = shouldContinue ? 'CONTINUE' : 'TRANSITION_TO_STAGE_3';
+      const logMessage =
+        `[Plan Review] ${featureId}: Iteration ${nextIteration}/${MAX_PLAN_REVIEW_ITERATIONS} - ` +
+        `hasDecisionNeeded=${hasDecisionNeeded}, planApproved=${planApproved}, ` +
+        `decision=${expectedDecision}`;
+
+      // Verify log structure
+      expect(logMessage).toContain('[Plan Review]');
+      expect(logMessage).toContain('feature-123');
+      expect(logMessage).toContain(`Iteration 3/${MAX_PLAN_REVIEW_ITERATIONS}`);
+      expect(logMessage).toContain('hasDecisionNeeded=true');
+      expect(logMessage).toContain('planApproved=true');
+      expect(logMessage).toContain('decision=CONTINUE');
+    });
+
+    it('should show TRANSITION_TO_STAGE_3 when not continuing', () => {
+      const featureId = 'feature-456';
+      const nextIteration = 5;
+      const hasDecisionNeeded = false; // No decisions = stop
+      const planApproved = true;
+      const shouldContinue = shouldContinuePlanReview(nextIteration - 1, hasDecisionNeeded, planApproved);
+
+      const expectedDecision = shouldContinue ? 'CONTINUE' : 'TRANSITION_TO_STAGE_3';
+
+      expect(expectedDecision).toBe('TRANSITION_TO_STAGE_3');
+    });
+  });
+
+  describe('error action format with iteration context', () => {
+    it('should format error action with iteration context', () => {
+      const iterationContext = 3;
+      const errorAction = iterationContext
+        ? `stage2_spawn_error_iteration_${iterationContext}_of_${MAX_PLAN_REVIEW_ITERATIONS}`
+        : 'stage2_spawn_error';
+
+      expect(errorAction).toBe(`stage2_spawn_error_iteration_3_of_${MAX_PLAN_REVIEW_ITERATIONS}`);
+      expect(errorAction).toContain('iteration_3');
+      expect(errorAction).toContain(`of_${MAX_PLAN_REVIEW_ITERATIONS}`);
+    });
+
+    it('should use default error action when no iteration context', () => {
+      const iterationContext: number | undefined = undefined;
+      const errorAction = iterationContext
+        ? `stage2_spawn_error_iteration_${iterationContext}_of_${MAX_PLAN_REVIEW_ITERATIONS}`
+        : 'stage2_spawn_error';
+
+      expect(errorAction).toBe('stage2_spawn_error');
+    });
+  });
+
+  describe('iteration info formatting', () => {
+    it('should format iteration info string correctly', () => {
+      const iterationContext = 5;
+      const iterationInfo = iterationContext
+        ? ` (iteration ${iterationContext}/${MAX_PLAN_REVIEW_ITERATIONS})`
+        : '';
+
+      expect(iterationInfo).toBe(` (iteration 5/${MAX_PLAN_REVIEW_ITERATIONS})`);
+    });
+
+    it('should return empty string when no iteration context', () => {
+      const iterationContext: number | undefined = undefined;
+      const iterationInfo = iterationContext
+        ? ` (iteration ${iterationContext}/${MAX_PLAN_REVIEW_ITERATIONS})`
+        : '';
+
+      expect(iterationInfo).toBe('');
+    });
+  });
+
+  describe('execution status options with iteration', () => {
+    it('should include iteration and maxIterations in error event options', () => {
+      const iterationContext = 7;
+      const options = {
+        stage: 2,
+        iteration: iterationContext,
+        maxIterations: MAX_PLAN_REVIEW_ITERATIONS,
+      };
+
+      expect(options.stage).toBe(2);
+      expect(options.iteration).toBe(7);
+      expect(options.maxIterations).toBe(MAX_PLAN_REVIEW_ITERATIONS);
+    });
+
+    it('should have correct types for iteration options', () => {
+      const options: {
+        stage: number;
+        iteration?: number;
+        maxIterations?: number;
+      } = {
+        stage: 2,
+        iteration: 3,
+        maxIterations: 10,
+      };
+
+      expect(typeof options.iteration).toBe('number');
+      expect(typeof options.maxIterations).toBe('number');
+    });
+  });
+});

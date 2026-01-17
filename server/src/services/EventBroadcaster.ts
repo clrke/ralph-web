@@ -39,6 +39,10 @@ export interface ExecutionStatusOptions {
   removedStepIds?: string[];
   /** Step IDs reset to pending due to content changes */
   resetStepIds?: string[];
+  /** Current iteration number for plan review iterations */
+  iteration?: number;
+  /** Maximum iterations for plan review */
+  maxIterations?: number;
 }
 
 /**

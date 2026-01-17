@@ -323,9 +323,11 @@ async function spawnStage2Review(
   sessionManager: SessionManager,
   resultHandler: ClaudeResultHandler,
   eventBroadcaster: EventBroadcaster | undefined,
-  prompt: string
+  prompt: string,
+  iterationContext?: number // Optional: current iteration number for error logging
 ): Promise<void> {
-  console.log(`Starting Stage 2 review for ${session.featureId}`);
+  const iterationInfo = iterationContext ? ` (iteration ${iterationContext}/${MAX_PLAN_REVIEW_ITERATIONS})` : '';
+  console.log(`Starting Stage 2 review for ${session.featureId}${iterationInfo}`);
   const sessionDir = `${session.projectId}/${session.featureId}`;
   const statusPath = `${sessionDir}/status.json`;
 
@@ -434,7 +436,7 @@ async function spawnStage2Review(
   }).catch(async (error) => {
     // Handle step modification validation errors by re-spawning Stage 2 with error context
     if (error instanceof StepModificationValidationError) {
-      console.log(`[Stage 2] Re-spawning due to step modification validation errors for ${session.featureId}`);
+      console.log(`[Stage 2] Re-spawning due to step modification validation errors for ${session.featureId}${iterationInfo}`);
       const validationContext = `Your step modification output contained errors:\n${error.validationErrors.map(e => `- ${e}`).join('\n')}\n\nPlease fix these issues and try again.`;
 
       // Re-fetch session and re-spawn with error context
@@ -446,14 +448,25 @@ async function spawnStage2Review(
           sessionManager,
           resultHandler,
           eventBroadcaster,
-          validationContext
+          validationContext,
+          iterationContext // Preserve iteration context through re-spawn
         );
       }
       return;
     }
 
-    console.error(`Stage 2 spawn error for ${session.featureId}:`, error);
-    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage2_spawn_error', { stage: 2 });
+    // Enhanced error logging with iteration context
+    const errorAction = iterationContext
+      ? `stage2_spawn_error_iteration_${iterationContext}_of_${MAX_PLAN_REVIEW_ITERATIONS}`
+      : 'stage2_spawn_error';
+    console.error(`[Stage 2] Spawn error for ${session.featureId}${iterationInfo}:`, error);
+    eventBroadcaster?.executionStatus(
+      session.projectId,
+      session.featureId,
+      'error',
+      errorAction,
+      { stage: 2, iteration: iterationContext, maxIterations: MAX_PLAN_REVIEW_ITERATIONS }
+    );
   });
 }
 
@@ -532,17 +545,25 @@ async function handleStage2Completion(
   const hasDecisionNeeded = result.parsed.decisions.length > 0;
   const reviewCount = plan?.reviewCount || 0;
   const planApproved = stateApproved || markerApproved;
+  const nextIteration = reviewCount + 1;
+  const shouldContinue = shouldContinuePlanReview(reviewCount, hasDecisionNeeded, planApproved);
 
-  if (shouldContinuePlanReview(reviewCount, hasDecisionNeeded, planApproved)) {
-    console.log(`Continuing plan review iteration ${reviewCount + 1}/${MAX_PLAN_REVIEW_ITERATIONS} for ${session.featureId} (${result.parsed.decisions.length} decisions pending)`);
+  // Structured logging for plan review iteration decision
+  console.log(
+    `[Plan Review] ${session.featureId}: Iteration ${nextIteration}/${MAX_PLAN_REVIEW_ITERATIONS} - ` +
+    `hasDecisionNeeded=${hasDecisionNeeded}, planApproved=${planApproved}, ` +
+    `decision=${shouldContinue ? 'CONTINUE' : 'TRANSITION_TO_STAGE_3'}`
+  );
+
+  if (shouldContinue) {
+    console.log(`Continuing plan review iteration ${nextIteration}/${MAX_PLAN_REVIEW_ITERATIONS} for ${session.featureId} (${result.parsed.decisions.length} decisions pending)`);
 
     try {
       await withLock(session.projectId, session.featureId, 2, async () => {
         // Build continuation prompt for the next iteration
-        const nextIteration = reviewCount + 1;
         const updatedSession = await sessionManager.getSession(session.projectId, session.featureId);
         if (!updatedSession) {
-          console.warn(`Session ${session.featureId} not found for plan review continuation`);
+          console.warn(`[Plan Review] ${session.featureId}: Session not found for iteration ${nextIteration} continuation`);
           return;
         }
 
@@ -560,12 +581,13 @@ async function handleStage2Completion(
           sessionManager,
           resultHandler,
           eventBroadcaster,
-          continuationPrompt
+          continuationPrompt,
+          nextIteration // Pass iteration context for error handling
         );
       });
     } catch (error) {
       if (error instanceof SpawnLockError) {
-        console.log(`[Plan Review] Lock already held for ${session.featureId}, skipping continuation spawn`);
+        console.log(`[Plan Review] ${session.featureId}: Lock already held, skipping iteration ${nextIteration} spawn`);
       } else {
         throw error;
       }
