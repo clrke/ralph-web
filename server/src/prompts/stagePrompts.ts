@@ -595,6 +595,169 @@ How should we address this?
 }
 
 /**
+ * Review agent definitions for streamlined Stage 2.
+ * Maps agent type to focused review instructions for simple changes.
+ */
+const STAGE2_REVIEW_AGENTS: Record<string, { name: string; focus: string }> = {
+  frontend: {
+    name: 'Frontend Reviewer',
+    focus: `Review UI aspects:
+     - Component correctness and state handling
+     - User input validation
+     - Accessibility basics`,
+  },
+  backend: {
+    name: 'Backend Reviewer',
+    focus: `Review API aspects:
+     - Endpoint correctness
+     - Input validation and error handling
+     - Auth checks if applicable`,
+  },
+  database: {
+    name: 'Database Reviewer',
+    focus: `Review data layer:
+     - Schema correctness
+     - Query efficiency
+     - Data validation`,
+  },
+  testing: {
+    name: 'Test Reviewer',
+    focus: `Review test coverage:
+     - Key functionality tested
+     - Edge cases covered
+     - Test quality`,
+  },
+  infrastructure: {
+    name: 'Infrastructure Reviewer',
+    focus: `Review infra aspects:
+     - Config correctness
+     - CI/CD impact
+     - Environment handling`,
+  },
+  documentation: {
+    name: 'Documentation Reviewer',
+    focus: `Review documentation:
+     - API docs if applicable
+     - README updates
+     - Code comments`,
+  },
+};
+
+/**
+ * Build Stage 2: Streamlined Plan Review prompt for simple changes.
+ * Uses reduced iterations (3 instead of 10) and spawns only relevant review agents.
+ */
+export function buildStage2PromptStreamlined(
+  session: Session,
+  plan: Plan,
+  currentIteration: number
+): string {
+  const planStepsText =
+    plan.steps.length > 0
+      ? plan.steps
+          .map((step, i) => {
+            const parentInfo = step.parentId ? ` (depends on: ${step.parentId})` : '';
+            const complexityInfo = (step as { complexity?: string }).complexity
+              ? ` [${(step as { complexity?: string }).complexity} complexity]`
+              : '';
+            return `${i + 1}. [${step.id}] ${step.title}${parentInfo}${complexityInfo}\n   ${step.description || 'No description'}`;
+          })
+          .join('\n\n')
+      : 'No plan steps defined.';
+
+  // Streamlined target: 3 iterations for simple changes
+  const targetIterations = 3;
+
+  const planFileReference = session.claudePlanFilePath
+    ? `\n\n## Full Plan Reference\nFor complete plan details, read: ${session.claudePlanFilePath}`
+    : '';
+
+  // Build validation context section if plan was previously incomplete
+  const validationContextSection = session.planValidationContext
+    ? `
+## ⚠️ Plan Validation Issues (MUST ADDRESS FIRST)
+${session.planValidationContext}
+
+---
+
+`
+    : '';
+
+  // Build review agents section based on suggestedAgents
+  const suggestedAgents = session.suggestedAgents || ['frontend', 'backend'];
+  const reviewAgentSections = suggestedAgents
+    .map((agentType, index) => {
+      const agent = STAGE2_REVIEW_AGENTS[agentType];
+      if (!agent) return null;
+      return `   ${index + 1}. **${agent.name}**: ${agent.focus}`;
+    })
+    .filter(Boolean)
+    .join('\n\n');
+
+  return `You are reviewing a ${session.assessedComplexity || 'simple'} change. This is a focused review.
+${validationContextSection}
+## Current Plan (v${plan.planVersion})
+${planStepsText}${planFileReference}
+
+## Review Iteration
+This is review ${currentIteration} of ${targetIterations} (streamlined for simple changes).
+
+## Instructions
+
+### 1. Spawn Focused Review Agents
+Since this is a ${session.assessedComplexity || 'simple'} change, spawn only the relevant review agents:
+
+**Subagent Restrictions:**
+- Allowed: Read, Glob, Grep
+- NOT allowed: Edit, Write, Bash
+
+${reviewAgentSections}
+
+### 2. Focus on Critical Issues Only
+For ${session.assessedComplexity || 'simple'} changes, only flag issues that are:
+- **Correctness**: Logic errors, missing edge cases
+- **Security**: Obvious vulnerabilities (auth, injection)
+- **Plan Completeness**: Missing acceptance criteria mapping
+
+Skip minor style/optimization suggestions for simple changes.
+
+### 3. Present Issues as Decisions
+Format critical issues only:
+[DECISION_NEEDED priority="1" category="correctness|security|plan_structure"]
+Issue: Brief description
+- Option A: Fix approach (recommended)
+- Option B: Alternative
+[/DECISION_NEEDED]
+
+### 4. Quick Approval Path
+For simple changes, if no critical issues are found, approve immediately:
+[PLAN_APPROVED]`;
+}
+
+/**
+ * Lean Stage 2 prompt for streamlined review (iterations 2+).
+ * Even more concise for simple changes.
+ */
+export function buildStage2PromptStreamlinedLean(
+  plan: Plan,
+  currentIteration: number,
+  validationContext?: string | null,
+  claudePlanFilePath?: string | null,
+  assessedComplexity?: string
+): string {
+  const validation = validationContext
+    ? `⚠️ **Fix validation issues:**\n${validationContext}\n\n`
+    : '';
+
+  const planFile = claudePlanFilePath ? `Plan: ${claudePlanFilePath}\n` : '';
+
+  return `${validation}${planFile}Continue ${assessedComplexity || 'simple'} review (${currentIteration}/3).
+
+Focus on critical issues only. Minor suggestions can be skipped.
+[DECISION_NEEDED] for blockers, [PLAN_APPROVED] when ready.`;
+}
+
+/**
  * Build Stage 2: Plan Revision prompt
  * Revises plan based on user feedback.
  * Supports step modifications: add, edit, and remove steps.

@@ -20,7 +20,9 @@ import {
   buildStage1Prompt,
   buildStage1PromptStreamlined,
   buildStage2Prompt,
+  buildStage2PromptStreamlined,
   buildStage2PromptLean,
+  buildStage2PromptStreamlinedLean,
   buildPlanReviewContinuationPrompt,
   buildStage4Prompt,
   buildStage4PromptLean,
@@ -111,6 +113,50 @@ function selectStage1PromptBuilder(session: Session): string {
   }
 
   return buildStage1Prompt(session);
+}
+
+/**
+ * Select the appropriate Stage 2 prompt builder based on complexity assessment.
+ * Uses streamlined prompt for trivial/simple changes, full prompt for normal/complex.
+ */
+function selectStage2PromptBuilder(
+  session: Session,
+  plan: Plan,
+  currentIteration: number,
+  useLean: boolean
+): string {
+  const complexity = session.assessedComplexity;
+
+  // Use streamlined prompt for trivial and simple changes
+  if (complexity === 'trivial' || complexity === 'simple') {
+    if (useLean) {
+      console.log(
+        `Using streamlined lean Stage 2 prompt for ${session.featureId} (complexity: ${complexity}, iteration: ${currentIteration}/3)`
+      );
+      return buildStage2PromptStreamlinedLean(
+        plan,
+        currentIteration,
+        session.planValidationContext,
+        session.claudePlanFilePath,
+        complexity
+      );
+    }
+    console.log(
+      `Using streamlined Stage 2 prompt for ${session.featureId} (complexity: ${complexity}, iteration: ${currentIteration}/3)`
+    );
+    return buildStage2PromptStreamlined(session, plan, currentIteration);
+  }
+
+  // Use full prompt for normal, complex, or unassessed changes
+  if (useLean) {
+    return buildStage2PromptLean(
+      plan,
+      currentIteration,
+      session.planValidationContext,
+      session.claudePlanFilePath
+    );
+  }
+  return buildStage2Prompt(session, plan, currentIteration);
 }
 
 /**
@@ -2207,11 +2253,10 @@ async function handleStage1Completion(
 
   // Build Stage 2 prompt and spawn review
   // Use lean prompt for iteration 2+ when resuming an existing session
+  // Use streamlined prompt for trivial/simple changes
   const currentIteration = (plan.reviewCount || 0) + 1;
-  const useLean = updatedSession.claudeSessionId && currentIteration > 1;
-  const prompt = useLean
-    ? buildStage2PromptLean(plan, currentIteration, updatedSession.planValidationContext, updatedSession.claudePlanFilePath)
-    : buildStage2Prompt(updatedSession, plan, currentIteration);
+  const useLean = !!(updatedSession.claudeSessionId && currentIteration > 1);
+  const prompt = selectStage2PromptBuilder(updatedSession, plan, currentIteration, useLean);
   await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
 }
 
@@ -2731,11 +2776,10 @@ export function createApp(
         }
 
         // Build Stage 2 prompt and spawn review using helper function
+        // Use streamlined prompt for trivial/simple changes
         const currentIteration = (plan.reviewCount || 0) + 1;
-        const useLean = session.claudeSessionId && currentIteration > 1;
-        const prompt = useLean
-          ? buildStage2PromptLean(plan, currentIteration, session.planValidationContext, session.claudePlanFilePath)
-          : buildStage2Prompt(session, plan, currentIteration);
+        const useLean = !!(session.claudeSessionId && currentIteration > 1);
+        const prompt = selectStage2PromptBuilder(session, plan, currentIteration, useLean);
         await spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
       } else if (targetStage === 3) {
         // If transitioning to Stage 3, verify plan is approved and spawn implementation
@@ -4096,7 +4140,8 @@ After creating all steps, write the plan to the file.`;
             console.error(`No plan found for Stage 2 retry: ${featureId}`);
             return;
           }
-          const stage2Prompt = buildStage2Prompt(session, plan, 1);
+          // Use streamlined prompt for trivial/simple changes
+          const stage2Prompt = selectStage2PromptBuilder(session, plan, 1, false);
           eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage2_retry', { stage: 2, subState: 'spawning_agent' });
           spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, stage2Prompt);
           break;
@@ -4438,12 +4483,11 @@ Please ensure you output proper completion markers when done.`;
             }
             case 2: {
               // Stage 2: Plan Review - resume with stage 2 prompt
+              // Use streamlined prompt for trivial/simple changes
               if (!plan) break;
               const currentIteration = (plan.reviewCount || 0) + 1;
-              const useLean2 = session.claudeSessionId && currentIteration > 1;
-              const prompt2 = useLean2
-                ? buildStage2PromptLean(plan, currentIteration, session.planValidationContext, session.claudePlanFilePath)
-                : buildStage2Prompt(session, plan, currentIteration);
+              const useLean2 = !!(session.claudeSessionId && currentIteration > 1);
+              const prompt2 = selectStage2PromptBuilder(session, plan, currentIteration, useLean2);
               await spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt2);
               break;
             }
