@@ -1,9 +1,14 @@
 import {
   buildStage1Prompt,
+  buildStage1PromptStreamlined,
   buildStage2Prompt,
+  buildStage2PromptStreamlined,
+  buildStage2PromptStreamlinedLean,
   buildStage3Prompt,
   buildStage4Prompt,
   buildStage5Prompt,
+  buildStage5PromptStreamlined,
+  buildStage5PromptStreamlinedLean,
   buildPlanRevisionPrompt,
   buildBatchAnswersContinuationPrompt,
   buildSingleStepPrompt,
@@ -219,6 +224,201 @@ describe('Stage Prompt Builders', () => {
     });
   });
 
+  describe('buildStage1PromptStreamlined', () => {
+    it('should include feature title and description', () => {
+      const sessionWithComplexity = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend', 'testing'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithComplexity);
+
+      expect(prompt).toContain('Add User Authentication');
+      expect(prompt).toContain('JWT-based authentication');
+    });
+
+    it('should indicate this is a streamlined prompt', () => {
+      const sessionWithComplexity = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithComplexity);
+
+      expect(prompt).toContain('streamlined');
+      expect(prompt).toContain('Focused Exploration');
+    });
+
+    it('should only include suggested agents in exploration phase', () => {
+      const sessionWithFrontendOnly = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithFrontendOnly);
+
+      // Should include frontend agent
+      expect(prompt).toContain('Frontend Agent');
+      expect(prompt).toContain('UI layer patterns');
+
+      // Should NOT include backend agent
+      expect(prompt).not.toContain('Backend Agent');
+      expect(prompt).not.toContain('API/server layer patterns');
+    });
+
+    it('should include multiple agents when suggested', () => {
+      const sessionWithMultipleAgents = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend', 'backend', 'testing'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithMultipleAgents);
+
+      expect(prompt).toContain('Frontend Agent');
+      expect(prompt).toContain('Backend Agent');
+      expect(prompt).toContain('Test Agent');
+    });
+
+    it('should default to frontend and backend if no agents suggested', () => {
+      const sessionNoAgents = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: undefined,
+      };
+      const prompt = buildStage1PromptStreamlined(sessionNoAgents);
+
+      expect(prompt).toContain('Frontend Agent');
+      expect(prompt).toContain('Backend Agent');
+    });
+
+    it('should include complexity level in prompt', () => {
+      const sessionTrivial = {
+        ...mockSession,
+        assessedComplexity: 'trivial' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionTrivial);
+
+      expect(prompt).toContain('trivial');
+      expect(prompt).toContain('Complexity: trivial');
+    });
+
+    it('should include quick architecture check for small agent counts', () => {
+      const sessionWithOneAgent = {
+        ...mockSession,
+        assessedComplexity: 'trivial' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithOneAgent);
+
+      expect(prompt).toContain('Quick Architecture Check');
+    });
+
+    it('should include git setup phase', () => {
+      const sessionWithComplexity = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithComplexity);
+
+      expect(prompt).toContain('Phase 0: Git Setup');
+      expect(prompt).toContain('git checkout main');
+      expect(prompt).toContain('git checkout -b feature/add-auth');
+    });
+
+    it('should include composable plan structure', () => {
+      const sessionWithComplexity = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithComplexity);
+
+      expect(prompt).toContain('[PLAN_META]');
+      expect(prompt).toContain('[PLAN_STEP');
+      expect(prompt).toContain('[PLAN_DEPENDENCIES]');
+      expect(prompt).toContain('[PLAN_TEST_COVERAGE]');
+      expect(prompt).toContain('[PLAN_ACCEPTANCE_MAPPING]');
+    });
+
+    it('should include acceptance criteria mapping', () => {
+      const sessionWithComplexity = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithComplexity);
+
+      expect(prompt).toContain('AC-1: "Users can login with email/password"');
+      expect(prompt).toContain('AC-2: "JWT tokens are issued on successful login"');
+    });
+
+    it('should use correct output markers', () => {
+      const sessionWithComplexity = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithComplexity);
+
+      expect(prompt).toContain('[DECISION_NEEDED');
+      expect(prompt).toContain('[PLAN_MODE_EXITED]');
+      expect(prompt).toContain('[PLAN_FILE');
+    });
+
+    it('should suggest skipping questions phase for simple changes', () => {
+      const sessionWithComplexity = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithComplexity);
+
+      expect(prompt).toContain('ONLY IF NEEDED');
+      expect(prompt).toContain('Skip this phase entirely');
+    });
+
+    it('should handle all agent types correctly', () => {
+      const sessionAllAgents = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: [
+          'frontend',
+          'backend',
+          'database',
+          'testing',
+          'infrastructure',
+          'documentation',
+        ],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionAllAgents);
+
+      expect(prompt).toContain('Frontend Agent');
+      expect(prompt).toContain('Backend Agent');
+      expect(prompt).toContain('Database Agent');
+      expect(prompt).toContain('Test Agent');
+      expect(prompt).toContain('Infrastructure Agent');
+      expect(prompt).toContain('Documentation Agent');
+    });
+
+    it('should handle unknown agent types gracefully', () => {
+      const sessionWithUnknownAgent = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend', 'unknown-agent', 'backend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithUnknownAgent);
+
+      // Should include known agents
+      expect(prompt).toContain('Frontend Agent');
+      expect(prompt).toContain('Backend Agent');
+
+      // Should not crash or include unknown agent
+      expect(prompt).not.toContain('unknown-agent');
+    });
+  });
+
   const mockPlan: Plan = {
     version: '1.0',
     planVersion: 1,
@@ -407,6 +607,172 @@ The plan structure is incomplete. Please address the following issues:
         expect(planIndex).toBeGreaterThan(-1);
         expect(validationIndex).toBeLessThan(planIndex);
       });
+    });
+  });
+
+  describe('buildStage2PromptStreamlined', () => {
+    const sessionSimple: Session = {
+      ...mockSession,
+      assessedComplexity: 'simple',
+      suggestedAgents: ['frontend', 'testing'],
+    };
+
+    it('should indicate this is a focused review for simple changes', () => {
+      const prompt = buildStage2PromptStreamlined(sessionSimple, mockPlan, 1);
+
+      expect(prompt).toContain('simple');
+      expect(prompt).toContain('focused review');
+    });
+
+    it('should use 3 iterations instead of 10', () => {
+      const prompt = buildStage2PromptStreamlined(sessionSimple, mockPlan, 1);
+
+      expect(prompt).toContain('1 of 3');
+      expect(prompt).toContain('streamlined');
+      expect(prompt).not.toContain('1 of 10');
+    });
+
+    it('should only include suggested review agents', () => {
+      const sessionFrontendOnly: Session = {
+        ...mockSession,
+        assessedComplexity: 'simple',
+        suggestedAgents: ['frontend'],
+      };
+
+      const prompt = buildStage2PromptStreamlined(sessionFrontendOnly, mockPlan, 1);
+
+      expect(prompt).toContain('Frontend Reviewer');
+      expect(prompt).not.toContain('Backend Reviewer');
+      expect(prompt).not.toContain('Database Reviewer');
+    });
+
+    it('should include multiple review agents when suggested', () => {
+      const sessionBackendDatabase: Session = {
+        ...mockSession,
+        assessedComplexity: 'simple',
+        suggestedAgents: ['backend', 'database'],
+      };
+
+      const prompt = buildStage2PromptStreamlined(sessionBackendDatabase, mockPlan, 1);
+
+      expect(prompt).toContain('Backend Reviewer');
+      expect(prompt).toContain('Database Reviewer');
+      expect(prompt).not.toContain('Frontend Reviewer');
+    });
+
+    it('should focus on critical issues only', () => {
+      const prompt = buildStage2PromptStreamlined(sessionSimple, mockPlan, 1);
+
+      expect(prompt).toContain('Critical Issues Only');
+      expect(prompt).toContain('Correctness');
+      expect(prompt).toContain('Security');
+      expect(prompt).toContain('Plan Completeness');
+    });
+
+    it('should suggest skipping minor issues', () => {
+      const prompt = buildStage2PromptStreamlined(sessionSimple, mockPlan, 1);
+
+      expect(prompt).toContain('Skip minor style/optimization');
+    });
+
+    it('should include quick approval path', () => {
+      const prompt = buildStage2PromptStreamlined(sessionSimple, mockPlan, 1);
+
+      expect(prompt).toContain('Quick Approval Path');
+      expect(prompt).toContain('[PLAN_APPROVED]');
+    });
+
+    it('should include plan steps', () => {
+      const prompt = buildStage2PromptStreamlined(sessionSimple, mockPlan, 1);
+
+      expect(prompt).toContain('Create auth middleware');
+      expect(prompt).toContain('Add login endpoint');
+    });
+
+    it('should include subagent restrictions', () => {
+      const prompt = buildStage2PromptStreamlined(sessionSimple, mockPlan, 1);
+
+      expect(prompt).toContain('Subagent Restrictions');
+      expect(prompt).toContain('Read, Glob, Grep');
+      expect(prompt).toContain('NOT allowed: Edit, Write, Bash');
+    });
+
+    it('should include validation context when present', () => {
+      const sessionWithValidation: Session = {
+        ...sessionSimple,
+        planValidationContext: 'Missing acceptance criteria mapping',
+      };
+
+      const prompt = buildStage2PromptStreamlined(sessionWithValidation, mockPlan, 1);
+
+      expect(prompt).toContain('Plan Validation Issues');
+      expect(prompt).toContain('Missing acceptance criteria mapping');
+    });
+
+    it('should be shorter than full Stage 2 prompt', () => {
+      const fullPrompt = buildStage2Prompt(mockSession, mockPlan, 1);
+      const streamlinedPrompt = buildStage2PromptStreamlined(sessionSimple, mockPlan, 1);
+
+      expect(streamlinedPrompt.length).toBeLessThan(fullPrompt.length);
+    });
+  });
+
+  describe('buildStage2PromptStreamlinedLean', () => {
+    it('should be very concise', () => {
+      const prompt = buildStage2PromptStreamlinedLean(mockPlan, 2, null, '/tmp/plan.md', 'simple');
+
+      expect(prompt.length).toBeLessThan(300);
+    });
+
+    it('should include iteration count out of 3', () => {
+      const prompt = buildStage2PromptStreamlinedLean(mockPlan, 2, null, null, 'simple');
+
+      expect(prompt).toContain('2/3');
+    });
+
+    it('should include complexity level', () => {
+      const prompt = buildStage2PromptStreamlinedLean(mockPlan, 2, null, null, 'trivial');
+
+      expect(prompt).toContain('trivial');
+    });
+
+    it('should include validation context when provided', () => {
+      const prompt = buildStage2PromptStreamlinedLean(
+        mockPlan,
+        2,
+        'Missing test coverage section',
+        null,
+        'simple'
+      );
+
+      expect(prompt).toContain('validation issues');
+      expect(prompt).toContain('Missing test coverage section');
+    });
+
+    it('should include plan file path when provided', () => {
+      const prompt = buildStage2PromptStreamlinedLean(
+        mockPlan,
+        2,
+        null,
+        '/tmp/plan.md',
+        'simple'
+      );
+
+      expect(prompt).toContain('/tmp/plan.md');
+    });
+
+    it('should instruct to focus on critical issues', () => {
+      const prompt = buildStage2PromptStreamlinedLean(mockPlan, 2, null, null, 'simple');
+
+      expect(prompt).toContain('critical issues');
+      expect(prompt).toContain('Minor suggestions can be skipped');
+    });
+
+    it('should reference both markers', () => {
+      const prompt = buildStage2PromptStreamlinedLean(mockPlan, 2, null, null, 'simple');
+
+      expect(prompt).toContain('[DECISION_NEEDED]');
+      expect(prompt).toContain('[PLAN_APPROVED]');
     });
   });
 
@@ -1427,6 +1793,191 @@ describe('Lean Prompt Builders', () => {
       const leanPrompt = buildStage5PromptLean(prInfo);
       // Lean prompt should be under 400 chars
       expect(leanPrompt.length).toBeLessThan(400);
+    });
+  });
+
+  describe('buildStage5PromptStreamlined', () => {
+    const prInfo = {
+      title: 'feat: Add JWT authentication',
+      branch: 'feature/auth',
+      url: 'https://github.com/test/repo/pull/123',
+    };
+
+    const sessionSimple: Session = {
+      ...mockSession,
+      assessedComplexity: 'simple',
+      suggestedAgents: ['frontend', 'testing'],
+    };
+
+    it('should indicate this is a focused review for simple changes', () => {
+      const prompt = buildStage5PromptStreamlined(sessionSimple, mockPlan, prInfo);
+
+      expect(prompt).toContain('simple');
+      expect(prompt).toContain('focused review');
+    });
+
+    it('should include PR information', () => {
+      const prompt = buildStage5PromptStreamlined(sessionSimple, mockPlan, prInfo);
+
+      expect(prompt).toContain('https://github.com/test/repo/pull/123');
+      expect(prompt).toContain('feature/auth');
+    });
+
+    it('should only include suggested review agents plus CI', () => {
+      const sessionFrontendOnly: Session = {
+        ...mockSession,
+        assessedComplexity: 'simple',
+        suggestedAgents: ['frontend'],
+      };
+
+      const prompt = buildStage5PromptStreamlined(sessionFrontendOnly, mockPlan, prInfo);
+
+      expect(prompt).toContain('Frontend Reviewer');
+      expect(prompt).toContain('CI Reviewer'); // Always included
+      expect(prompt).not.toContain('Backend Reviewer');
+      expect(prompt).not.toContain('Database Reviewer');
+    });
+
+    it('should always include CI reviewer', () => {
+      const sessionBackendOnly: Session = {
+        ...mockSession,
+        assessedComplexity: 'simple',
+        suggestedAgents: ['backend'],
+      };
+
+      const prompt = buildStage5PromptStreamlined(sessionBackendOnly, mockPlan, prInfo);
+
+      expect(prompt).toContain('Backend Reviewer');
+      expect(prompt).toContain('CI Reviewer');
+    });
+
+    it('should include multiple review agents when suggested', () => {
+      const sessionMultiple: Session = {
+        ...mockSession,
+        assessedComplexity: 'simple',
+        suggestedAgents: ['backend', 'database', 'testing'],
+      };
+
+      const prompt = buildStage5PromptStreamlined(sessionMultiple, mockPlan, prInfo);
+
+      expect(prompt).toContain('Backend Reviewer');
+      expect(prompt).toContain('Database Reviewer');
+      expect(prompt).toContain('Test Reviewer');
+      expect(prompt).toContain('CI Reviewer');
+    });
+
+    it('should include subagent restrictions', () => {
+      const prompt = buildStage5PromptStreamlined(sessionSimple, mockPlan, prInfo);
+
+      expect(prompt).toContain('Subagent Restrictions');
+      expect(prompt).toContain('Read, Glob, Grep');
+      expect(prompt).toContain('NOT allowed: Edit, Write');
+    });
+
+    it('should include plan summary', () => {
+      const prompt = buildStage5PromptStreamlined(sessionSimple, mockPlan, prInfo);
+
+      expect(prompt).toContain('Plan Summary');
+      expect(prompt).toContain('step-1');
+    });
+
+    it('should include review checkpoint format', () => {
+      const prompt = buildStage5PromptStreamlined(sessionSimple, mockPlan, prInfo);
+
+      expect(prompt).toContain('[REVIEW_CHECKPOINT]');
+      expect(prompt).toContain('Critical Issues');
+    });
+
+    it('should include CI status format', () => {
+      const prompt = buildStage5PromptStreamlined(sessionSimple, mockPlan, prInfo);
+
+      expect(prompt).toContain('[CI_STATUS');
+    });
+
+    it('should include plan step format for findings', () => {
+      const prompt = buildStage5PromptStreamlined(sessionSimple, mockPlan, prInfo);
+
+      expect(prompt).toContain('[PLAN_STEP');
+    });
+
+    it('should include decision markers', () => {
+      const prompt = buildStage5PromptStreamlined(sessionSimple, mockPlan, prInfo);
+
+      expect(prompt).toContain('[CI_FAILED]');
+      expect(prompt).toContain('[PR_APPROVED]');
+    });
+
+    it('should spawn fewer review agents than full Stage 5 prompt', () => {
+      const fullPrompt = buildStage5Prompt(mockSession, mockPlan, prInfo);
+      const streamlinedPrompt = buildStage5PromptStreamlined(sessionSimple, mockPlan, prInfo);
+
+      // Full prompt has 4 fixed agents
+      expect(fullPrompt).toContain('Code Agent');
+      expect(fullPrompt).toContain('Security Agent');
+      expect(fullPrompt).toContain('Test Agent');
+      expect(fullPrompt).toContain('Integration Agent');
+
+      // Streamlined uses only suggested agents + CI
+      expect(streamlinedPrompt).toContain('CI Reviewer');
+      // Should not have full agent set since suggestedAgents is limited
+      expect(streamlinedPrompt).not.toContain('Code Agent');
+    });
+  });
+
+  describe('buildStage5PromptStreamlinedLean', () => {
+    const prInfo = {
+      title: 'fix: Update button label',
+      url: 'https://github.com/test/repo/pull/456',
+    };
+
+    it('should be very concise', () => {
+      const prompt = buildStage5PromptStreamlinedLean(prInfo, 'simple');
+
+      expect(prompt.length).toBeLessThan(300);
+    });
+
+    it('should include PR information', () => {
+      const prompt = buildStage5PromptStreamlinedLean(prInfo, 'simple');
+
+      expect(prompt).toContain('https://github.com/test/repo/pull/456');
+      expect(prompt).toContain('fix: Update button label');
+    });
+
+    it('should include complexity level', () => {
+      const prompt = buildStage5PromptStreamlinedLean(prInfo, 'trivial');
+
+      expect(prompt).toContain('trivial');
+    });
+
+    it('should suggest skipping extensive review', () => {
+      const prompt = buildStage5PromptStreamlinedLean(prInfo, 'simple');
+
+      expect(prompt).toContain('skip extensive');
+    });
+
+    it('should reference CI check', () => {
+      const prompt = buildStage5PromptStreamlinedLean(prInfo, 'simple');
+
+      expect(prompt).toContain('gh pr checks');
+    });
+
+    it('should reference both outcome markers', () => {
+      const prompt = buildStage5PromptStreamlinedLean(prInfo, 'simple');
+
+      expect(prompt).toContain('[CI_FAILED]');
+      expect(prompt).toContain('[PR_APPROVED]');
+    });
+
+    it('should reference PLAN_STEP for issues', () => {
+      const prompt = buildStage5PromptStreamlinedLean(prInfo, 'simple');
+
+      expect(prompt).toContain('[PLAN_STEP]');
+    });
+
+    it('should default to Simple when complexity not provided', () => {
+      const prompt = buildStage5PromptStreamlinedLean(prInfo);
+
+      expect(prompt).toContain('Simple');
     });
   });
 

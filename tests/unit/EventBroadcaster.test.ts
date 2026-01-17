@@ -1032,4 +1032,139 @@ describe('EventBroadcaster', () => {
       }));
     });
   });
+
+  describe('complexityAssessed', () => {
+    it('should emit complexity.assessed event to the correct room', () => {
+      broadcaster.complexityAssessed(
+        'project-abc',
+        'add-auth',
+        'session-123',
+        'simple',
+        'Frontend label change only',
+        ['frontend'],
+        true,
+        1500
+      );
+
+      expect(mockIo.to).toHaveBeenCalledWith('project-abc/add-auth');
+      expect(mockRoom.emit).toHaveBeenCalledWith('complexity.assessed', expect.objectContaining({
+        projectId: 'project-abc',
+        featureId: 'add-auth',
+        sessionId: 'session-123',
+        complexity: 'simple',
+        reason: 'Frontend label change only',
+        suggestedAgents: ['frontend'],
+        useLeanPrompts: true,
+        durationMs: 1500,
+      }));
+    });
+
+    it('should include timestamp in the event', () => {
+      broadcaster.complexityAssessed(
+        'project-abc',
+        'add-auth',
+        'session-123',
+        'trivial',
+        'Single line change',
+        ['frontend'],
+        true,
+        500
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('complexity.assessed', expect.objectContaining({
+        timestamp: expect.any(String),
+      }));
+    });
+
+    it('should emit to both session room and project room', () => {
+      broadcaster.complexityAssessed(
+        'project-xyz',
+        'feature-456',
+        'session-789',
+        'normal',
+        'Standard feature',
+        ['frontend', 'backend', 'testing'],
+        false,
+        2000
+      );
+
+      // Verify both session room and project room receive the event
+      const calls = mockIo.to.mock.calls;
+      const roomNames = calls.map(call => call[0]);
+      expect(roomNames).toContain('project-xyz/feature-456'); // Session room
+      expect(roomNames).toContain('project-xyz'); // Project room
+    });
+
+    it('should handle trivial complexity', () => {
+      broadcaster.complexityAssessed(
+        'project-abc',
+        'add-auth',
+        'session-123',
+        'trivial',
+        'Typo fix in README',
+        ['documentation'],
+        true,
+        800
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('complexity.assessed', expect.objectContaining({
+        complexity: 'trivial',
+        suggestedAgents: ['documentation'],
+        useLeanPrompts: true,
+      }));
+    });
+
+    it('should handle complex complexity with all agents', () => {
+      broadcaster.complexityAssessed(
+        'project-abc',
+        'add-auth',
+        'session-123',
+        'complex',
+        'Full authentication system with OAuth2',
+        ['frontend', 'backend', 'database', 'testing', 'infrastructure', 'documentation'],
+        false,
+        3500
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('complexity.assessed', expect.objectContaining({
+        complexity: 'complex',
+        suggestedAgents: ['frontend', 'backend', 'database', 'testing', 'infrastructure', 'documentation'],
+        useLeanPrompts: false,
+      }));
+    });
+
+    it('should handle empty suggestedAgents array', () => {
+      broadcaster.complexityAssessed(
+        'project-abc',
+        'add-auth',
+        'session-123',
+        'normal',
+        'Standard feature',
+        [],
+        false,
+        2000
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('complexity.assessed', expect.objectContaining({
+        suggestedAgents: [],
+      }));
+    });
+
+    it('should track durationMs accurately', () => {
+      broadcaster.complexityAssessed(
+        'project-abc',
+        'add-auth',
+        'session-123',
+        'simple',
+        'Quick change',
+        ['frontend'],
+        true,
+        123
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('complexity.assessed', expect.objectContaining({
+        durationMs: 123,
+      }));
+    });
+  });
 });

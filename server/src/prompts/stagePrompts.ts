@@ -214,6 +214,217 @@ Your plan will be automatically validated. To pass validation:
 }
 
 /**
+ * Agent definitions for streamlined prompts.
+ * Maps agent type to its exploration instructions.
+ */
+const AGENT_DEFINITIONS: Record<string, { name: string; instructions: string }> = {
+  frontend: {
+    name: 'Frontend Agent',
+    instructions: `Explore UI layer patterns.
+   - Find: Components related to this feature, state management, styling approach
+   - Check: Existing patterns for similar UI, reusable components, routing
+   - Output: Relevant UI files, patterns to follow, potential reuse`,
+  },
+  backend: {
+    name: 'Backend Agent',
+    instructions: `Explore API/server layer patterns.
+   - Find: Related API routes, controllers, middleware, business logic
+   - Check: Auth patterns, error handling, validation approach
+   - Output: Relevant API files, patterns to follow, potential reuse`,
+  },
+  database: {
+    name: 'Database Agent',
+    instructions: `Explore data layer patterns.
+   - Find: Related models/schemas, migrations, query patterns
+   - Check: ORM usage, relationships, indexing patterns
+   - Output: Relevant data files, schema patterns to follow`,
+  },
+  testing: {
+    name: 'Test Agent',
+    instructions: `Explore testing patterns.
+   - Find: Test files for similar features, test utilities, mocks
+   - Check: Testing framework, coverage patterns, test organization
+   - Output: Test patterns to follow, testing requirements`,
+  },
+  infrastructure: {
+    name: 'Infrastructure Agent',
+    instructions: `Explore infrastructure and CI/CD patterns.
+   - Find: CI/CD configs, deployment scripts, environment configs
+   - Check: Build process, deployment pipeline, environment management
+   - Output: Relevant config files, CI/CD patterns to follow`,
+  },
+  documentation: {
+    name: 'Documentation Agent',
+    instructions: `Explore documentation patterns.
+   - Find: README files, API docs, inline documentation
+   - Check: Documentation standards, existing doc structure
+   - Output: Relevant docs, documentation patterns to follow`,
+  },
+};
+
+/**
+ * Build Stage 1: Streamlined Feature Discovery prompt
+ * A focused version for simple/trivial changes that only spawns relevant agents.
+ * Uses session.suggestedAgents to determine which agents to spawn.
+ */
+export function buildStage1PromptStreamlined(session: Session): string {
+  // Sanitize user-provided fields to prevent marker injection
+  const sanitized = sanitizeSessionFields(session);
+
+  const acceptanceCriteriaSection =
+    sanitized.acceptanceCriteria.length > 0
+      ? `
+## Acceptance Criteria
+${sanitized.acceptanceCriteria.map((c, i) => `${i + 1}. ${c.text}`).join('\n')}`
+      : '';
+
+  const affectedFilesSection =
+    sanitized.affectedFiles.length > 0
+      ? `
+## Affected Files (User Hints)
+These files are likely to need changes:
+${sanitized.affectedFiles.join('\n')}`
+      : '';
+
+  const technicalNotesSection = sanitized.technicalNotes
+    ? `
+## Technical Notes
+${sanitized.technicalNotes}`
+    : '';
+
+  // Build agent section based on suggestedAgents
+  // Filter to only valid agent types, fallback to all agents if none are valid
+  const ALL_AGENT_KEYS = Object.keys(AGENT_DEFINITIONS);
+  const rawSuggestedAgents = session.suggestedAgents || ['frontend', 'backend'];
+  const validAgents = rawSuggestedAgents.filter((a) => AGENT_DEFINITIONS[a]);
+  const suggestedAgents = validAgents.length > 0 ? validAgents : ALL_AGENT_KEYS;
+
+  const agentSections = suggestedAgents
+    .map((agentType, index) => {
+      const agent = AGENT_DEFINITIONS[agentType];
+      return `${index + 1}. **${agent.name}**: ${agent.instructions}`;
+    })
+    .join('\n\n');
+
+  // For simple changes, always include a quick architecture check
+  const architectureNote =
+    suggestedAgents.length <= 2
+      ? `
+**Quick Architecture Check** (if not covered by agents above):
+   - Verify project structure and entry points
+   - Identify any dependencies that might be affected`
+      : '';
+
+  return `You are helping implement a focused change. Since this is a ${session.assessedComplexity || 'simple'} change, exploration is streamlined.
+
+## Feature
+Title: ${sanitized.title}
+Description: ${sanitized.featureDescription}
+Project Path: ${session.projectPath}
+Complexity: ${session.assessedComplexity || 'simple'} (streamlined exploration)
+${acceptanceCriteriaSection}${affectedFilesSection}${technicalNotesSection}
+
+## Instructions
+
+### Phase 0: Git Setup (MANDATORY - Do this IMMEDIATELY)
+Before exploring the codebase, you MUST set up the git branch:
+
+1. **Checkout base branch**: \`git checkout ${session.baseBranch}\`
+2. **Pull latest changes**: \`git pull origin ${session.baseBranch}\`
+3. **Create feature branch**: \`git checkout -b ${session.featureBranch}\`
+
+Run these commands NOW before proceeding.
+
+### Phase 1: Focused Exploration (MANDATORY)
+Since this is a ${session.assessedComplexity || 'simple'} change, spawn only the relevant exploration agents.
+
+**IMPORTANT - Subagent Restrictions:**
+When spawning Task subagents, instruct them to use READ-ONLY tools only:
+- Allowed: Read, Glob, Grep, WebFetch, WebSearch
+- NOT allowed: Edit, Write, Bash (except read-only commands like \`git status\`)
+
+**Spawn these agents:**
+
+${agentSections}
+${architectureNote}
+
+Wait for exploration agents to complete before proceeding.
+
+### Phase 2: Ask Informed Questions (ONLY IF NEEDED)
+For ${session.assessedComplexity || 'simple'} changes, you likely have enough context from exploration.
+Only ask questions if there are genuine ambiguities that can't be resolved from the codebase:
+
+[DECISION_NEEDED priority="1|2|3" category="scope|approach|technical|design"]
+Question here?
+- Option A: Description
+- Option B: Description
+[/DECISION_NEEDED]
+
+Skip this phase entirely if the change is clear and straightforward.
+
+### Phase 3: Generate Plan
+Create a concise implementation plan. For ${session.assessedComplexity || 'simple'} changes, plans should be:
+- 1-3 steps for trivial changes
+- 2-5 steps for simple changes
+
+## Composable Plan Structure
+Your plan MUST include these sections:
+
+### 1. Plan Meta (Required)
+\`\`\`
+[PLAN_META]
+version: 1.0.0
+isApproved: false
+[/PLAN_META]
+\`\`\`
+
+### 2. Plan Steps (Required)
+**NOTE:** The feature branch (${session.featureBranch}) was already created in Phase 0.
+\`\`\`
+[PLAN_STEP id="step-1" parent="null" status="pending" complexity="low"]
+Implementation step title
+Description with at least 50 characters of concrete details.
+[/PLAN_STEP]
+\`\`\`
+
+### 3. Dependencies (Required)
+\`\`\`
+[PLAN_DEPENDENCIES]
+Step Dependencies:
+- (list any step dependencies, or "None" for simple changes)
+
+External Dependencies:
+- (list any new packages needed, or "None")
+[/PLAN_DEPENDENCIES]
+\`\`\`
+
+### 4. Test Coverage (Required)
+\`\`\`
+[PLAN_TEST_COVERAGE]
+Framework: vitest|jest|other
+Required Types: unit
+
+Step Coverage:
+- step-1: unit (required)
+[/PLAN_TEST_COVERAGE]
+\`\`\`
+
+### 5. Acceptance Criteria Mapping (Required)
+\`\`\`
+[PLAN_ACCEPTANCE_MAPPING]
+${session.acceptanceCriteria.map((c, i) => `- AC-${i + 1}: "${c.text}" -> step-X`).join('\n')}
+[/PLAN_ACCEPTANCE_MAPPING]
+\`\`\`
+
+### Phase 4: Complete
+1. Use the Edit tool to write the complete plan to: ${session.claudePlanFilePath}
+   - This file already exists and you have permission to edit it
+   - Include ALL plan sections: meta, steps, dependencies, test coverage, acceptance mapping
+2. Output: [PLAN_FILE path="${session.claudePlanFilePath}"]
+3. Exit plan mode and output: [PLAN_MODE_EXITED]`;
+}
+
+/**
  * Build Stage 2: Plan Review prompt
  * Reviews implementation plan and finds issues to present as decisions.
  * If planValidationContext exists, prepends validation issues to be addressed.
@@ -384,6 +595,169 @@ How should we address this?
 
 6. If no issues found or all decisions resolved:
 [PLAN_APPROVED]`;
+}
+
+/**
+ * Review agent definitions for streamlined Stage 2.
+ * Maps agent type to focused review instructions for simple changes.
+ */
+const STAGE2_REVIEW_AGENTS: Record<string, { name: string; focus: string }> = {
+  frontend: {
+    name: 'Frontend Reviewer',
+    focus: `Review UI aspects:
+     - Component correctness and state handling
+     - User input validation
+     - Accessibility basics`,
+  },
+  backend: {
+    name: 'Backend Reviewer',
+    focus: `Review API aspects:
+     - Endpoint correctness
+     - Input validation and error handling
+     - Auth checks if applicable`,
+  },
+  database: {
+    name: 'Database Reviewer',
+    focus: `Review data layer:
+     - Schema correctness
+     - Query efficiency
+     - Data validation`,
+  },
+  testing: {
+    name: 'Test Reviewer',
+    focus: `Review test coverage:
+     - Key functionality tested
+     - Edge cases covered
+     - Test quality`,
+  },
+  infrastructure: {
+    name: 'Infrastructure Reviewer',
+    focus: `Review infra aspects:
+     - Config correctness
+     - CI/CD impact
+     - Environment handling`,
+  },
+  documentation: {
+    name: 'Documentation Reviewer',
+    focus: `Review documentation:
+     - API docs if applicable
+     - README updates
+     - Code comments`,
+  },
+};
+
+/**
+ * Build Stage 2: Streamlined Plan Review prompt for simple changes.
+ * Uses reduced iterations (3 instead of 10) and spawns only relevant review agents.
+ */
+export function buildStage2PromptStreamlined(
+  session: Session,
+  plan: Plan,
+  currentIteration: number
+): string {
+  const planStepsText =
+    plan.steps.length > 0
+      ? plan.steps
+          .map((step, i) => {
+            const parentInfo = step.parentId ? ` (depends on: ${step.parentId})` : '';
+            const complexityInfo = (step as { complexity?: string }).complexity
+              ? ` [${(step as { complexity?: string }).complexity} complexity]`
+              : '';
+            return `${i + 1}. [${step.id}] ${step.title}${parentInfo}${complexityInfo}\n   ${step.description || 'No description'}`;
+          })
+          .join('\n\n')
+      : 'No plan steps defined.';
+
+  // Streamlined target: 3 iterations for simple changes
+  const targetIterations = 3;
+
+  const planFileReference = session.claudePlanFilePath
+    ? `\n\n## Full Plan Reference\nFor complete plan details, read: ${session.claudePlanFilePath}`
+    : '';
+
+  // Build validation context section if plan was previously incomplete
+  const validationContextSection = session.planValidationContext
+    ? `
+## ⚠️ Plan Validation Issues (MUST ADDRESS FIRST)
+${session.planValidationContext}
+
+---
+
+`
+    : '';
+
+  // Build review agents section based on suggestedAgents
+  const suggestedAgents = session.suggestedAgents || ['frontend', 'backend'];
+  const reviewAgentSections = suggestedAgents
+    .map((agentType, index) => {
+      const agent = STAGE2_REVIEW_AGENTS[agentType];
+      if (!agent) return null;
+      return `   ${index + 1}. **${agent.name}**: ${agent.focus}`;
+    })
+    .filter(Boolean)
+    .join('\n\n');
+
+  return `You are reviewing a ${session.assessedComplexity || 'simple'} change. This is a focused review.
+${validationContextSection}
+## Current Plan (v${plan.planVersion})
+${planStepsText}${planFileReference}
+
+## Review Iteration
+This is review ${currentIteration} of ${targetIterations} (streamlined for simple changes).
+
+## Instructions
+
+### 1. Spawn Focused Review Agents
+Since this is a ${session.assessedComplexity || 'simple'} change, spawn only the relevant review agents:
+
+**Subagent Restrictions:**
+- Allowed: Read, Glob, Grep
+- NOT allowed: Edit, Write, Bash
+
+${reviewAgentSections}
+
+### 2. Focus on Critical Issues Only
+For ${session.assessedComplexity || 'simple'} changes, only flag issues that are:
+- **Correctness**: Logic errors, missing edge cases
+- **Security**: Obvious vulnerabilities (auth, injection)
+- **Plan Completeness**: Missing acceptance criteria mapping
+
+Skip minor style/optimization suggestions for simple changes.
+
+### 3. Present Issues as Decisions
+Format critical issues only:
+[DECISION_NEEDED priority="1" category="correctness|security|plan_structure"]
+Issue: Brief description
+- Option A: Fix approach (recommended)
+- Option B: Alternative
+[/DECISION_NEEDED]
+
+### 4. Quick Approval Path
+For simple changes, if no critical issues are found, approve immediately:
+[PLAN_APPROVED]`;
+}
+
+/**
+ * Lean Stage 2 prompt for streamlined review (iterations 2+).
+ * Even more concise for simple changes.
+ */
+export function buildStage2PromptStreamlinedLean(
+  plan: Plan,
+  currentIteration: number,
+  validationContext?: string | null,
+  claudePlanFilePath?: string | null,
+  assessedComplexity?: string
+): string {
+  const validation = validationContext
+    ? `⚠️ **Fix validation issues:**\n${validationContext}\n\n`
+    : '';
+
+  const planFile = claudePlanFilePath ? `Plan: ${claudePlanFilePath}\n` : '';
+
+  return `${validation}${planFile}Continue ${assessedComplexity || 'simple'} review (${currentIteration}/3).
+
+Focus on critical issues only. Minor suggestions can be skipped.
+[DECISION_NEEDED] for blockers, [PLAN_APPROVED] when ready.`;
 }
 
 /**
@@ -1212,6 +1586,174 @@ Fix: [Brief title]
 ### Rules
 - Review as if you didn't write the code
 - Only approve when CI passes AND no issues`;
+}
+
+/**
+ * Review agent definitions for streamlined Stage 5.
+ * Maps agent type to focused review instructions for simple changes.
+ */
+const STAGE5_REVIEW_AGENTS: Record<string, { name: string; focus: string }> = {
+  frontend: {
+    name: 'Frontend Reviewer',
+    focus: `Review UI changes:
+   - git diff main...HEAD -- '*.tsx' '*.ts' '*.css' (client paths)
+   - Correctness: Component logic, state handling
+   - Basic security: XSS risks, input sanitization
+   - Output: List of UI issues with file:line refs`,
+  },
+  backend: {
+    name: 'Backend Reviewer',
+    focus: `Review API changes:
+   - git diff main...HEAD -- (server paths)
+   - Correctness: Endpoint logic, error handling
+   - Basic security: Auth checks, input validation
+   - Output: List of backend issues with file:line refs`,
+  },
+  database: {
+    name: 'Database Reviewer',
+    focus: `Review data layer:
+   - git diff main...HEAD -- (schema/migration paths)
+   - Schema correctness, migration safety
+   - Output: List of data issues with file:line refs`,
+  },
+  testing: {
+    name: 'Test Reviewer',
+    focus: `Verify test coverage:
+   - Find test files matching changed source files
+   - Check: New code has tests
+   - Output: List of untested code paths`,
+  },
+  infrastructure: {
+    name: 'CI Reviewer',
+    focus: `Check CI status:
+   - Run: gh pr checks --watch
+   - Output: Final status (passing/failing)`,
+  },
+  documentation: {
+    name: 'Docs Reviewer',
+    focus: `Review documentation changes:
+   - Check: README updates, API docs
+   - Verify: Docs match implementation
+   - Output: Documentation gaps`,
+  },
+};
+
+/**
+ * Build Stage 5: Streamlined PR Review prompt for simple changes.
+ * Uses fewer review agents and focused review criteria.
+ */
+export function buildStage5PromptStreamlined(
+  session: Session,
+  plan: Plan,
+  prInfo: { title: string; branch: string; url: string }
+): string {
+  // Sanitize user-provided fields to prevent marker injection
+  const sanitized = sanitizeSessionFields(session);
+
+  const planStepsText = plan.steps
+    .map((step, i) => {
+      return `${i + 1}. [${step.id}] ${step.title}`;
+    })
+    .join('\n');
+
+  // Build review agents section based on suggestedAgents + always include CI
+  const suggestedAgents = session.suggestedAgents || ['frontend', 'backend'];
+  // Ensure CI/infrastructure is always included
+  const agentsToUse = [...new Set([...suggestedAgents, 'infrastructure'])];
+
+  const reviewAgentSections = agentsToUse
+    .map((agentType, index) => {
+      const agent = STAGE5_REVIEW_AGENTS[agentType];
+      if (!agent) return null;
+      return `${index + 1}. **${agent.name}**: ${agent.focus}`;
+    })
+    .filter(Boolean)
+    .join('\n\n');
+
+  // Get the plan.json path from the plan.md path
+  const planJsonPath = session.claudePlanFilePath
+    ? session.claudePlanFilePath.replace(/plan\.md$/, 'plan.json')
+    : null;
+
+  return `You are reviewing a ${session.assessedComplexity || 'simple'} change PR. This is a focused review.
+
+## Feature
+Title: ${sanitized.title}
+Description: ${sanitized.featureDescription}
+
+## Plan Summary
+${planStepsText}
+
+## Pull Request
+URL: ${prInfo.url}
+Branch: ${prInfo.branch}
+
+## Instructions
+
+### Phase 1: Focused Review
+Since this is a ${session.assessedComplexity || 'simple'} change, spawn only these review agents:
+
+**Subagent Restrictions:**
+- Allowed: Read, Glob, Grep, Bash (read-only: git diff, git log, gh pr checks)
+- NOT allowed: Edit, Write, Bash with modifications
+
+${reviewAgentSections}
+
+Wait for all agents to complete.
+
+### Phase 2: Quick Findings Summary
+\`\`\`
+[REVIEW_CHECKPOINT]
+### Critical Issues (if any)
+- [file.ts:line] Issue description
+
+### No Issues Found
+All review agents found no significant issues.
+[/REVIEW_CHECKPOINT]
+\`\`\`
+
+### Phase 3: CI Status
+\`\`\`
+[CI_STATUS status="passing|failing|pending"]
+Check Status Summary
+[/CI_STATUS]
+\`\`\`
+
+### Phase 4: Document Findings (if any)
+If issues found, add as plan steps in:
+- ${session.claudePlanFilePath || '~/.claude-web/<session>/plan.md'}
+- ${planJsonPath || 'same directory as plan.json'}
+
+Format:
+\`\`\`
+[PLAN_STEP id="step-N" parent="null" status="pending" complexity="low"]
+Fix: [Issue title]
+[file.ts:line] Description of what needs fixing.
+[/PLAN_STEP]
+\`\`\`
+
+### Phase 5: Decision
+**If CI failing:** [CI_FAILED] with failure details
+**If issues found:** Add plan steps (system auto-returns to Stage 2)
+**If all good:** [PR_APPROVED] - ready to merge`;
+}
+
+/**
+ * Lean Stage 5 prompt for streamlined review.
+ * Very concise for simple changes.
+ */
+export function buildStage5PromptStreamlinedLean(
+  prInfo: { title: string; url: string },
+  assessedComplexity?: string
+): string {
+  return `${assessedComplexity || 'Simple'} PR review: ${prInfo.url}
+Title: ${prInfo.title}
+
+1. Spawn focused review agents (skip extensive security/perf review)
+2. Check CI: gh pr checks
+3. Critical issues → add [PLAN_STEP]
+4. CI failing → [CI_FAILED]
+5. All good → [PR_APPROVED]`;
 }
 
 // ============================================================================

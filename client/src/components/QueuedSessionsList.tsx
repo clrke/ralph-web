@@ -17,7 +17,31 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { Session } from '@claude-code-web/shared';
+import type { Session, ChangeComplexity } from '@claude-code-web/shared';
+
+const CHANGE_COMPLEXITY_COLORS: Record<ChangeComplexity, { bg: string; text: string; label: string }> = {
+  trivial: { bg: 'bg-gray-600/60', text: 'text-gray-300', label: 'Trivial' },
+  simple: { bg: 'bg-green-900/60', text: 'text-green-300', label: 'Simple' },
+  normal: { bg: 'bg-yellow-900/60', text: 'text-yellow-300', label: 'Normal' },
+  complex: { bg: 'bg-red-900/60', text: 'text-red-300', label: 'Complex' },
+};
+
+/**
+ * Badge component for displaying session change complexity level
+ */
+export function ChangeComplexityBadge({ complexity }: { complexity: ChangeComplexity | undefined }) {
+  if (!complexity) return null;
+  const style = CHANGE_COMPLEXITY_COLORS[complexity];
+  return (
+    <span
+      className={`text-xs font-medium px-1.5 py-0.5 rounded ${style.bg} ${style.text}`}
+      title={`Complexity: ${complexity}`}
+      data-testid="change-complexity-badge"
+    >
+      {style.label}
+    </span>
+  );
+}
 
 interface QueuedSessionsListProps {
   sessions: Session[];
@@ -120,6 +144,7 @@ function SortableSessionCard({ session, formatRelativeTime, isReordering }: Sort
                 #{session.queuePosition}
               </span>
               <h3 className="font-medium text-lg truncate">{session.title}</h3>
+              <ChangeComplexityBadge complexity={session.assessedComplexity} />
             </div>
             <p className="text-gray-400 text-sm mt-1 truncate">
               {session.projectPath}
@@ -185,6 +210,7 @@ function SingleSessionCard({ session, formatRelativeTime }: SingleSessionCardPro
                 #{session.queuePosition}
               </span>
               <h3 className="font-medium text-lg truncate">{session.title}</h3>
+              <ChangeComplexityBadge complexity={session.assessedComplexity} />
             </div>
             <p className="text-gray-400 text-sm mt-1 truncate">
               {session.projectPath}

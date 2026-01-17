@@ -1,6 +1,6 @@
 import { PlanStepStatus, Plan } from './plan';
 import { Question, QuestionAnswer } from './questions';
-import { Session, BackoutReason } from './session';
+import { Session, BackoutReason, ChangeComplexity } from './session';
 
 /**
  * Socket Event Types
@@ -259,6 +259,34 @@ export interface SessionUpdatedEvent {
 }
 
 // =============================================================================
+// Complexity Assessment Events
+// =============================================================================
+
+/**
+ * Event emitted when a session's complexity has been assessed
+ */
+export interface ComplexityAssessedEvent {
+  /** The project ID */
+  projectId: string;
+  /** The feature ID of the assessed session */
+  featureId: string;
+  /** The session ID */
+  sessionId: string;
+  /** The assessed complexity level */
+  complexity: ChangeComplexity;
+  /** Explanation of why this complexity was assigned */
+  reason: string;
+  /** Suggested agent types based on complexity */
+  suggestedAgents: string[];
+  /** Whether to use lean prompts for this complexity level */
+  useLeanPrompts: boolean;
+  /** Duration of the assessment in milliseconds */
+  durationMs: number;
+  /** Timestamp of the assessment */
+  timestamp: string;
+}
+
+// =============================================================================
 // Server-to-Client Socket Event Map
 // =============================================================================
 
@@ -279,6 +307,7 @@ export interface ServerToClientEvents {
   'session.backedout': (data: SessionBackedOutEvent) => void;
   'session.resumed': (data: SessionResumedEvent) => void;
   'session.updated': (data: SessionUpdatedEvent) => void;
+  'complexity.assessed': (data: ComplexityAssessedEvent) => void;
 }
 
 // =============================================================================

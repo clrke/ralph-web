@@ -13,17 +13,23 @@ import { ClaudeResultHandler, StepModificationValidationError } from './services
 import { planCompletionChecker, PlanCompletenessResult } from './services/PlanCompletionChecker';
 import { DecisionValidator } from './services/DecisionValidator';
 import { TestRequirementAssessor } from './services/TestRequirementAssessor';
+import { ComplexityAssessor } from './services/ComplexityAssessor';
 import { EventBroadcaster } from './services/EventBroadcaster';
 import { withLock, SpawnLockError } from './services/SpawnLock';
 import {
   buildStage1Prompt,
+  buildStage1PromptStreamlined,
   buildStage2Prompt,
+  buildStage2PromptStreamlined,
   buildStage2PromptLean,
+  buildStage2PromptStreamlinedLean,
   buildPlanReviewContinuationPrompt,
   buildStage4Prompt,
   buildStage4PromptLean,
   buildStage5Prompt,
+  buildStage5PromptStreamlined,
   buildStage5PromptLean,
+  buildStage5PromptStreamlinedLean,
   buildPlanRevisionPrompt,
   buildPlanRevisionPromptLean,
   buildBatchAnswersContinuationPrompt,
@@ -86,6 +92,106 @@ function releaseStage3Lock(projectId: string, featureId: string): void {
   const key = getSessionKey(projectId, featureId);
   stage3ExecutionLocks.delete(key);
   console.log(`[Stage 3 Lock] Released lock for ${featureId}`);
+}
+
+/**
+ * Select the appropriate Stage 1 prompt builder based on complexity assessment.
+ * Uses streamlined prompt for trivial/simple changes, full prompt for normal/complex.
+ */
+function selectStage1PromptBuilder(session: Session): string {
+  const complexity = session.assessedComplexity;
+
+  // Use streamlined prompt for trivial and simple changes
+  if (complexity === 'trivial' || complexity === 'simple') {
+    console.log(
+      `Using streamlined Stage 1 prompt for ${session.featureId} (complexity: ${complexity}, agents: ${session.suggestedAgents?.join(', ') || 'default'})`
+    );
+    return buildStage1PromptStreamlined(session);
+  }
+
+  // Use full prompt for normal, complex, or unassessed changes
+  if (complexity && complexity !== 'normal' && complexity !== 'complex') {
+    console.log(`Unknown complexity level '${complexity}' for ${session.featureId}, using full prompt`);
+  }
+
+  return buildStage1Prompt(session);
+}
+
+/**
+ * Select the appropriate Stage 2 prompt builder based on complexity assessment.
+ * Uses streamlined prompt for trivial/simple changes, full prompt for normal/complex.
+ */
+function selectStage2PromptBuilder(
+  session: Session,
+  plan: Plan,
+  currentIteration: number,
+  useLean: boolean
+): string {
+  const complexity = session.assessedComplexity;
+
+  // Use streamlined prompt for trivial and simple changes
+  if (complexity === 'trivial' || complexity === 'simple') {
+    if (useLean) {
+      console.log(
+        `Using streamlined lean Stage 2 prompt for ${session.featureId} (complexity: ${complexity}, iteration: ${currentIteration}/3)`
+      );
+      return buildStage2PromptStreamlinedLean(
+        plan,
+        currentIteration,
+        session.planValidationContext,
+        session.claudePlanFilePath,
+        complexity
+      );
+    }
+    console.log(
+      `Using streamlined Stage 2 prompt for ${session.featureId} (complexity: ${complexity}, iteration: ${currentIteration}/3)`
+    );
+    return buildStage2PromptStreamlined(session, plan, currentIteration);
+  }
+
+  // Use full prompt for normal, complex, or unassessed changes
+  if (useLean) {
+    return buildStage2PromptLean(
+      plan,
+      currentIteration,
+      session.planValidationContext,
+      session.claudePlanFilePath
+    );
+  }
+  return buildStage2Prompt(session, plan, currentIteration);
+}
+
+/**
+ * Select the appropriate Stage 5 prompt builder based on complexity assessment.
+ * Uses streamlined prompt for trivial/simple changes, full prompt for normal/complex.
+ */
+function selectStage5PromptBuilder(
+  session: Session,
+  plan: Plan,
+  prInfo: { title: string; branch: string; url: string },
+  useLean: boolean
+): string {
+  const complexity = session.assessedComplexity;
+
+  // Use streamlined prompt for trivial and simple changes
+  if (complexity === 'trivial' || complexity === 'simple') {
+    if (useLean) {
+      console.log(
+        `Using streamlined lean Stage 5 prompt for ${session.featureId} (complexity: ${complexity})`
+      );
+      return buildStage5PromptStreamlinedLean({ title: prInfo.title, url: prInfo.url }, complexity);
+    }
+    console.log(
+      `Using streamlined Stage 5 prompt for ${session.featureId} (complexity: ${complexity}, agents: ${session.suggestedAgents?.join(', ') || 'default'})`
+    );
+    return buildStage5PromptStreamlined(session, plan, prInfo);
+  }
+
+  // Use full prompt for normal, complex, or unassessed changes
+  if (useLean) {
+    return buildStage5PromptLean({ title: prInfo.title, url: prInfo.url });
+  }
+  return buildStage5Prompt(session, plan, prInfo);
 }
 
 /**
@@ -1748,10 +1854,9 @@ async function spawnStage4PRCreation(
       const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
       if (plan) {
         // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
-        const useLeanStage5 = updatedSession.claudeSessionId && (updatedSession.prReviewCount || 0) > 0;
-        const stage5Prompt = useLeanStage5
-          ? buildStage5PromptLean(prInfo)
-          : buildStage5Prompt(updatedSession, plan, prInfo);
+        // Use streamlined prompt for trivial/simple changes
+        const useLeanStage5 = !!(updatedSession.claudeSessionId && (updatedSession.prReviewCount || 0) > 0);
+        const stage5Prompt = selectStage5PromptBuilder(updatedSession, plan, prInfo, useLeanStage5);
         await spawnStage5PRReview(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, stage5Prompt);
       }
     } else {
@@ -2182,11 +2287,10 @@ async function handleStage1Completion(
 
   // Build Stage 2 prompt and spawn review
   // Use lean prompt for iteration 2+ when resuming an existing session
+  // Use streamlined prompt for trivial/simple changes
   const currentIteration = (plan.reviewCount || 0) + 1;
-  const useLean = updatedSession.claudeSessionId && currentIteration > 1;
-  const prompt = useLean
-    ? buildStage2PromptLean(plan, currentIteration, updatedSession.planValidationContext, updatedSession.claudePlanFilePath)
-    : buildStage2Prompt(updatedSession, plan, currentIteration);
+  const useLean = !!(updatedSession.claudeSessionId && currentIteration > 1);
+  const prompt = selectStage2PromptBuilder(updatedSession, plan, currentIteration, useLean);
   await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
 }
 
@@ -2219,6 +2323,8 @@ export function createApp(
   // const decisionValidator = new DecisionValidator();
   // Create test requirement assessor to determine if tests are needed
   const testAssessor = new TestRequirementAssessor();
+  // Create complexity assessor to classify feature request complexity before queueing
+  const complexityAssessor = new ComplexityAssessor();
   const resultHandler = new ClaudeResultHandler(storage, sessionManager, undefined);
 
   // Middleware
@@ -2363,8 +2469,41 @@ export function createApp(
       // Return response immediately
       res.status(201).json(session);
 
-      // If session is queued, don't start Stage 1 - it will start when the active session completes
+      // If session is queued, don't start Stage 1 - run complexity assessment in background
       if (session.status === 'queued') {
+        // Run complexity assessment asynchronously for queued sessions
+        complexityAssessor.assess(
+          session.title,
+          session.featureDescription,
+          session.acceptanceCriteria,
+          session.projectPath
+        ).then(async (assessment) => {
+          try {
+            await sessionManager.updateSession(session.projectId, session.featureId, {
+              assessedComplexity: assessment.complexity,
+              complexityReason: assessment.reason,
+              suggestedAgents: assessment.suggestedAgents,
+              useLeanPrompts: assessment.useLeanPrompts,
+              complexityAssessedAt: new Date().toISOString(),
+            });
+            eventBroadcaster?.complexityAssessed(
+              session.projectId,
+              session.featureId,
+              session.id,
+              assessment.complexity,
+              assessment.reason,
+              assessment.suggestedAgents,
+              assessment.useLeanPrompts,
+              assessment.durationMs
+            );
+            console.log(`Complexity assessed for queued ${session.featureId}: ${assessment.complexity} (${assessment.durationMs}ms)`);
+          } catch (updateError) {
+            console.log(`Complexity update skipped for ${session.featureId}: ${updateError instanceof Error ? updateError.message : 'unknown error'}`);
+          }
+        }).catch((error) => {
+          console.error(`Complexity assessment error for ${session.featureId}:`, error);
+        });
+
         console.log(`Session ${session.featureId} queued (position ${session.queuePosition}) - waiting for active session to complete`);
         eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'idle', 'session_queued', {
           stage: 0,
@@ -2373,8 +2512,47 @@ export function createApp(
         return;
       }
 
+      // For active sessions, await complexity assessment before starting Stage 1
+      // This ensures we select the correct prompt (streamlined vs full) based on complexity
+      let assessedSession = session;
+      try {
+        const assessment = await complexityAssessor.assess(
+          session.title,
+          session.featureDescription,
+          session.acceptanceCriteria,
+          session.projectPath
+        );
+
+        // Update session with complexity results
+        assessedSession = await sessionManager.updateSession(session.projectId, session.featureId, {
+          assessedComplexity: assessment.complexity,
+          complexityReason: assessment.reason,
+          suggestedAgents: assessment.suggestedAgents,
+          useLeanPrompts: assessment.useLeanPrompts,
+          complexityAssessedAt: new Date().toISOString(),
+        });
+
+        // Broadcast complexity assessed event
+        eventBroadcaster?.complexityAssessed(
+          session.projectId,
+          session.featureId,
+          session.id,
+          assessment.complexity,
+          assessment.reason,
+          assessment.suggestedAgents,
+          assessment.useLeanPrompts,
+          assessment.durationMs
+        );
+
+        console.log(`Complexity assessed for ${session.featureId}: ${assessment.complexity} (${assessment.durationMs}ms)`);
+      } catch (error) {
+        console.error(`Complexity assessment error for ${session.featureId}:`, error);
+        // Continue with unassessed session - will use full prompt
+      }
+
       // Start Stage 1 Discovery asynchronously
-      const prompt = buildStage1Prompt(session);
+      // Select prompt based on complexity assessment (streamlined for simple, full for complex)
+      const prompt = selectStage1PromptBuilder(assessedSession);
       const statusPath = `${session.projectId}/${session.featureId}/status.json`;
 
       // Update status to running
@@ -2511,19 +2689,74 @@ export function createApp(
       const { dataVersion, ...updates } = req.body;
 
       const result = await sessionManager.editQueuedSession(projectId, featureId, dataVersion, updates);
+      const session = result.session;
 
       // Broadcast sessionUpdated event for real-time sync
       if (eventBroadcaster) {
         eventBroadcaster.sessionUpdated(
           projectId,
           featureId,
-          result.session.id,
+          session.id,
           updates,
-          result.session.dataVersion
+          session.dataVersion
         );
       }
 
-      res.json(result.session);
+      // Re-assess complexity if title, description, or acceptance criteria changed
+      const shouldReassess =
+        updates.title !== undefined ||
+        updates.featureDescription !== undefined ||
+        updates.acceptanceCriteria !== undefined;
+
+      if (shouldReassess) {
+        // Run complexity assessment asynchronously (fire and forget)
+        complexityAssessor
+          .assess(
+            session.title,
+            session.featureDescription,
+            session.acceptanceCriteria,
+            session.projectPath
+          )
+          .then(async (assessment) => {
+            try {
+              // Update session with complexity results
+              await sessionManager.updateSession(projectId, featureId, {
+                assessedComplexity: assessment.complexity,
+                complexityReason: assessment.reason,
+                suggestedAgents: assessment.suggestedAgents,
+                useLeanPrompts: assessment.useLeanPrompts,
+                complexityAssessedAt: new Date().toISOString(),
+              });
+
+              // Broadcast complexity assessed event
+              eventBroadcaster?.complexityAssessed(
+                projectId,
+                featureId,
+                session.id,
+                assessment.complexity,
+                assessment.reason,
+                assessment.suggestedAgents,
+                assessment.useLeanPrompts,
+                assessment.durationMs
+              );
+
+              console.log(
+                `Complexity re-assessed for ${featureId}: ${assessment.complexity} (${assessment.durationMs}ms)`
+              );
+            } catch (updateError) {
+              // Session update failed (possibly due to concurrent edit) - non-critical
+              console.log(
+                `Complexity update skipped for ${featureId}: ${updateError instanceof Error ? updateError.message : 'unknown error'}`
+              );
+            }
+          })
+          .catch((error) => {
+            console.error(`Complexity re-assessment error for ${featureId}:`, error);
+            // Non-critical: session continues with previous complexity info
+          });
+      }
+
+      res.json(session);
     } catch (error) {
       // Handle specific error codes
       if (error instanceof Error) {
@@ -2610,11 +2843,10 @@ export function createApp(
         }
 
         // Build Stage 2 prompt and spawn review using helper function
+        // Use streamlined prompt for trivial/simple changes
         const currentIteration = (plan.reviewCount || 0) + 1;
-        const useLean = session.claudeSessionId && currentIteration > 1;
-        const prompt = useLean
-          ? buildStage2PromptLean(plan, currentIteration, session.planValidationContext, session.claudePlanFilePath)
-          : buildStage2Prompt(session, plan, currentIteration);
+        const useLean = !!(session.claudeSessionId && currentIteration > 1);
+        const prompt = selectStage2PromptBuilder(session, plan, currentIteration, useLean);
         await spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
       } else if (targetStage === 3) {
         // If transitioning to Stage 3, verify plan is approved and spawn implementation
@@ -2676,10 +2908,9 @@ export function createApp(
 
         // Build Stage 5 prompt and spawn PR review
         // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
-        const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
-        const prompt = useLeanStage5
-          ? buildStage5PromptLean(prInfo)
-          : buildStage5Prompt(session, plan, prInfo);
+        // Use streamlined prompt for trivial/simple changes
+        const useLeanStage5 = !!(session.claudeSessionId && (session.prReviewCount || 0) > 0);
+        const prompt = selectStage5PromptBuilder(session, plan, prInfo, useLeanStage5);
         await spawnStage5PRReview(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
       }
     } catch (error) {
@@ -2744,7 +2975,8 @@ export function createApp(
           console.log(`Starting queued session: ${nextSession.featureId}`);
 
           // Spawn Stage 1 for the new session
-          const prompt = buildStage1Prompt(startedSession);
+          // Select prompt based on complexity assessment (streamlined for simple, full for complex)
+          const prompt = selectStage1PromptBuilder(startedSession);
           const statusPath = `${startedSession.projectId}/${startedSession.featureId}/status.json`;
 
           // Update status to running
@@ -2889,10 +3121,9 @@ export function createApp(
         };
 
         // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
-        const useLeanStage5 = updatedSession.claudeSessionId && (updatedSession.prReviewCount || 0) > 0;
-        const basePrompt = useLeanStage5
-          ? buildStage5PromptLean(prInfo)
-          : buildStage5Prompt(updatedSession, plan, prInfo);
+        // Use streamlined prompt for trivial/simple changes
+        const useLeanStage5 = !!(updatedSession.claudeSessionId && (updatedSession.prReviewCount || 0) > 0);
+        const basePrompt = selectStage5PromptBuilder(updatedSession, plan, prInfo, useLeanStage5);
         const prompt = basePrompt + `
 
 ## Additional Focus Areas (User Request)
@@ -3939,7 +4170,8 @@ After creating all steps, write the plan to the file.`;
       switch (stage) {
         case 1: {
           // Stage 1: Discovery
-          const prompt = buildStage1Prompt(session);
+          // Select prompt based on complexity assessment (streamlined for simple, full for complex)
+          const prompt = selectStage1PromptBuilder(session);
           eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage1_retry', { stage: 1, subState: 'spawning_agent' });
           await resultHandler.saveConversationStart(sessionDir, 1, prompt);
 
@@ -3973,7 +4205,8 @@ After creating all steps, write the plan to the file.`;
             console.error(`No plan found for Stage 2 retry: ${featureId}`);
             return;
           }
-          const stage2Prompt = buildStage2Prompt(session, plan, 1);
+          // Use streamlined prompt for trivial/simple changes
+          const stage2Prompt = selectStage2PromptBuilder(session, plan, 1, false);
           eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage2_retry', { stage: 2, subState: 'spawning_agent' });
           spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, stage2Prompt);
           break;
@@ -4063,10 +4296,9 @@ Please ensure you output proper completion markers when done.`;
             branch: session.featureBranch,
           };
           // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
-          const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
-          const stage5Prompt = useLeanStage5
-            ? buildStage5PromptLean(prInfo)
-            : buildStage5Prompt(session, plan, prInfo);
+          // Use streamlined prompt for trivial/simple changes
+          const useLeanStage5 = !!(session.claudeSessionId && (session.prReviewCount || 0) > 0);
+          const stage5Prompt = selectStage5PromptBuilder(session, plan, prInfo, useLeanStage5);
           eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage5_retry', { stage: 5, subState: 'spawning_agent' });
           spawnStage5PRReview(session, storage, sessionManager, resultHandler, eventBroadcaster, stage5Prompt);
           break;
@@ -4117,10 +4349,9 @@ Please ensure you output proper completion markers when done.`;
 
       // Build Stage 5 prompt with user remarks
       // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
-      const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
-      let prompt = useLeanStage5
-        ? buildStage5PromptLean(prInfo)
-        : buildStage5Prompt(session, plan, prInfo);
+      // Use streamlined prompt for trivial/simple changes
+      const useLeanStage5 = !!(session.claudeSessionId && (session.prReviewCount || 0) > 0);
+      let prompt = selectStage5PromptBuilder(session, plan, prInfo, useLeanStage5);
       if (remarks && remarks.trim()) {
         prompt = `${prompt}\n\n## User Remarks for Re-Review\nThe user has requested a re-review with the following additional remarks:\n\n${remarks.trim()}`;
       }
@@ -4315,12 +4546,11 @@ Please ensure you output proper completion markers when done.`;
             }
             case 2: {
               // Stage 2: Plan Review - resume with stage 2 prompt
+              // Use streamlined prompt for trivial/simple changes
               if (!plan) break;
               const currentIteration = (plan.reviewCount || 0) + 1;
-              const useLean2 = session.claudeSessionId && currentIteration > 1;
-              const prompt2 = useLean2
-                ? buildStage2PromptLean(plan, currentIteration, session.planValidationContext, session.claudePlanFilePath)
-                : buildStage2Prompt(session, plan, currentIteration);
+              const useLean2 = !!(session.claudeSessionId && currentIteration > 1);
+              const prompt2 = selectStage2PromptBuilder(session, plan, currentIteration, useLean2);
               await spawnStage2Review(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt2);
               break;
             }
@@ -4350,10 +4580,9 @@ Please ensure you output proper completion markers when done.`;
               const prInfo = await storage.readJson<{ title: string; branch: string; url: string }>(`${sessionDir}/pr.json`);
               if (!prInfo) break;
               // Use lean prompt only on subsequent PR reviews (mirrors Stage 2's reviewCount pattern)
-              const useLeanStage5 = session.claudeSessionId && (session.prReviewCount || 0) > 0;
-              const prompt = useLeanStage5
-                ? buildStage5PromptLean(prInfo)
-                : buildStage5Prompt(session, plan, prInfo);
+              // Use streamlined prompt for trivial/simple changes
+              const useLeanStage5 = !!(session.claudeSessionId && (session.prReviewCount || 0) > 0);
+              const prompt = selectStage5PromptBuilder(session, plan, prInfo, useLeanStage5);
               await spawnStage5PRReview(session, storage, sessionManager, resultHandler, eventBroadcaster, prompt);
               break;
             }

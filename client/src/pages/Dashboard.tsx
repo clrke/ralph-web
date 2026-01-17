@@ -1,8 +1,8 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { Session, QueueReorderedEvent } from '@claude-code-web/shared';
+import type { Session, QueueReorderedEvent, ComplexityAssessedEvent } from '@claude-code-web/shared';
 import { useSessionStore } from '../stores/sessionStore';
-import QueuedSessionsList from '../components/QueuedSessionsList';
+import QueuedSessionsList, { ChangeComplexityBadge } from '../components/QueuedSessionsList';
 import { connectToProject, disconnectFromProject, getSocket } from '../services/socket';
 
 type SessionFilter = 'all' | 'active' | 'paused' | 'completed' | 'failed';
@@ -68,6 +68,7 @@ export default function Dashboard() {
     isReorderingQueue,
     reorderQueue,
     resumeSession,
+    applyComplexityAssessment,
     error: storeError,
     setError: setStoreError,
   } = useSessionStore();
@@ -175,16 +176,25 @@ export default function Dashboard() {
       }
     };
 
+    // Listen for complexity assessment events
+    const handleComplexityAssessed = (event: ComplexityAssessedEvent) => {
+      if (event.projectId === projectId) {
+        applyComplexityAssessment(event.featureId, event.complexity, event.reason, event.suggestedAgents, event.useLeanPrompts);
+      }
+    };
+
     socket.on('queue.reordered', handleQueueReordered);
+    socket.on('complexity.assessed', handleComplexityAssessed);
 
     return () => {
       socket.off('queue.reordered', handleQueueReordered);
+      socket.off('complexity.assessed', handleComplexityAssessed);
       if (connectedProjectRef.current) {
         disconnectFromProject(connectedProjectRef.current);
         connectedProjectRef.current = null;
       }
     };
-  }, [projectId, setQueuedSessions]);
+  }, [projectId, setQueuedSessions, applyComplexityAssessment]);
 
   const handleReorder = useCallback(
     async (orderedFeatureIds: string[]) => {
@@ -390,6 +400,7 @@ export default function Dashboard() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <h3 className="font-medium text-lg">{session.title}</h3>
+                          <ChangeComplexityBadge complexity={session.assessedComplexity} />
                           {session.status === 'paused' && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-orange-600/30 text-orange-300 border border-orange-500/30">
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">

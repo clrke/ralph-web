@@ -18,6 +18,8 @@ import {
   BackoutReason,
   BackoutAction,
   PlanReviewIterationEvent,
+  ComplexityAssessedEvent,
+  ChangeComplexity,
 } from '@claude-code-web/shared';
 
 /**
@@ -375,5 +377,35 @@ export class EventBroadcaster {
     this.io.to(room).emit('session.updated', event);
     // Also emit to project room so all watchers (e.g., Dashboard) know about the update
     this.io.to(projectId).emit('session.updated', event);
+  }
+
+  /**
+   * Broadcast complexity assessed event (at session creation/edit time)
+   */
+  complexityAssessed(
+    projectId: string,
+    featureId: string,
+    sessionId: string,
+    complexity: ChangeComplexity,
+    reason: string,
+    suggestedAgents: string[],
+    useLeanPrompts: boolean,
+    durationMs: number
+  ): void {
+    const room = this.getRoom(projectId, featureId);
+    const event: ComplexityAssessedEvent = {
+      projectId,
+      featureId,
+      sessionId,
+      complexity,
+      reason,
+      suggestedAgents,
+      useLeanPrompts,
+      durationMs,
+      timestamp: new Date().toISOString(),
+    };
+    this.io.to(room).emit('complexity.assessed', event);
+    // Also emit to project room so dashboard can show complexity info
+    this.io.to(projectId).emit('complexity.assessed', event);
   }
 }
