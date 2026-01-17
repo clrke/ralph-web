@@ -1,8 +1,8 @@
 /**
- * Unit tests for buildStage5Prompt and buildStage5PromptLean functions
+ * Unit tests for buildStage5Prompt, buildStage5PromptLean, and buildStage5PromptStreamlined functions
  */
 
-import { buildStage5Prompt, buildStage5PromptLean } from '../prompts/stagePrompts';
+import { buildStage5Prompt, buildStage5PromptLean, buildStage5PromptStreamlined } from '../prompts/stagePrompts';
 import type { Session, Plan, PlanStep } from '@claude-code-web/shared';
 
 // =============================================================================
@@ -444,6 +444,67 @@ describe('Stage 5 prompt selection logic', () => {
 
       // null && anything = null, which is falsy
       expect(useLeanStage5).toBeFalsy();
+    });
+  });
+});
+
+// =============================================================================
+// buildStage5PromptStreamlined Tests
+// =============================================================================
+
+describe('buildStage5PromptStreamlined', () => {
+  describe('read-only enforcement warnings', () => {
+    it('should include CRITICAL WARNING about read-only', () => {
+      const session = createMockSession({
+        assessedComplexity: 'simple',
+        suggestedAgents: ['frontend', 'backend'],
+      });
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5PromptStreamlined(session, plan, prInfo);
+
+      expect(prompt).toContain('CRITICAL WARNING: Subagents must NOT modify any files');
+    });
+
+    it('should include consequence warning about review failure', () => {
+      const session = createMockSession({
+        assessedComplexity: 'simple',
+        suggestedAgents: ['frontend'],
+      });
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5PromptStreamlined(session, plan, prInfo);
+
+      expect(prompt).toContain('Using Edit, Write, or modifying Bash commands will cause the review to fail');
+    });
+
+    it('should include allowed read-only tools list', () => {
+      const session = createMockSession({
+        assessedComplexity: 'simple',
+        suggestedAgents: ['frontend'],
+      });
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5PromptStreamlined(session, plan, prInfo);
+
+      expect(prompt).toContain('Only use: Read, Glob, Grep, and read-only Bash (git diff, git log, gh pr checks)');
+    });
+
+    it('should include [READ-ONLY] prefix in agent focus instructions', () => {
+      const session = createMockSession({
+        assessedComplexity: 'simple',
+        suggestedAgents: ['frontend', 'backend'],
+      });
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5PromptStreamlined(session, plan, prInfo);
+
+      expect(prompt).toContain('[READ-ONLY] Review UI changes');
+      expect(prompt).toContain('[READ-ONLY] Review API changes');
     });
   });
 });
