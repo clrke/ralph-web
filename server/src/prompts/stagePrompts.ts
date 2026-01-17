@@ -1695,9 +1695,7 @@ Branch: ${prInfo.branch}
 ### Phase 1: Focused Review
 Since this is a ${session.assessedComplexity || 'simple'} change, spawn only these review agents:
 
-**Subagent Restrictions:**
-- Allowed: Read, Glob, Grep, Bash (read-only: git diff, git log, gh pr checks)
-- NOT allowed: Edit, Write, Bash with modifications
+**CRITICAL WARNING: Subagents must NOT modify any files. Using Edit, Write, or modifying Bash commands will cause the review to fail. Only use: Read, Glob, Grep, and read-only Bash (git diff, git log, gh pr checks).**
 
 ${reviewAgentSections}
 

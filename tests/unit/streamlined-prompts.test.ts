@@ -724,6 +724,44 @@ describe('Streamlined Prompts', () => {
         expect(prompt).toContain('feature/test');
       });
     });
+
+    describe('read-only enforcement warnings', () => {
+      it('should include CRITICAL WARNING about read-only', () => {
+        const session: Session = {
+          ...baseSession,
+          assessedComplexity: 'simple',
+          suggestedAgents: ['frontend'],
+        };
+
+        const prompt = buildStage5PromptStreamlined(session, mockPlan, prInfo);
+
+        expect(prompt).toContain('CRITICAL WARNING: Subagents must NOT modify any files');
+      });
+
+      it('should include consequence warning about review failure', () => {
+        const session: Session = {
+          ...baseSession,
+          assessedComplexity: 'simple',
+          suggestedAgents: ['frontend'],
+        };
+
+        const prompt = buildStage5PromptStreamlined(session, mockPlan, prInfo);
+
+        expect(prompt).toContain('Using Edit, Write, or modifying Bash commands will cause the review to fail');
+      });
+
+      it('should include allowed read-only tools list', () => {
+        const session: Session = {
+          ...baseSession,
+          assessedComplexity: 'simple',
+          suggestedAgents: ['frontend'],
+        };
+
+        const prompt = buildStage5PromptStreamlined(session, mockPlan, prInfo);
+
+        expect(prompt).toContain('Only use: Read, Glob, Grep, and read-only Bash (git diff, git log, gh pr checks)');
+      });
+    });
   });
 
   describe('buildStage5PromptStreamlinedLean', () => {

@@ -1866,12 +1866,12 @@ describe('Lean Prompt Builders', () => {
       expect(prompt).toContain('CI Reviewer');
     });
 
-    it('should include subagent restrictions', () => {
+    it('should include read-only enforcement warning', () => {
       const prompt = buildStage5PromptStreamlined(sessionSimple, mockPlan, prInfo);
 
-      expect(prompt).toContain('Subagent Restrictions');
+      expect(prompt).toContain('CRITICAL WARNING: Subagents must NOT modify any files');
       expect(prompt).toContain('Read, Glob, Grep');
-      expect(prompt).toContain('NOT allowed: Edit, Write');
+      expect(prompt).toContain('Edit, Write');
     });
 
     it('should include plan summary', () => {
