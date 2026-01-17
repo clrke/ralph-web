@@ -6,7 +6,7 @@ import { readFile } from 'fs/promises';
 import { ZodSchema, ZodError } from 'zod';
 import { FileStorageService } from './data/FileStorageService';
 import { SessionManager } from './services/SessionManager';
-import { ClaudeOrchestrator, hasActionableContent, MAX_PLAN_VALIDATION_ATTEMPTS } from './services/ClaudeOrchestrator';
+import { ClaudeOrchestrator, hasActionableContent, MAX_PLAN_VALIDATION_ATTEMPTS, MAX_PLAN_REVIEW_ITERATIONS } from './services/ClaudeOrchestrator';
 import { OutputParser } from './services/OutputParser';
 import { HaikuPostProcessor } from './services/HaikuPostProcessor';
 import { ClaudeResultHandler, StepModificationValidationError } from './services/ClaudeResultHandler';
@@ -15,10 +15,12 @@ import { DecisionValidator } from './services/DecisionValidator';
 import { TestRequirementAssessor } from './services/TestRequirementAssessor';
 import { IncompleteStepsAssessor } from './services/IncompleteStepsAssessor';
 import { EventBroadcaster } from './services/EventBroadcaster';
+import { withLock, SpawnLockError } from './services/SpawnLock';
 import {
   buildStage1Prompt,
   buildStage2Prompt,
   buildStage2PromptLean,
+  buildPlanReviewContinuationPrompt,
   buildStage4Prompt,
   buildStage4PromptLean,
   buildStage5Prompt,
@@ -321,9 +323,11 @@ async function spawnStage2Review(
   sessionManager: SessionManager,
   resultHandler: ClaudeResultHandler,
   eventBroadcaster: EventBroadcaster | undefined,
-  prompt: string
+  prompt: string,
+  iterationContext?: number // Optional: current iteration number for error logging
 ): Promise<void> {
-  console.log(`Starting Stage 2 review for ${session.featureId}`);
+  const iterationInfo = iterationContext ? ` (iteration ${iterationContext}/${MAX_PLAN_REVIEW_ITERATIONS})` : '';
+  console.log(`Starting Stage 2 review for ${session.featureId}${iterationInfo}`);
   const sessionDir = `${session.projectId}/${session.featureId}`;
   const statusPath = `${sessionDir}/status.json`;
 
@@ -432,7 +436,7 @@ async function spawnStage2Review(
   }).catch(async (error) => {
     // Handle step modification validation errors by re-spawning Stage 2 with error context
     if (error instanceof StepModificationValidationError) {
-      console.log(`[Stage 2] Re-spawning due to step modification validation errors for ${session.featureId}`);
+      console.log(`[Stage 2] Re-spawning due to step modification validation errors for ${session.featureId}${iterationInfo}`);
       const validationContext = `Your step modification output contained errors:\n${error.validationErrors.map(e => `- ${e}`).join('\n')}\n\nPlease fix these issues and try again.`;
 
       // Re-fetch session and re-spawn with error context
@@ -444,15 +448,54 @@ async function spawnStage2Review(
           sessionManager,
           resultHandler,
           eventBroadcaster,
-          validationContext
+          validationContext,
+          iterationContext // Preserve iteration context through re-spawn
         );
       }
       return;
     }
 
-    console.error(`Stage 2 spawn error for ${session.featureId}:`, error);
-    eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage2_spawn_error', { stage: 2 });
+    // Enhanced error logging with iteration context
+    const errorAction = iterationContext
+      ? `stage2_spawn_error_iteration_${iterationContext}_of_${MAX_PLAN_REVIEW_ITERATIONS}`
+      : 'stage2_spawn_error';
+    console.error(`[Stage 2] Spawn error for ${session.featureId}${iterationInfo}:`, error);
+    eventBroadcaster?.executionStatus(
+      session.projectId,
+      session.featureId,
+      'error',
+      errorAction,
+      { stage: 2, iteration: iterationContext, maxIterations: MAX_PLAN_REVIEW_ITERATIONS }
+    );
   });
+}
+
+/**
+ * Determines whether to continue plan review iterations.
+ *
+ * Returns true if:
+ * 1. reviewCount < MAX_PLAN_REVIEW_ITERATIONS, AND
+ * 2. hasDecisionNeeded is true
+ *
+ * This encapsulates the logic: continue reviewing even when approved if decisions remain,
+ * but stop when either no decisions are needed or max iterations reached.
+ *
+ * @param reviewCount - Number of completed review iterations
+ * @param hasDecisionNeeded - Whether the result contained any DECISION_NEEDED markers
+ * @param _planApproved - Whether PLAN_APPROVED was present. Reserved for future use:
+ *   Currently unused because we continue iterating based solely on pending decisions.
+ *   Future enhancement may use this to implement different behaviors when plan is
+ *   approved vs not approved (e.g., different iteration limits, different prompts).
+ *   Kept in signature to maintain API stability when that enhancement is added.
+ * @returns true if review should continue, false otherwise
+ */
+export function shouldContinuePlanReview(
+  reviewCount: number,
+  hasDecisionNeeded: boolean,
+  _planApproved: boolean
+): boolean {
+  // Continue if under iteration limit AND decisions still pending
+  return reviewCount < MAX_PLAN_REVIEW_ITERATIONS && hasDecisionNeeded;
 }
 
 /**
@@ -500,6 +543,93 @@ async function handleStage2Completion(
     ? (markerApproved ? 'state+marker' : 'state (all questions answered)')
     : 'marker only';
   console.log(`Plan approved via ${approvalMethod} for ${session.featureId}`);
+
+  // Check if we should continue plan review iterations
+  // Continue reviewing even when approved if decisions remain (until max iterations or no decisions)
+  const hasDecisionNeeded = result.parsed.decisions.length > 0;
+  const reviewCount = plan?.reviewCount || 0;
+  const planApproved = stateApproved || markerApproved;
+  const nextIteration = reviewCount + 1;
+  const shouldContinue = shouldContinuePlanReview(reviewCount, hasDecisionNeeded, planApproved);
+
+  // Structured logging for plan review iteration decision
+  console.log(
+    `[Plan Review] ${session.featureId}: Iteration ${nextIteration}/${MAX_PLAN_REVIEW_ITERATIONS} - ` +
+    `hasDecisionNeeded=${hasDecisionNeeded}, planApproved=${planApproved}, ` +
+    `decision=${shouldContinue ? 'CONTINUE' : 'TRANSITION_TO_STAGE_3'}`
+  );
+
+  // Broadcast iteration progress to frontend
+  eventBroadcaster?.planReviewIteration(
+    session.projectId,
+    session.featureId,
+    nextIteration,
+    MAX_PLAN_REVIEW_ITERATIONS,
+    hasDecisionNeeded,
+    planApproved,
+    shouldContinue ? 'continue' : 'transition_to_stage_3',
+    hasDecisionNeeded ? result.parsed.decisions.length : undefined
+  );
+
+  if (shouldContinue) {
+    console.log(`Continuing plan review iteration ${nextIteration}/${MAX_PLAN_REVIEW_ITERATIONS} for ${session.featureId} (${result.parsed.decisions.length} decisions pending)`);
+
+    try {
+      await withLock(session.projectId, session.featureId, 2, async () => {
+        // Build continuation prompt for the next iteration
+        const updatedSession = await sessionManager.getSession(session.projectId, session.featureId);
+        if (!updatedSession) {
+          console.warn(`[Plan Review] ${session.featureId}: Session not found for iteration ${nextIteration} continuation`);
+          return;
+        }
+
+        // Use the specialized continuation prompt for iterative reviews
+        const continuationPrompt = buildPlanReviewContinuationPrompt(
+          nextIteration,
+          MAX_PLAN_REVIEW_ITERATIONS,
+          updatedSession.claudePlanFilePath,
+          result.parsed.decisions.length
+        );
+
+        await spawnStage2Review(
+          updatedSession,
+          storage,
+          sessionManager,
+          resultHandler,
+          eventBroadcaster,
+          continuationPrompt,
+          nextIteration // Pass iteration context for error handling
+        );
+      });
+    } catch (error) {
+      if (error instanceof SpawnLockError) {
+        // Elevated to WARNING: Lock contention during iteration continuation
+        // This could indicate concurrent access or hung process
+        console.warn(`[Plan Review] ${session.featureId}: Lock already held, skipping iteration ${nextIteration} spawn - potential concurrent access`);
+
+        // Notify frontend about the lock contention so user is aware
+        eventBroadcaster?.planReviewIteration(
+          session.projectId,
+          session.featureId,
+          nextIteration,
+          MAX_PLAN_REVIEW_ITERATIONS,
+          hasDecisionNeeded,
+          planApproved,
+          'lock_contention_skipped',
+          result.parsed.decisions.length
+        );
+      } else {
+        throw error;
+      }
+    }
+
+    return; // Don't transition to Stage 3 yet - continue reviewing
+  }
+
+  // No more decisions needed or max iterations reached - proceed to Stage 3 transition
+  if (hasDecisionNeeded && reviewCount >= MAX_PLAN_REVIEW_ITERATIONS) {
+    console.warn(`Max plan review iterations (${MAX_PLAN_REVIEW_ITERATIONS}) reached for ${session.featureId} with ${result.parsed.decisions.length} decisions still pending - proceeding to Stage 3`);
+  }
 
   // Check if plan structure is complete before transitioning to Stage 3
   if (planValidation && !planValidation.complete) {

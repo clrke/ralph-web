@@ -1293,6 +1293,47 @@ When satisfied with the plan, output [PLAN_APPROVED].`;
 }
 
 /**
+ * Continuation prompt for iterative plan reviews.
+ * Used when continuing review after [PLAN_APPROVED] with pending [DECISION_NEEDED] markers.
+ *
+ * @param currentIteration - Current iteration number (1-based, after increment)
+ * @param maxIterations - Maximum allowed iterations (default 10)
+ * @param claudePlanFilePath - Optional path to the plan.md file
+ * @param pendingDecisionCount - Number of DECISION_NEEDED markers from last iteration
+ */
+export function buildPlanReviewContinuationPrompt(
+  currentIteration: number,
+  maxIterations: number = 10,
+  claudePlanFilePath?: string | null,
+  pendingDecisionCount?: number
+): string {
+  const remainingIterations = maxIterations - currentIteration;
+  const planFile = claudePlanFilePath
+    ? `Plan file: ${claudePlanFilePath}\n\n`
+    : '';
+
+  const decisionContext = pendingDecisionCount !== undefined && pendingDecisionCount > 0
+    ? `You raised ${pendingDecisionCount} question(s) in the previous iteration that need user input.\n\n`
+    : '';
+
+  const urgencyNote = remainingIterations <= 2
+    ? `⚠️ Only ${remainingIterations} iteration(s) remaining before forced approval.\n\n`
+    : '';
+
+  return `${planFile}${decisionContext}${urgencyNote}Continue plan review (iteration ${currentIteration}/${maxIterations}).
+
+Review the plan for any remaining issues or clarifications needed.
+
+**Important:** To complete the review:
+- If you have questions requiring user decisions, output [DECISION_NEEDED] markers
+- If the plan is complete and ready for implementation, output [PLAN_APPROVED] with NO [DECISION_NEEDED] markers
+
+The review will continue until either:
+1. You output [PLAN_APPROVED] with no [DECISION_NEEDED] markers, OR
+2. Maximum iterations (${maxIterations}) is reached`;
+}
+
+/**
  * Lean single-step prompt for Stage 3 steps 2+.
  * Claude already knows the marker formats and process from the first step.
  */

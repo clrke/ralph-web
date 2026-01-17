@@ -61,6 +61,14 @@ const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
  * Each attempt re-spawns Stage 2 with validation context to fix incomplete plans.
  */
 export const MAX_PLAN_VALIDATION_ATTEMPTS = 3;
+
+/**
+ * Maximum number of plan review iterations.
+ * Review continues until either:
+ * 1. This limit is reached with [PLAN_APPROVED], OR
+ * 2. An iteration completes without any [DECISION_NEEDED] markers
+ */
+export const MAX_PLAN_REVIEW_ITERATIONS = 10;
 const HAIKU_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes for Haiku post-processing
 const MIN_OUTPUT_LENGTH_FOR_POSTPROCESS = 100; // Minimum output length to consider for post-processing
 

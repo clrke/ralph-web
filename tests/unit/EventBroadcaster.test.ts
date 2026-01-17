@@ -875,4 +875,161 @@ describe('EventBroadcaster', () => {
       expect(roomNames).toContain('project-xyz'); // Project room
     });
   });
+
+  describe('planReviewIteration', () => {
+    it('should emit plan.review.iteration event to the correct room', () => {
+      broadcaster.planReviewIteration(
+        'project-abc',
+        'add-auth',
+        3,
+        10,
+        true,
+        true,
+        'continue',
+        5
+      );
+
+      expect(mockIo.to).toHaveBeenCalledWith('project-abc/add-auth');
+      expect(mockRoom.emit).toHaveBeenCalledWith('plan.review.iteration', expect.objectContaining({
+        currentIteration: 3,
+        maxIterations: 10,
+        hasDecisionNeeded: true,
+        planApproved: true,
+        decision: 'continue',
+        pendingDecisionCount: 5,
+      }));
+    });
+
+    it('should include timestamp in the event', () => {
+      broadcaster.planReviewIteration(
+        'project-abc',
+        'add-auth',
+        1,
+        10,
+        true,
+        false,
+        'continue'
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('plan.review.iteration', expect.objectContaining({
+        timestamp: expect.any(String),
+      }));
+    });
+
+    it('should omit pendingDecisionCount when undefined', () => {
+      broadcaster.planReviewIteration(
+        'project-abc',
+        'add-auth',
+        4,
+        10,
+        false,
+        true,
+        'transition_to_stage_3'
+      );
+
+      const emitCall = mockRoom.emit.mock.calls.find(call => call[0] === 'plan.review.iteration');
+      expect(emitCall).toBeDefined();
+      const eventData = emitCall![1];
+
+      expect(eventData).not.toHaveProperty('pendingDecisionCount');
+      expect(eventData.decision).toBe('transition_to_stage_3');
+    });
+
+    it('should handle continue decision with pending decisions', () => {
+      broadcaster.planReviewIteration(
+        'project-abc',
+        'add-auth',
+        5,
+        10,
+        true,
+        true,
+        'continue',
+        3
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('plan.review.iteration', expect.objectContaining({
+        currentIteration: 5,
+        hasDecisionNeeded: true,
+        planApproved: true,
+        decision: 'continue',
+        pendingDecisionCount: 3,
+      }));
+    });
+
+    it('should handle transition_to_stage_3 decision when no decisions remain', () => {
+      broadcaster.planReviewIteration(
+        'project-abc',
+        'add-auth',
+        4,
+        10,
+        false,
+        true,
+        'transition_to_stage_3'
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('plan.review.iteration', expect.objectContaining({
+        currentIteration: 4,
+        hasDecisionNeeded: false,
+        planApproved: true,
+        decision: 'transition_to_stage_3',
+      }));
+    });
+
+    it('should handle max iterations reached with decisions still pending', () => {
+      broadcaster.planReviewIteration(
+        'project-abc',
+        'add-auth',
+        10,
+        10,
+        true,
+        true,
+        'transition_to_stage_3',
+        2
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('plan.review.iteration', expect.objectContaining({
+        currentIteration: 10,
+        maxIterations: 10,
+        hasDecisionNeeded: true,
+        decision: 'transition_to_stage_3',
+        pendingDecisionCount: 2,
+      }));
+    });
+
+    it('should handle first iteration', () => {
+      broadcaster.planReviewIteration(
+        'project-abc',
+        'add-auth',
+        1,
+        10,
+        true,
+        false,
+        'continue',
+        1
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('plan.review.iteration', expect.objectContaining({
+        currentIteration: 1,
+        planApproved: false,
+        decision: 'continue',
+      }));
+    });
+
+    it('should handle custom maxIterations value', () => {
+      broadcaster.planReviewIteration(
+        'project-abc',
+        'add-auth',
+        3,
+        5,
+        true,
+        true,
+        'continue',
+        2
+      );
+
+      expect(mockRoom.emit).toHaveBeenCalledWith('plan.review.iteration', expect.objectContaining({
+        maxIterations: 5,
+      }));
+    });
+  });
 });
