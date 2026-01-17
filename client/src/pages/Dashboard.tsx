@@ -174,7 +174,9 @@ export default function Dashboard() {
             const update = event.queuedSessions.find(
               (q) => q.featureId === session.featureId
             );
-            return { ...session, queuePosition: update!.queuePosition };
+            // Guard against missing data even though filter should ensure match exists
+            if (!update) return session;
+            return { ...session, queuePosition: update.queuePosition };
           });
         // Sort by queue position and update store
         const sortedSessions = updatedSessions.sort(

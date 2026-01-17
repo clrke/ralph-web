@@ -943,6 +943,45 @@ describe('Dashboard', () => {
         expect(storeState.queuedSessions[1].featureId).toBe('queued-2');
       });
     });
+
+    it('handles queue.reordered event with mismatched session data gracefully', async () => {
+      const sessions = [
+        createMockSession({ projectId: 'proj1', featureId: 'queued-1', status: 'queued', queuePosition: 1, title: 'Queued 1' }),
+        createMockSession({ projectId: 'proj1', featureId: 'queued-2', status: 'queued', queuePosition: 2, title: 'Queued 2' }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        const storeState = useSessionStore.getState();
+        expect(storeState.queuedSessions).toHaveLength(2);
+      });
+
+      // Simulate queue.reordered event with sessions that don't exist locally
+      // This tests the guard against missing data
+      mockSocket.emit('queue.reordered', {
+        projectId: 'proj1',
+        queuedSessions: [
+          { featureId: 'unknown-session', queuePosition: 1 },
+          { featureId: 'queued-1', queuePosition: 2 },
+        ],
+        timestamp: new Date().toISOString(),
+      });
+
+      // Should not crash and should update known sessions correctly
+      await waitFor(() => {
+        const storeState = useSessionStore.getState();
+        // Only queued-1 should remain (queued-2 was filtered out as not in event)
+        expect(storeState.queuedSessions).toHaveLength(1);
+        expect(storeState.queuedSessions[0].featureId).toBe('queued-1');
+        expect(storeState.queuedSessions[0].queuePosition).toBe(2);
+      });
+    });
   });
 
   describe('end-to-end queue cancellation flow', () => {
