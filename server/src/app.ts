@@ -3769,6 +3769,7 @@ After creating all steps, write the plan to a file and output:
           orchestrator.spawn({
             prompt,
             projectPath: session.projectPath,
+            sessionId: session.claudeSessionId || undefined,
             allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
             onOutput: (output, isComplete) => {
               eventBroadcaster?.claudeOutput(projectId, featureId, output, isComplete);
