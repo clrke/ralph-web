@@ -53,27 +53,41 @@ export class FileStorageService {
     // Ensure parent directory exists
     await fs.ensureDir(dir);
 
-    // Create backup if file exists
-    if (await fs.pathExists(fullPath)) {
-      await fs.copy(fullPath, `${fullPath}.bak`);
-    }
+    // Use file locking to prevent concurrent write race conditions
+    // Use .writelock suffix to avoid conflict with proper-lockfile's .lock directory
+    const lockPath = `${fullPath}.writelock`;
+    await fs.ensureFile(lockPath);
 
-    // Atomic write: write to temp file, then rename
-    // Use random suffix to avoid collisions in rapid succession
-    const randomSuffix = crypto.randomBytes(8).toString('hex');
-    const tempPath = `${fullPath}.tmp.${Date.now()}.${randomSuffix}`;
+    const release = await lockfile.lock(lockPath, {
+      retries: { retries: 10, minTimeout: 20, maxTimeout: 200, factor: 1.5 },
+      stale: 10000,
+    });
 
     try {
-      await fs.writeJson(tempPath, data, { spaces: 2 });
-      await fs.rename(tempPath, fullPath);
-    } catch (error) {
-      // Clean up temp file on failure
-      try {
-        await fs.remove(tempPath);
-      } catch {
-        // Ignore cleanup errors
+      // Create backup if file exists
+      if (await fs.pathExists(fullPath)) {
+        await fs.copy(fullPath, `${fullPath}.bak`);
       }
-      throw error;
+
+      // Atomic write: write to temp file, then rename
+      // Use random suffix to avoid collisions in rapid succession
+      const randomSuffix = crypto.randomBytes(8).toString('hex');
+      const tempPath = `${fullPath}.tmp.${Date.now()}.${randomSuffix}`;
+
+      try {
+        await fs.writeJson(tempPath, data, { spaces: 2 });
+        await fs.rename(tempPath, fullPath);
+      } catch (error) {
+        // Clean up temp file on failure
+        try {
+          await fs.remove(tempPath);
+        } catch {
+          // Ignore cleanup errors
+        }
+        throw error;
+      }
+    } finally {
+      await release();
     }
   }
 
