@@ -259,3 +259,121 @@ describe('shouldContinuePlanReview', () => {
     });
   });
 });
+
+describe('handleStage2Completion continuation logic', () => {
+  /**
+   * Tests for the integration of shouldContinuePlanReview in handleStage2Completion.
+   * These tests verify the decision flow for continuing vs transitioning to Stage 3.
+   *
+   * Note: These are unit tests for the logic flow, not full integration tests.
+   * Full integration tests would require mocking the entire session/storage system.
+   */
+
+  describe('continuation decision flow', () => {
+    it('should continue when approved with decisions and under iteration limit', () => {
+      // Simulates: plan approved (PLAN_APPROVED), but has DECISION_NEEDED markers
+      const reviewCount = 1;
+      const hasDecisionNeeded = true;
+      const planApproved = true;
+
+      // This scenario should trigger continuation, not Stage 3 transition
+      expect(shouldContinuePlanReview(reviewCount, hasDecisionNeeded, planApproved)).toBe(true);
+    });
+
+    it('should transition to Stage 3 when approved with no decisions', () => {
+      // Simulates: plan approved (PLAN_APPROVED), no DECISION_NEEDED markers
+      const reviewCount = 3;
+      const hasDecisionNeeded = false;
+      const planApproved = true;
+
+      // This scenario should transition to Stage 3 (natural termination)
+      expect(shouldContinuePlanReview(reviewCount, hasDecisionNeeded, planApproved)).toBe(false);
+    });
+
+    it('should transition to Stage 3 when max iterations reached with decisions', () => {
+      // Simulates: plan approved, decisions pending, but max iterations reached
+      const reviewCount = MAX_PLAN_REVIEW_ITERATIONS;
+      const hasDecisionNeeded = true;
+      const planApproved = true;
+
+      // This scenario should transition to Stage 3 (force termination at limit)
+      expect(shouldContinuePlanReview(reviewCount, hasDecisionNeeded, planApproved)).toBe(false);
+    });
+
+    it('should continue multiple iterations with decisions', () => {
+      // Simulates: multiple review iterations, each with new decisions
+      const planApproved = true;
+      const hasDecisionNeeded = true;
+
+      // Each iteration from 0 to 9 should continue
+      for (let i = 0; i < MAX_PLAN_REVIEW_ITERATIONS; i++) {
+        expect(shouldContinuePlanReview(i, hasDecisionNeeded, planApproved)).toBe(true);
+      }
+
+      // Iteration 10 should stop
+      expect(shouldContinuePlanReview(MAX_PLAN_REVIEW_ITERATIONS, hasDecisionNeeded, planApproved)).toBe(false);
+    });
+  });
+
+  describe('termination conditions', () => {
+    it('should identify clean termination (no decisions)', () => {
+      // Clean termination: review completed naturally with no pending decisions
+      const scenarios = [
+        { reviewCount: 1, hasDecisionNeeded: false, planApproved: true },
+        { reviewCount: 5, hasDecisionNeeded: false, planApproved: true },
+        { reviewCount: 9, hasDecisionNeeded: false, planApproved: true },
+      ];
+
+      scenarios.forEach(({ reviewCount, hasDecisionNeeded, planApproved }) => {
+        expect(shouldContinuePlanReview(reviewCount, hasDecisionNeeded, planApproved)).toBe(false);
+      });
+    });
+
+    it('should identify forced termination (max iterations)', () => {
+      // Forced termination: max iterations reached, decisions still pending
+      const scenarios = [
+        { reviewCount: 10, hasDecisionNeeded: true, planApproved: true },
+        { reviewCount: 11, hasDecisionNeeded: true, planApproved: true },
+        { reviewCount: 15, hasDecisionNeeded: true, planApproved: true },
+      ];
+
+      scenarios.forEach(({ reviewCount, hasDecisionNeeded, planApproved }) => {
+        expect(shouldContinuePlanReview(reviewCount, hasDecisionNeeded, planApproved)).toBe(false);
+      });
+    });
+  });
+
+  describe('hasDecisionNeeded derivation', () => {
+    it('should derive hasDecisionNeeded from parsed decisions array', () => {
+      // Simulates the derivation logic in handleStage2Completion
+      const deriveHasDecisionNeeded = (parsedDecisions: unknown[]) => parsedDecisions.length > 0;
+
+      // Empty decisions array
+      expect(deriveHasDecisionNeeded([])).toBe(false);
+
+      // Single decision
+      expect(deriveHasDecisionNeeded([{ id: 'q1' }])).toBe(true);
+
+      // Multiple decisions
+      expect(deriveHasDecisionNeeded([{ id: 'q1' }, { id: 'q2' }])).toBe(true);
+    });
+
+    it('should derive planApproved from state or marker', () => {
+      // Simulates the derivation logic in handleStage2Completion
+      const derivePlanApproved = (stateApproved: boolean, markerApproved: boolean) =>
+        stateApproved || markerApproved;
+
+      // Both false
+      expect(derivePlanApproved(false, false)).toBe(false);
+
+      // State approved only
+      expect(derivePlanApproved(true, false)).toBe(true);
+
+      // Marker approved only
+      expect(derivePlanApproved(false, true)).toBe(true);
+
+      // Both approved
+      expect(derivePlanApproved(true, true)).toBe(true);
+    });
+  });
+});

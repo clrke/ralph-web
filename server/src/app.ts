@@ -15,6 +15,7 @@ import { DecisionValidator } from './services/DecisionValidator';
 import { TestRequirementAssessor } from './services/TestRequirementAssessor';
 import { IncompleteStepsAssessor } from './services/IncompleteStepsAssessor';
 import { EventBroadcaster } from './services/EventBroadcaster';
+import { withLock, SpawnLockError } from './services/SpawnLock';
 import {
   buildStage1Prompt,
   buildStage2Prompt,
@@ -524,6 +525,58 @@ async function handleStage2Completion(
     ? (markerApproved ? 'state+marker' : 'state (all questions answered)')
     : 'marker only';
   console.log(`Plan approved via ${approvalMethod} for ${session.featureId}`);
+
+  // Check if we should continue plan review iterations
+  // Continue reviewing even when approved if decisions remain (until max iterations or no decisions)
+  const hasDecisionNeeded = result.parsed.decisions.length > 0;
+  const reviewCount = plan?.reviewCount || 0;
+  const planApproved = stateApproved || markerApproved;
+
+  if (shouldContinuePlanReview(reviewCount, hasDecisionNeeded, planApproved)) {
+    console.log(`Continuing plan review iteration ${reviewCount + 1}/${MAX_PLAN_REVIEW_ITERATIONS} for ${session.featureId} (${result.parsed.decisions.length} decisions pending)`);
+
+    try {
+      await withLock(session.projectId, session.featureId, 2, async () => {
+        // Build lean continuation prompt for the next iteration
+        const nextIteration = reviewCount + 1;
+        const updatedSession = await sessionManager.getSession(session.projectId, session.featureId);
+        if (!updatedSession) {
+          console.warn(`Session ${session.featureId} not found for plan review continuation`);
+          return;
+        }
+
+        // Use lean prompt for iteration 2+ when resuming an existing session
+        const useLean = updatedSession.claudeSessionId && nextIteration > 1;
+        const continuationPrompt = useLean && plan
+          ? buildStage2PromptLean(plan, nextIteration, updatedSession.planValidationContext, updatedSession.claudePlanFilePath)
+          : plan
+            ? buildStage2Prompt(updatedSession, plan, nextIteration)
+            : 'Continue reviewing the plan.';
+
+        await spawnStage2Review(
+          updatedSession,
+          storage,
+          sessionManager,
+          resultHandler,
+          eventBroadcaster,
+          continuationPrompt
+        );
+      });
+    } catch (error) {
+      if (error instanceof SpawnLockError) {
+        console.log(`[Plan Review] Lock already held for ${session.featureId}, skipping continuation spawn`);
+      } else {
+        throw error;
+      }
+    }
+
+    return; // Don't transition to Stage 3 yet - continue reviewing
+  }
+
+  // No more decisions needed or max iterations reached - proceed to Stage 3 transition
+  if (hasDecisionNeeded && reviewCount >= MAX_PLAN_REVIEW_ITERATIONS) {
+    console.warn(`Max plan review iterations (${MAX_PLAN_REVIEW_ITERATIONS}) reached for ${session.featureId} with ${result.parsed.decisions.length} decisions still pending - proceeding to Stage 3`);
+  }
 
   // Check if plan structure is complete before transitioning to Stage 3
   if (planValidation && !planValidation.complete) {
