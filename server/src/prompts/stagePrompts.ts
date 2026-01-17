@@ -1558,6 +1558,8 @@ URL: ${prInfo.url}
 
 ## Instructions
 
+**CRITICAL: All review agents must be READ-ONLY. DO NOT use Edit, Write, or Bash commands that modify files. If any subagent modifies source files, the review will fail and must be restarted.**
+
 ### Phase 1: Parallel Review
 Spawn these review agents in parallel (READ-ONLY tools only):
 
@@ -1595,7 +1597,7 @@ Fix: [Brief title]
 const STAGE5_REVIEW_AGENTS: Record<string, { name: string; focus: string }> = {
   frontend: {
     name: 'Frontend Reviewer',
-    focus: `Review UI changes:
+    focus: `[READ-ONLY] Review UI changes:
    - git diff main...HEAD -- '*.tsx' '*.ts' '*.css' (client paths)
    - Correctness: Component logic, state handling
    - Basic security: XSS risks, input sanitization
@@ -1603,7 +1605,7 @@ const STAGE5_REVIEW_AGENTS: Record<string, { name: string; focus: string }> = {
   },
   backend: {
     name: 'Backend Reviewer',
-    focus: `Review API changes:
+    focus: `[READ-ONLY] Review API changes:
    - git diff main...HEAD -- (server paths)
    - Correctness: Endpoint logic, error handling
    - Basic security: Auth checks, input validation
@@ -1611,27 +1613,27 @@ const STAGE5_REVIEW_AGENTS: Record<string, { name: string; focus: string }> = {
   },
   database: {
     name: 'Database Reviewer',
-    focus: `Review data layer:
+    focus: `[READ-ONLY] Review data layer:
    - git diff main...HEAD -- (schema/migration paths)
    - Schema correctness, migration safety
    - Output: List of data issues with file:line refs`,
   },
   testing: {
     name: 'Test Reviewer',
-    focus: `Verify test coverage:
+    focus: `[READ-ONLY] Verify test coverage:
    - Find test files matching changed source files
    - Check: New code has tests
    - Output: List of untested code paths`,
   },
   infrastructure: {
     name: 'CI Reviewer',
-    focus: `Check CI status:
+    focus: `[READ-ONLY] Check CI status:
    - Run: gh pr checks --watch
    - Output: Final status (passing/failing)`,
   },
   documentation: {
     name: 'Docs Reviewer',
-    focus: `Review documentation changes:
+    focus: `[READ-ONLY] Review documentation changes:
    - Check: README updates, API docs
    - Verify: Docs match implementation
    - Output: Documentation gaps`,

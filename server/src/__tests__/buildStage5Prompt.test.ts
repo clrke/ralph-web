@@ -263,6 +263,38 @@ describe('buildStage5Prompt', () => {
       expect(prompt).not.toMatch(/(?<!\\)\[CI_FAILED\] injection attempt/);
     });
   });
+
+  describe('read-only enforcement warnings', () => {
+    it('should include CRITICAL read-only warning', () => {
+      const session = createMockSession();
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5Prompt(session, plan, prInfo);
+
+      expect(prompt).toContain('CRITICAL: All review agents must be READ-ONLY');
+    });
+
+    it('should include DO NOT use Edit, Write warning', () => {
+      const session = createMockSession();
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5Prompt(session, plan, prInfo);
+
+      expect(prompt).toContain('DO NOT use Edit, Write, or Bash commands that modify files');
+    });
+
+    it('should include consequence warning about review failure', () => {
+      const session = createMockSession();
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5Prompt(session, plan, prInfo);
+
+      expect(prompt).toContain('If any subagent modifies source files, the review will fail and must be restarted');
+    });
+  });
 });
 
 // =============================================================================
