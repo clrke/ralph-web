@@ -165,21 +165,32 @@ export default function Dashboard() {
     const handleQueueReordered = (event: QueueReorderedEvent) => {
       if (event.projectId === projectId) {
         // Update queued sessions with new positions using store's method
+        // Also filter out sessions that are no longer in the queue (handles cancelled sessions)
         const { queuedSessions: currentSessions } = useSessionStore.getState();
-        const updatedSessions = currentSessions.map((session) => {
-          const update = event.queuedSessions.find(
-            (q) => q.featureId === session.featureId
-          );
-          if (update) {
-            return { ...session, queuePosition: update.queuePosition };
-          }
-          return session;
-        });
+        const eventFeatureIds = new Set(event.queuedSessions.map((q) => q.featureId));
+        const updatedSessions = currentSessions
+          .filter((session) => eventFeatureIds.has(session.featureId))
+          .map((session) => {
+            const update = event.queuedSessions.find(
+              (q) => q.featureId === session.featureId
+            );
+            return { ...session, queuePosition: update!.queuePosition };
+          });
         // Sort by queue position and update store
         const sortedSessions = updatedSessions.sort(
           (a, b) => (a.queuePosition ?? 0) - (b.queuePosition ?? 0)
         );
         setQueuedSessions(sortedSessions);
+        // Also filter local sessions state to remove cancelled sessions
+        setSessions((prev) => {
+          const cancelled = prev.filter(
+            (s) => s.status === 'queued' && !eventFeatureIds.has(s.featureId)
+          );
+          if (cancelled.length > 0) {
+            return prev.filter((s) => s.status !== 'queued' || eventFeatureIds.has(s.featureId));
+          }
+          return prev;
+        });
       }
     };
 

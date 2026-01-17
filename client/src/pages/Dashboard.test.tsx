@@ -819,4 +819,225 @@ describe('Dashboard', () => {
       });
     });
   });
+
+  describe('queue.reordered socket event', () => {
+    it('updates queue positions when queue.reordered event is received', async () => {
+      const sessions = [
+        createMockSession({ projectId: 'proj1', featureId: 'queued-1', status: 'queued', queuePosition: 1, title: 'Queued 1' }),
+        createMockSession({ projectId: 'proj1', featureId: 'queued-2', status: 'queued', queuePosition: 2, title: 'Queued 2' }),
+        createMockSession({ projectId: 'proj1', featureId: 'queued-3', status: 'queued', queuePosition: 3, title: 'Queued 3' }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        const storeState = useSessionStore.getState();
+        expect(storeState.queuedSessions).toHaveLength(3);
+      });
+
+      // Simulate queue.reordered event with new positions (user reordered the queue)
+      mockSocket.emit('queue.reordered', {
+        projectId: 'proj1',
+        queuedSessions: [
+          { featureId: 'queued-3', queuePosition: 1 },
+          { featureId: 'queued-1', queuePosition: 2 },
+          { featureId: 'queued-2', queuePosition: 3 },
+        ],
+        timestamp: new Date().toISOString(),
+      });
+
+      await waitFor(() => {
+        const storeState = useSessionStore.getState();
+        expect(storeState.queuedSessions).toHaveLength(3);
+        // Sessions should be sorted by new positions
+        expect(storeState.queuedSessions[0].featureId).toBe('queued-3');
+        expect(storeState.queuedSessions[0].queuePosition).toBe(1);
+        expect(storeState.queuedSessions[1].featureId).toBe('queued-1');
+        expect(storeState.queuedSessions[1].queuePosition).toBe(2);
+        expect(storeState.queuedSessions[2].featureId).toBe('queued-2');
+        expect(storeState.queuedSessions[2].queuePosition).toBe(3);
+      });
+    });
+
+    it('removes sessions that are no longer in the queue.reordered event', async () => {
+      const sessions = [
+        createMockSession({ projectId: 'proj1', featureId: 'queued-1', status: 'queued', queuePosition: 1, title: 'Queued 1' }),
+        createMockSession({ projectId: 'proj1', featureId: 'queued-2', status: 'queued', queuePosition: 2, title: 'Queued 2' }),
+        createMockSession({ projectId: 'proj1', featureId: 'queued-3', status: 'queued', queuePosition: 3, title: 'Queued 3' }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        expect(screen.getByText('Queued 1')).toBeInTheDocument();
+        expect(screen.getByText('Queued 2')).toBeInTheDocument();
+        expect(screen.getByText('Queued 3')).toBeInTheDocument();
+      });
+
+      // Simulate queue.reordered event with session 2 removed (cancelled by another client)
+      mockSocket.emit('queue.reordered', {
+        projectId: 'proj1',
+        queuedSessions: [
+          { featureId: 'queued-1', queuePosition: 1 },
+          { featureId: 'queued-3', queuePosition: 2 },
+        ],
+        timestamp: new Date().toISOString(),
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByText('Queued 2')).not.toBeInTheDocument();
+      });
+
+      // Remaining sessions should be visible with correct positions
+      expect(screen.getByText('Queued 1')).toBeInTheDocument();
+      expect(screen.getByText('Queued 3')).toBeInTheDocument();
+
+      const storeState = useSessionStore.getState();
+      expect(storeState.queuedSessions).toHaveLength(2);
+      expect(storeState.queuedSessions[0].queuePosition).toBe(1);
+      expect(storeState.queuedSessions[1].queuePosition).toBe(2);
+    });
+
+    it('ignores queue.reordered events from other projects', async () => {
+      const sessions = [
+        createMockSession({ projectId: 'proj1', featureId: 'queued-1', status: 'queued', queuePosition: 1, title: 'Queued 1' }),
+        createMockSession({ projectId: 'proj1', featureId: 'queued-2', status: 'queued', queuePosition: 2, title: 'Queued 2' }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        const storeState = useSessionStore.getState();
+        expect(storeState.queuedSessions).toHaveLength(2);
+      });
+
+      // Simulate queue.reordered event from a different project
+      mockSocket.emit('queue.reordered', {
+        projectId: 'other-project',
+        queuedSessions: [
+          { featureId: 'queued-2', queuePosition: 1 },
+        ],
+        timestamp: new Date().toISOString(),
+      });
+
+      // Sessions should remain unchanged since event was for different project
+      await waitFor(() => {
+        const storeState = useSessionStore.getState();
+        expect(storeState.queuedSessions).toHaveLength(2);
+        expect(storeState.queuedSessions[0].featureId).toBe('queued-1');
+        expect(storeState.queuedSessions[1].featureId).toBe('queued-2');
+      });
+    });
+  });
+
+  describe('end-to-end queue cancellation flow', () => {
+    it('handles both session.backedout and queue.reordered events in sequence', async () => {
+      const sessions = [
+        createMockSession({ projectId: 'proj1', featureId: 'queued-1', status: 'queued', queuePosition: 1, title: 'First' }),
+        createMockSession({ projectId: 'proj1', featureId: 'queued-2', status: 'queued', queuePosition: 2, title: 'Second' }),
+        createMockSession({ projectId: 'proj1', featureId: 'queued-3', status: 'queued', queuePosition: 3, title: 'Third' }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        expect(screen.getByText('First')).toBeInTheDocument();
+        expect(screen.getByText('Second')).toBeInTheDocument();
+        expect(screen.getByText('Third')).toBeInTheDocument();
+      });
+
+      // Simulate session.backedout event (middle session cancelled)
+      mockSocket.emit('session.backedout', {
+        projectId: 'proj1',
+        featureId: 'queued-2',
+        sessionId: 'session-queued-2',
+        action: 'abandon',
+        reason: 'user_requested',
+        newStatus: 'failed',
+        previousStage: 0,
+        nextSessionId: null,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Then queue.reordered with updated positions
+      mockSocket.emit('queue.reordered', {
+        projectId: 'proj1',
+        queuedSessions: [
+          { featureId: 'queued-1', queuePosition: 1 },
+          { featureId: 'queued-3', queuePosition: 2 },
+        ],
+        timestamp: new Date().toISOString(),
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByText('Second')).not.toBeInTheDocument();
+      });
+
+      // Verify remaining sessions have correct positions (1, 2 not 1, 3)
+      const storeState = useSessionStore.getState();
+      expect(storeState.queuedSessions).toHaveLength(2);
+      expect(storeState.queuedSessions[0].featureId).toBe('queued-1');
+      expect(storeState.queuedSessions[0].queuePosition).toBe(1);
+      expect(storeState.queuedSessions[1].featureId).toBe('queued-3');
+      expect(storeState.queuedSessions[1].queuePosition).toBe(2);
+    });
+
+    it('displays correct queue position numbers in UI after cancellation', async () => {
+      const sessions = [
+        createMockSession({ projectId: 'proj1', featureId: 'queued-1', status: 'queued', queuePosition: 1, title: 'First' }),
+        createMockSession({ projectId: 'proj1', featureId: 'queued-2', status: 'queued', queuePosition: 2, title: 'Second' }),
+        createMockSession({ projectId: 'proj1', featureId: 'queued-3', status: 'queued', queuePosition: 3, title: 'Third' }),
+      ];
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(sessions),
+      });
+
+      renderDashboard();
+
+      await waitFor(() => {
+        expect(screen.getByText('First')).toBeInTheDocument();
+      });
+
+      // Simulate session cancellation with updated positions
+      mockSocket.emit('queue.reordered', {
+        projectId: 'proj1',
+        queuedSessions: [
+          { featureId: 'queued-1', queuePosition: 1 },
+          { featureId: 'queued-3', queuePosition: 2 },
+        ],
+        timestamp: new Date().toISOString(),
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByText('Second')).not.toBeInTheDocument();
+      });
+
+      // Verify the UI shows #1 and #2 (not #1 and #3)
+      expect(screen.getByText('#1')).toBeInTheDocument();
+      expect(screen.getByText('#2')).toBeInTheDocument();
+      expect(screen.queryByText('#3')).not.toBeInTheDocument();
+    });
+  });
 });
