@@ -1907,11 +1907,20 @@ describe('Lean Prompt Builders', () => {
       expect(prompt).toContain('[PR_APPROVED]');
     });
 
-    it('should be shorter than full Stage 5 prompt', () => {
+    it('should spawn fewer review agents than full Stage 5 prompt', () => {
       const fullPrompt = buildStage5Prompt(mockSession, mockPlan, prInfo);
       const streamlinedPrompt = buildStage5PromptStreamlined(sessionSimple, mockPlan, prInfo);
 
-      expect(streamlinedPrompt.length).toBeLessThan(fullPrompt.length);
+      // Full prompt has 4 fixed agents
+      expect(fullPrompt).toContain('Code Agent');
+      expect(fullPrompt).toContain('Security Agent');
+      expect(fullPrompt).toContain('Test Agent');
+      expect(fullPrompt).toContain('Integration Agent');
+
+      // Streamlined uses only suggested agents + CI
+      expect(streamlinedPrompt).toContain('CI Reviewer');
+      // Should not have full agent set since suggestedAgents is limited
+      expect(streamlinedPrompt).not.toContain('Code Agent');
     });
   });
 

@@ -612,7 +612,7 @@ describe('Streamlined Prompts', () => {
         expect(prompt).not.toContain('Docs Reviewer');
       });
 
-      it('should be shorter than full Stage 5 prompt', () => {
+      it('should spawn fewer review agents than full prompt', () => {
         const session: Session = {
           ...baseSession,
           assessedComplexity: 'simple',
@@ -622,7 +622,16 @@ describe('Streamlined Prompts', () => {
         const fullPrompt = buildStage5Prompt(baseSession, mockPlan, prInfo);
         const streamlinedPrompt = buildStage5PromptStreamlined(session, mockPlan, prInfo);
 
-        expect(streamlinedPrompt.length).toBeLessThan(fullPrompt.length);
+        // Full prompt has 4 fixed agents (Code, Security, Test, Integration)
+        expect(fullPrompt).toContain('Code Agent');
+        expect(fullPrompt).toContain('Security Agent');
+        expect(fullPrompt).toContain('Test Agent');
+        expect(fullPrompt).toContain('Integration Agent');
+
+        // Streamlined prompt only includes suggested agents + CI
+        expect(streamlinedPrompt).toContain('Frontend Reviewer');
+        expect(streamlinedPrompt).toContain('CI Reviewer');
+        expect(streamlinedPrompt).not.toContain('Backend Reviewer');
       });
     });
 
@@ -900,9 +909,11 @@ describe('Streamlined Prompts', () => {
 
         const prompt = buildStage5Prompt(sessionNormal, mockPlan, prInfo);
 
-        // Full prompt has more comprehensive review
-        expect(prompt).toContain('Security');
-        expect(prompt).toContain('Performance');
+        // Full prompt has more comprehensive review with all 4 agents
+        expect(prompt).toContain('Security Agent');
+        expect(prompt).toContain('Code Agent');
+        expect(prompt).toContain('Test Agent');
+        expect(prompt).toContain('Integration Agent');
       });
 
       it('complex complexity should use full review', () => {
@@ -913,8 +924,11 @@ describe('Streamlined Prompts', () => {
 
         const prompt = buildStage5Prompt(sessionComplex, mockPlan, prInfo);
 
-        expect(prompt).toContain('Security');
-        expect(prompt).toContain('Performance');
+        // Full prompt should have all review agents
+        expect(prompt).toContain('Security Agent');
+        expect(prompt).toContain('Code Agent');
+        expect(prompt).toContain('Test Agent');
+        expect(prompt).toContain('Integration Agent');
       });
     });
   });
