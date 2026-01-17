@@ -12,6 +12,7 @@ import {
   syncPlanFromMarkdown,
   getPlanMdPath,
   getValidPlanMdPath,
+  syncComposableSectionsFromMarkdown,
 } from '../utils/syncPlanFromMarkdown';
 import { computeStepHash } from '../utils/stepContentHash';
 import type { Plan, PlanStep } from '@claude-code-web/shared';
@@ -907,5 +908,187 @@ Valid description.
     // Only the valid step should be processed
     expect(result!.updatedPlan.steps).toHaveLength(1);
     expect(result!.updatedPlan.steps[0].id).toBe('step-2');
+  });
+});
+
+// =============================================================================
+// syncComposableSectionsFromMarkdown Tests
+// =============================================================================
+
+describe('syncComposableSectionsFromMarkdown', () => {
+  let tempDir: string;
+  let planMdPath: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'composable-sync-'));
+    planMdPath = path.join(tempDir, 'plan.md');
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(tempDir)) {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  it('should sync test coverage section to test-coverage.json', async () => {
+    const markdown = `# Plan
+
+[PLAN_STEP id="step-1" parent="null" status="pending"]
+Test Step
+Description
+[/PLAN_STEP]
+
+[PLAN_TEST_COVERAGE]
+framework: vitest
+requiredTestTypes: unit, integration
+- step-1: unit
+[/PLAN_TEST_COVERAGE]`;
+
+    fs.writeFileSync(planMdPath, markdown, 'utf8');
+
+    const result = await syncComposableSectionsFromMarkdown(planMdPath);
+
+    expect(result.testCoverageSynced).toBe(true);
+    expect(result.errors).toHaveLength(0);
+
+    // Verify file was created
+    const testCoveragePath = path.join(tempDir, 'test-coverage.json');
+    expect(fs.existsSync(testCoveragePath)).toBe(true);
+
+    const testCoverage = JSON.parse(fs.readFileSync(testCoveragePath, 'utf8'));
+    expect(testCoverage.framework).toBe('vitest');
+    expect(testCoverage.requiredTestTypes).toEqual(['unit', 'integration']);
+    expect(testCoverage.stepCoverage).toHaveLength(1);
+    expect(testCoverage.stepCoverage[0].stepId).toBe('step-1');
+  });
+
+  it('should sync dependencies section to dependencies.json', async () => {
+    const markdown = `# Plan
+
+[PLAN_STEP id="step-1" parent="null" status="pending"]
+Test Step
+Description
+[/PLAN_STEP]
+
+[PLAN_DEPENDENCIES]
+Step Dependencies:
+- step-2 -> step-1: Step 2 depends on step 1
+
+External Dependencies:
+- Express.js 4.x for HTTP routing
+[/PLAN_DEPENDENCIES]`;
+
+    fs.writeFileSync(planMdPath, markdown, 'utf8');
+
+    const result = await syncComposableSectionsFromMarkdown(planMdPath);
+
+    expect(result.dependenciesSynced).toBe(true);
+    expect(result.errors).toHaveLength(0);
+
+    // Verify file was created
+    const depsPath = path.join(tempDir, 'dependencies.json');
+    expect(fs.existsSync(depsPath)).toBe(true);
+
+    const deps = JSON.parse(fs.readFileSync(depsPath, 'utf8'));
+    expect(deps.stepDependencies.length).toBeGreaterThan(0);
+  });
+
+  it('should sync acceptance mapping section to acceptance-mapping.json', async () => {
+    const markdown = `# Plan
+
+[PLAN_STEP id="step-1" parent="null" status="pending"]
+Test Step
+Description
+[/PLAN_STEP]
+
+[PLAN_ACCEPTANCE_MAPPING]
+- AC-1: "User can login" -> step-1, step-2 [fully covered]
+[/PLAN_ACCEPTANCE_MAPPING]`;
+
+    fs.writeFileSync(planMdPath, markdown, 'utf8');
+
+    const result = await syncComposableSectionsFromMarkdown(planMdPath);
+
+    expect(result.acceptanceMappingSynced).toBe(true);
+    expect(result.errors).toHaveLength(0);
+
+    // Verify file was created
+    const acceptancePath = path.join(tempDir, 'acceptance-mapping.json');
+    expect(fs.existsSync(acceptancePath)).toBe(true);
+
+    const mapping = JSON.parse(fs.readFileSync(acceptancePath, 'utf8'));
+    expect(mapping.mappings).toHaveLength(1);
+    expect(mapping.mappings[0].criterionId).toBe('AC-1');
+  });
+
+  it('should return error when plan.md does not exist', async () => {
+    const nonExistentPath = path.join(tempDir, 'non-existent.md');
+
+    const result = await syncComposableSectionsFromMarkdown(nonExistentPath);
+
+    expect(result.testCoverageSynced).toBe(false);
+    expect(result.dependenciesSynced).toBe(false);
+    expect(result.acceptanceMappingSynced).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('not found');
+  });
+
+  it('should not create files when sections are missing', async () => {
+    const markdown = `# Plan
+
+[PLAN_STEP id="step-1" parent="null" status="pending"]
+Test Step
+Description
+[/PLAN_STEP]`;
+
+    fs.writeFileSync(planMdPath, markdown, 'utf8');
+
+    const result = await syncComposableSectionsFromMarkdown(planMdPath);
+
+    expect(result.testCoverageSynced).toBe(false);
+    expect(result.dependenciesSynced).toBe(false);
+    expect(result.acceptanceMappingSynced).toBe(false);
+    expect(result.errors).toHaveLength(0);
+
+    // Verify files were not created
+    expect(fs.existsSync(path.join(tempDir, 'test-coverage.json'))).toBe(false);
+    expect(fs.existsSync(path.join(tempDir, 'dependencies.json'))).toBe(false);
+    expect(fs.existsSync(path.join(tempDir, 'acceptance-mapping.json'))).toBe(false);
+  });
+
+  it('should sync all sections when all are present', async () => {
+    const markdown = `# Plan
+
+[PLAN_STEP id="step-1" parent="null" status="pending"]
+Test Step
+Description
+[/PLAN_STEP]
+
+[PLAN_TEST_COVERAGE]
+framework: jest
+requiredTestTypes: unit
+- step-1: unit
+[/PLAN_TEST_COVERAGE]
+
+[PLAN_DEPENDENCIES]
+Step Dependencies:
+- step-2 -> step-1: Depends
+
+External Dependencies:
+- Node.js 18+
+[/PLAN_DEPENDENCIES]
+
+[PLAN_ACCEPTANCE_MAPPING]
+- AC-1: "Feature works" -> step-1
+[/PLAN_ACCEPTANCE_MAPPING]`;
+
+    fs.writeFileSync(planMdPath, markdown, 'utf8');
+
+    const result = await syncComposableSectionsFromMarkdown(planMdPath);
+
+    expect(result.testCoverageSynced).toBe(true);
+    expect(result.dependenciesSynced).toBe(true);
+    expect(result.acceptanceMappingSynced).toBe(true);
+    expect(result.errors).toHaveLength(0);
   });
 });

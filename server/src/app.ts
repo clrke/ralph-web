@@ -1,7 +1,7 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { isStepContentUnchanged, computePlanHash, savePlanSnapshot, hasPlanChangedSinceSnapshot, deletePlanSnapshot } from './utils/stepContentHash';
-import { syncPlanFromMarkdown, getValidPlanMdPath } from './utils/syncPlanFromMarkdown';
+import { syncPlanFromMarkdown, getValidPlanMdPath, syncComposableSectionsFromMarkdown } from './utils/syncPlanFromMarkdown';
 import { readFile } from 'fs/promises';
 import { ZodSchema, ZodError } from 'zod';
 import { FileStorageService } from './data/FileStorageService';
@@ -1927,6 +1927,17 @@ async function handleStage5Result(
       } else if (syncResult) {
         console.log(`[Stage 5] plan.md and plan.json are in sync for ${session.featureId}`);
       }
+    }
+
+    // Also sync composable plan sections (test coverage, dependencies, acceptance mapping)
+    const composableSyncResult = await syncComposableSectionsFromMarkdown(planMdPath);
+    if (composableSyncResult.testCoverageSynced || composableSyncResult.dependenciesSynced || composableSyncResult.acceptanceMappingSynced) {
+      const syncedSections = [
+        composableSyncResult.testCoverageSynced ? 'test-coverage' : null,
+        composableSyncResult.dependenciesSynced ? 'dependencies' : null,
+        composableSyncResult.acceptanceMappingSynced ? 'acceptance-mapping' : null,
+      ].filter(Boolean).join(', ');
+      console.log(`[Stage 5] Synced composable sections for ${session.featureId}: ${syncedSections}`);
     }
   }
 

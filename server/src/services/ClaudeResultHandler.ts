@@ -22,7 +22,7 @@ import {
   StepModificationResult,
 } from './stepModificationParser';
 import { setStepContentHash } from '../utils/stepContentHash';
-import { syncPlanFromMarkdown, getValidPlanMdPath, SyncResult } from '../utils/syncPlanFromMarkdown';
+import { syncPlanFromMarkdown, getValidPlanMdPath, SyncResult, syncComposableSectionsFromMarkdown } from '../utils/syncPlanFromMarkdown';
 
 const STAGE_TO_QUESTION_STAGE: Record<number, QuestionStage> = {
   1: 'discovery',
@@ -304,6 +304,18 @@ export class ClaudeResultHandler {
       }
     } else {
       console.log(`[Stage 2] plan.md and plan.json are in sync for ${session.featureId}`);
+    }
+
+    // Also sync composable plan sections (test coverage, dependencies, acceptance mapping)
+    // These are parsed from plan.md and written to their respective JSON files
+    const composableSyncResult = await syncComposableSectionsFromMarkdown(planMdPath);
+    if (composableSyncResult.testCoverageSynced || composableSyncResult.dependenciesSynced || composableSyncResult.acceptanceMappingSynced) {
+      const syncedSections = [
+        composableSyncResult.testCoverageSynced ? 'test-coverage' : null,
+        composableSyncResult.dependenciesSynced ? 'dependencies' : null,
+        composableSyncResult.acceptanceMappingSynced ? 'acceptance-mapping' : null,
+      ].filter(Boolean).join(', ');
+      console.log(`[Stage 2] Synced composable sections for ${session.featureId}: ${syncedSections}`);
     }
 
     return result;

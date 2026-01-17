@@ -6,12 +6,26 @@
  * and updates plan.json to match.
  */
 
-import { readFile } from 'fs/promises';
+import { readFile, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
-import type { Plan, PlanStep } from '@claude-code-web/shared';
+import type { Plan, PlanStep, PlanTestCoverage, PlanDependencies, PlanAcceptanceCriteriaMapping } from '@claude-code-web/shared';
 import { OutputParser, ParsedPlanStep } from '../services/OutputParser';
 import { computeStepHash } from './stepContentHash';
+
+/**
+ * Result of syncing composable plan sections from plan.md
+ */
+export interface ComposableSectionsSyncResult {
+  /** Whether test coverage section was found and synced */
+  testCoverageSynced: boolean;
+  /** Whether dependencies section was found and synced */
+  dependenciesSynced: boolean;
+  /** Whether acceptance mapping section was found and synced */
+  acceptanceMappingSynced: boolean;
+  /** Any errors encountered */
+  errors: string[];
+}
 
 /**
  * Result of syncing plan.md to plan.json
@@ -279,4 +293,70 @@ export function getValidPlanMdPath(claudePlanFilePath: string | null | undefined
   }
 
   return null;
+}
+
+/**
+ * Sync composable plan sections (testCoverage, dependencies, acceptanceMapping) from plan.md.
+ *
+ * This function parses plan.md for [PLAN_TEST_COVERAGE], [PLAN_DEPENDENCIES], and
+ * [PLAN_ACCEPTANCE_MAPPING] markers and writes them to their respective JSON files
+ * in the session directory.
+ *
+ * @param planMdPath - Absolute path to plan.md file
+ * @returns Sync result indicating which sections were found and synced
+ */
+export async function syncComposableSectionsFromMarkdown(
+  planMdPath: string
+): Promise<ComposableSectionsSyncResult> {
+  const result: ComposableSectionsSyncResult = {
+    testCoverageSynced: false,
+    dependenciesSynced: false,
+    acceptanceMappingSynced: false,
+    errors: [],
+  };
+
+  try {
+    if (!existsSync(planMdPath)) {
+      result.errors.push(`plan.md not found at ${planMdPath}`);
+      return result;
+    }
+
+    const content = await readFile(planMdPath, 'utf-8');
+    const parser = new OutputParser();
+    const sessionDir = path.dirname(planMdPath);
+
+    // Parse and sync test coverage
+    const testCoverage = parser.parsePlanTestCoverage(content);
+    if (testCoverage && testCoverage.requiredTestTypes.length > 0) {
+      const testCoveragePath = path.join(sessionDir, 'test-coverage.json');
+      await writeFile(testCoveragePath, JSON.stringify(testCoverage, null, 2));
+      result.testCoverageSynced = true;
+      console.log(`[syncComposableSections] Synced test-coverage.json for ${path.basename(sessionDir)}`);
+    }
+
+    // Parse and sync dependencies
+    const dependencies = parser.parsePlanDependencies(content);
+    if (dependencies && (dependencies.stepDependencies.length > 0 || dependencies.externalDependencies.length > 0)) {
+      const depsPath = path.join(sessionDir, 'dependencies.json');
+      await writeFile(depsPath, JSON.stringify(dependencies, null, 2));
+      result.dependenciesSynced = true;
+      console.log(`[syncComposableSections] Synced dependencies.json for ${path.basename(sessionDir)}`);
+    }
+
+    // Parse and sync acceptance mapping
+    const acceptanceMapping = parser.parsePlanAcceptanceMapping(content);
+    if (acceptanceMapping && acceptanceMapping.mappings.length > 0) {
+      const acceptancePath = path.join(sessionDir, 'acceptance-mapping.json');
+      await writeFile(acceptancePath, JSON.stringify(acceptanceMapping, null, 2));
+      result.acceptanceMappingSynced = true;
+      console.log(`[syncComposableSections] Synced acceptance-mapping.json for ${path.basename(sessionDir)}`);
+    }
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    result.errors.push(`Failed to sync composable sections: ${errorMessage}`);
+    console.error(`[syncComposableSections] Error:`, error);
+  }
+
+  return result;
 }
