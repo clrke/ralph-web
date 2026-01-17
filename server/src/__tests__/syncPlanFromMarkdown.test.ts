@@ -12,6 +12,7 @@ import {
   getPlanMdPath,
   getValidPlanMdPath,
 } from '../utils/syncPlanFromMarkdown';
+import { computeStepHash } from '../utils/stepContentHash';
 import type { Plan, PlanStep } from '@claude-code-web/shared';
 
 // =============================================================================
@@ -464,5 +465,353 @@ describe('integration: Stage 2 direct Edit workflow', () => {
     expect(result!.syncResult.removedCount).toBe(1);
     expect(result!.syncResult.removedStepIds).toContain('step-2');
     expect(result!.updatedPlan.steps).toHaveLength(2);
+  });
+});
+
+describe('content-hash based step matching', () => {
+  let testDir: string;
+  let planMdPath: string;
+
+  beforeEach(() => {
+    testDir = path.join('/tmp', `sync-plan-hash-match-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+    fs.mkdirSync(testDir, { recursive: true });
+    planMdPath = path.join(testDir, 'plan.md');
+  });
+
+  afterEach(() => {
+    try {
+      fs.rmSync(testDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  });
+
+  it('should match renamed step by content hash and preserve completed status', async () => {
+    // Original step-2 is completed with hash
+    const originalStep = createMockStep('step-2', 'Implement Feature X', 'Add the feature X implementation', 'completed');
+    originalStep.contentHash = computeStepHash(originalStep);
+
+    const initialPlan = createMockPlan([
+      createMockStep('step-1', 'Step 1', 'Description 1'),
+      originalStep,
+    ], 1);
+
+    // Claude inserts a step and renumbers: old step-2 becomes step-3 (with same content)
+    // Note: step-2 ID is removed and reused - realistic when Claude renumbers
+    const updatedMarkdown = createPlanMarkdown([
+      { id: 'step-1', title: 'Step 1', description: 'Description 1' },
+      { id: 'step-1a', title: 'New Inserted Step', description: 'This is newly inserted' }, // New step with fresh ID
+      { id: 'step-3', title: 'Implement Feature X', description: 'Add the feature X implementation' }, // Same content as old step-2, new ID
+    ]);
+    fs.writeFileSync(planMdPath, updatedMarkdown, 'utf8');
+
+    const result = await syncPlanFromMarkdown(planMdPath, initialPlan);
+
+    expect(result).not.toBeNull();
+    expect(result!.syncResult.changed).toBe(true);
+    expect(result!.syncResult.renamedCount).toBe(1);
+    expect(result!.syncResult.renamedSteps).toHaveLength(1);
+    expect(result!.syncResult.renamedSteps[0]).toEqual({ oldId: 'step-2', newId: 'step-3' });
+
+    // The renamed step should preserve completed status
+    const renamedStep = result!.updatedPlan.steps.find(s => s.id === 'step-3');
+    expect(renamedStep).toBeDefined();
+    expect(renamedStep!.status).toBe('completed');
+    expect(renamedStep!.contentHash).toBe(originalStep.contentHash);
+
+    // The new step should be pending
+    const newStep = result!.updatedPlan.steps.find(s => s.id === 'step-1a');
+    expect(newStep).toBeDefined();
+    expect(newStep!.status).toBe('pending');
+  });
+
+  it('should not match by hash if content is different', async () => {
+    const completedStep = createMockStep('step-1', 'Original Title', 'Original description', 'completed');
+    completedStep.contentHash = computeStepHash(completedStep);
+
+    const initialPlan = createMockPlan([completedStep], 1);
+
+    // New step with different content but similar structure
+    const updatedMarkdown = createPlanMarkdown([
+      { id: 'step-2', title: 'Different Title', description: 'Different description' },
+    ]);
+    fs.writeFileSync(planMdPath, updatedMarkdown, 'utf8');
+
+    const result = await syncPlanFromMarkdown(planMdPath, initialPlan);
+
+    expect(result).not.toBeNull();
+    expect(result!.syncResult.renamedCount).toBe(0);
+    expect(result!.syncResult.addedCount).toBe(1);
+    expect(result!.syncResult.removedCount).toBe(1);
+
+    // New step should be pending (not matched)
+    const newStep = result!.updatedPlan.steps.find(s => s.id === 'step-2');
+    expect(newStep).toBeDefined();
+    expect(newStep!.status).toBe('pending');
+  });
+
+  it('should not match pending steps by hash (only completed)', async () => {
+    // Pending step with hash (edge case - shouldn't normally have hash)
+    const pendingStep = createMockStep('step-1', 'Pending Step', 'Pending description', 'pending');
+    pendingStep.contentHash = computeStepHash(pendingStep);
+
+    const initialPlan = createMockPlan([pendingStep], 1);
+
+    // Rename the step
+    const updatedMarkdown = createPlanMarkdown([
+      { id: 'step-2', title: 'Pending Step', description: 'Pending description' },
+    ]);
+    fs.writeFileSync(planMdPath, updatedMarkdown, 'utf8');
+
+    const result = await syncPlanFromMarkdown(planMdPath, initialPlan);
+
+    expect(result).not.toBeNull();
+    // Should NOT be renamed because original was pending
+    expect(result!.syncResult.renamedCount).toBe(0);
+    expect(result!.syncResult.addedCount).toBe(1);
+    expect(result!.syncResult.removedCount).toBe(1);
+  });
+
+  it('should handle multiple renamed steps', async () => {
+    const step1 = createMockStep('step-1', 'First Feature', 'First feature implementation', 'completed');
+    step1.contentHash = computeStepHash(step1);
+    const step2 = createMockStep('step-2', 'Second Feature', 'Second feature implementation', 'completed');
+    step2.contentHash = computeStepHash(step2);
+
+    const initialPlan = createMockPlan([step1, step2], 1);
+
+    // Both steps renumbered
+    const updatedMarkdown = createPlanMarkdown([
+      { id: 'step-0', title: 'New First Step', description: 'Inserted at beginning' },
+      { id: 'step-1', title: 'First Feature', description: 'First feature implementation' }, // Same content as old step-1
+      { id: 'step-2', title: 'Second Feature', description: 'Second feature implementation' }, // Same content as old step-2
+    ]);
+    fs.writeFileSync(planMdPath, updatedMarkdown, 'utf8');
+
+    const result = await syncPlanFromMarkdown(planMdPath, initialPlan);
+
+    expect(result).not.toBeNull();
+    // step-1 and step-2 should be matched by ID (not hash), step-0 is new
+    expect(result!.syncResult.addedCount).toBe(1);
+    expect(result!.syncResult.renamedCount).toBe(0); // Matched by ID, not hash
+    expect(result!.updatedPlan.steps).toHaveLength(3);
+  });
+
+  it('should not double-match a step (once matched by hash, not available for another)', async () => {
+    // Two completed steps with the SAME content (edge case)
+    const step1 = createMockStep('step-1', 'Duplicate Content', 'Same description', 'completed');
+    step1.contentHash = computeStepHash(step1);
+    const step2 = createMockStep('step-2', 'Duplicate Content', 'Same description', 'completed');
+    step2.contentHash = computeStepHash(step2);
+
+    const initialPlan = createMockPlan([step1, step2], 1);
+
+    // Both renamed
+    const updatedMarkdown = createPlanMarkdown([
+      { id: 'step-3', title: 'Duplicate Content', description: 'Same description' },
+      { id: 'step-4', title: 'Duplicate Content', description: 'Same description' },
+    ]);
+    fs.writeFileSync(planMdPath, updatedMarkdown, 'utf8');
+
+    const result = await syncPlanFromMarkdown(planMdPath, initialPlan);
+
+    expect(result).not.toBeNull();
+    // Only ONE should be matched by hash (first match wins), the other is treated as new
+    expect(result!.syncResult.renamedCount).toBe(1);
+    expect(result!.syncResult.addedCount).toBe(1);
+    expect(result!.syncResult.removedCount).toBe(1); // The unmatched original
+
+    // Both steps should have completed status (one from hash match, one is actually new but will be pending)
+    const matchedStep = result!.updatedPlan.steps.find(s => s.status === 'completed');
+    expect(matchedStep).toBeDefined();
+  });
+
+  it('should preserve metadata when matching by hash', async () => {
+    const completedStep = createMockStep('step-old', 'Feature Implementation', 'Implement the feature', 'completed');
+    completedStep.contentHash = computeStepHash(completedStep);
+    completedStep.metadata = { completedAt: '2024-01-15T10:00:00Z', reviewer: 'test-user' };
+    completedStep.complexity = 'high';
+
+    const initialPlan = createMockPlan([completedStep], 1);
+
+    // Renamed step
+    const updatedMarkdown = createPlanMarkdown([
+      { id: 'step-new', title: 'Feature Implementation', description: 'Implement the feature' },
+    ]);
+    fs.writeFileSync(planMdPath, updatedMarkdown, 'utf8');
+
+    const result = await syncPlanFromMarkdown(planMdPath, initialPlan);
+
+    expect(result).not.toBeNull();
+    expect(result!.syncResult.renamedCount).toBe(1);
+
+    const renamedStep = result!.updatedPlan.steps.find(s => s.id === 'step-new');
+    expect(renamedStep).toBeDefined();
+    expect(renamedStep!.metadata).toEqual({ completedAt: '2024-01-15T10:00:00Z', reviewer: 'test-user' });
+  });
+
+  it('should handle whitespace-insensitive hash matching', async () => {
+    // Step with some whitespace variations
+    const completedStep = createMockStep('step-1', 'Feature Title', 'Feature description', 'completed');
+    completedStep.contentHash = computeStepHash(completedStep);
+
+    const initialPlan = createMockPlan([completedStep], 1);
+
+    // Renamed step with extra whitespace (should normalize to same hash)
+    const updatedMarkdown = `[PLAN_STEP id="step-2"]
+Feature Title
+  Feature description
+[/PLAN_STEP]`;
+    fs.writeFileSync(planMdPath, updatedMarkdown, 'utf8');
+
+    const result = await syncPlanFromMarkdown(planMdPath, initialPlan);
+
+    expect(result).not.toBeNull();
+    // Should be matched by hash due to whitespace normalization
+    expect(result!.syncResult.renamedCount).toBe(1);
+    expect(result!.syncResult.renamedSteps[0]).toEqual({ oldId: 'step-1', newId: 'step-2' });
+  });
+
+  it('should not match step without contentHash (never completed)', async () => {
+    // Completed step without contentHash (edge case - should not happen normally)
+    const completedStep = createMockStep('step-1', 'Feature Title', 'Feature description', 'completed');
+    // Intentionally NOT setting contentHash
+
+    const initialPlan = createMockPlan([completedStep], 1);
+
+    // Renamed step with same content
+    const updatedMarkdown = createPlanMarkdown([
+      { id: 'step-2', title: 'Feature Title', description: 'Feature description' },
+    ]);
+    fs.writeFileSync(planMdPath, updatedMarkdown, 'utf8');
+
+    const result = await syncPlanFromMarkdown(planMdPath, initialPlan);
+
+    expect(result).not.toBeNull();
+    // Should NOT be matched because original has no contentHash
+    expect(result!.syncResult.renamedCount).toBe(0);
+    expect(result!.syncResult.addedCount).toBe(1);
+    expect(result!.syncResult.removedCount).toBe(1);
+  });
+
+  it('should prioritize ID match over hash match', async () => {
+    // Two steps: step-1 completed with hash, step-2 pending
+    const step1 = createMockStep('step-1', 'Same Content', 'Same description', 'completed');
+    step1.contentHash = computeStepHash(step1);
+    const step2 = createMockStep('step-2', 'Different Content', 'Different desc', 'pending');
+
+    const initialPlan = createMockPlan([step1, step2], 1);
+
+    // Markdown has step-2 with step-1's content (ID match should take precedence)
+    const updatedMarkdown = createPlanMarkdown([
+      { id: 'step-2', title: 'Same Content', description: 'Same description' }, // Same content as step-1, but ID matches step-2
+    ]);
+    fs.writeFileSync(planMdPath, updatedMarkdown, 'utf8');
+
+    const result = await syncPlanFromMarkdown(planMdPath, initialPlan);
+
+    expect(result).not.toBeNull();
+    // step-2 should be matched by ID (and updated), NOT by hash
+    expect(result!.syncResult.renamedCount).toBe(0);
+    expect(result!.syncResult.updatedCount).toBe(1);
+    expect(result!.syncResult.updatedStepIds).toContain('step-2');
+    // step-1 should be marked as removed
+    expect(result!.syncResult.removedCount).toBe(1);
+    expect(result!.syncResult.removedStepIds).toContain('step-1');
+  });
+
+  it('should handle complex renumbering scenario with ID conflicts', async () => {
+    // Initial: step-1, step-2 (completed), step-3 (completed), step-4
+    // This tests what happens when IDs are reused with different content
+    const step1 = createMockStep('step-1', 'Setup', 'Initial setup', 'pending');
+    const step2 = createMockStep('step-2', 'Feature A', 'Implement feature A', 'completed');
+    step2.contentHash = computeStepHash(step2);
+    const step3 = createMockStep('step-3', 'Feature B', 'Implement feature B', 'completed');
+    step3.contentHash = computeStepHash(step3);
+    const step4 = createMockStep('step-4', 'Cleanup', 'Final cleanup', 'pending');
+
+    const initialPlan = createMockPlan([step1, step2, step3, step4], 1);
+
+    // Claude fully renumbers with ID conflicts:
+    // - step-2, step-3, step-4 IDs are REUSED with different content
+    // - This prevents hash matching because IDs match first
+    const updatedMarkdown = createPlanMarkdown([
+      { id: 'step-1', title: 'Setup', description: 'Initial setup' },
+      { id: 'step-2', title: 'New Middleware', description: 'Add middleware layer' }, // REUSES step-2 ID
+      { id: 'step-3', title: 'Feature A', description: 'Implement feature A' }, // REUSES step-3 ID
+      { id: 'step-4', title: 'Feature B', description: 'Implement feature B' }, // REUSES step-4 ID
+      { id: 'step-5', title: 'Cleanup', description: 'Final cleanup' }, // NEW ID
+    ]);
+    fs.writeFileSync(planMdPath, updatedMarkdown, 'utf8');
+
+    const result = await syncPlanFromMarkdown(planMdPath, initialPlan);
+
+    expect(result).not.toBeNull();
+    expect(result!.syncResult.changed).toBe(true);
+
+    // All existing IDs match, but content changed for step-2, step-3, step-4
+    expect(result!.syncResult.updatedCount).toBe(3);
+    expect(result!.syncResult.updatedStepIds).toContain('step-2');
+    expect(result!.syncResult.updatedStepIds).toContain('step-3');
+    expect(result!.syncResult.updatedStepIds).toContain('step-4');
+
+    // step-5 is genuinely new
+    expect(result!.syncResult.addedCount).toBe(1);
+    expect(result!.syncResult.addedStepIds).toContain('step-5');
+
+    // No hash matching happens because all IDs matched
+    expect(result!.syncResult.renamedCount).toBe(0);
+
+    // No removals (all old IDs still present in markdown)
+    expect(result!.syncResult.removedCount).toBe(0);
+
+    // step-2 and step-3 should be reset to pending (content changed, were completed)
+    const newStep2 = result!.updatedPlan.steps.find(s => s.id === 'step-2');
+    expect(newStep2?.status).toBe('pending');
+    const newStep3 = result!.updatedPlan.steps.find(s => s.id === 'step-3');
+    expect(newStep3?.status).toBe('pending');
+  });
+
+  it('should handle ideal renumbering (no ID reuse)', async () => {
+    // This is the IDEAL scenario: Claude uses fresh IDs for new steps
+    const step1 = createMockStep('step-1', 'Setup', 'Initial setup', 'pending');
+    const step2 = createMockStep('step-2', 'Feature A', 'Implement feature A', 'completed');
+    step2.contentHash = computeStepHash(step2);
+    const step3 = createMockStep('step-3', 'Feature B', 'Implement feature B', 'completed');
+    step3.contentHash = computeStepHash(step3);
+
+    const initialPlan = createMockPlan([step1, step2, step3], 1);
+
+    // Claude inserts step with a NEW ID (step-1a), renames old steps
+    const updatedMarkdown = createPlanMarkdown([
+      { id: 'step-1', title: 'Setup', description: 'Initial setup' },
+      { id: 'step-1a', title: 'New Middleware', description: 'Add middleware layer' }, // NEW (fresh ID)
+      { id: 'step-4', title: 'Feature A', description: 'Implement feature A' }, // Renamed from step-2
+      { id: 'step-5', title: 'Feature B', description: 'Implement feature B' }, // Renamed from step-3
+    ]);
+    fs.writeFileSync(planMdPath, updatedMarkdown, 'utf8');
+
+    const result = await syncPlanFromMarkdown(planMdPath, initialPlan);
+
+    expect(result).not.toBeNull();
+    expect(result!.syncResult.changed).toBe(true);
+
+    // step-1a is new
+    expect(result!.syncResult.addedCount).toBe(1);
+    expect(result!.syncResult.addedStepIds).toContain('step-1a');
+
+    // Both completed steps should be matched by hash
+    expect(result!.syncResult.renamedCount).toBe(2);
+    expect(result!.syncResult.renamedSteps).toContainEqual({ oldId: 'step-2', newId: 'step-4' });
+    expect(result!.syncResult.renamedSteps).toContainEqual({ oldId: 'step-3', newId: 'step-5' });
+
+    // Both renamed steps should preserve completed status
+    const newStep4 = result!.updatedPlan.steps.find(s => s.id === 'step-4');
+    expect(newStep4?.status).toBe('completed');
+    const newStep5 = result!.updatedPlan.steps.find(s => s.id === 'step-5');
+    expect(newStep5?.status).toBe('completed');
+
+    // No removals (all old steps matched by ID or hash)
+    expect(result!.syncResult.removedCount).toBe(0);
   });
 });
