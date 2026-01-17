@@ -1,7 +1,6 @@
 import express, { Express, Request, Response, NextFunction } from 'express';
 import path from 'path';
-import crypto from 'crypto';
-import { computeStepHash, isStepContentUnchanged, computePlanHash, savePlanSnapshot, hasPlanChangedSinceSnapshot, deletePlanSnapshot } from './utils/stepContentHash';
+import { isStepContentUnchanged, computePlanHash, savePlanSnapshot, hasPlanChangedSinceSnapshot, deletePlanSnapshot } from './utils/stepContentHash';
 import { syncPlanFromMarkdown, getValidPlanMdPath } from './utils/syncPlanFromMarkdown';
 import { readFile } from 'fs/promises';
 import { ZodSchema, ZodError } from 'zod';

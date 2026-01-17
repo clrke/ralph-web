@@ -114,9 +114,6 @@ export async function syncPlanFromMarkdown(
   // Track which existing step IDs have been matched (by ID or hash)
   const matchedExistingIds = new Set<string>();
 
-  // Create a set of step IDs from parsed markdown
-  const parsedStepIds = new Set(parsedSteps.map(s => s.id));
-
   // Track which existing steps are still present in markdown
   const updatedSteps: PlanStep[] = [];
 
