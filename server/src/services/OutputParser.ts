@@ -203,6 +203,14 @@ export class OutputParser {
     let match;
     while ((match = regex.exec(input)) !== null) {
       const attrs = this.parseAttributes(match[1]);
+
+      // Skip malformed steps without a valid id attribute
+      // Empty IDs cause corruption in session tracking (removedStepIds, stepRetries)
+      if (!attrs.id || attrs.id.trim() === '') {
+        console.warn('[OutputParser] Skipping PLAN_STEP marker with missing or empty id attribute');
+        continue;
+      }
+
       const content = match[2].trim();
       const lines = content.split('\n');
 
@@ -222,7 +230,7 @@ export class OutputParser {
       // Accept both 'parent' and 'parentId' attributes for compatibility
       const parentAttr = attrs.parent || attrs.parentId;
       steps.push({
-        id: attrs.id || '',
+        id: attrs.id,
         parentId: parentAttr === 'null' ? null : (parentAttr || null),
         status: attrs.status || 'pending',
         title: lines[0] || '',

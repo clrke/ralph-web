@@ -815,3 +815,96 @@ Feature Title
     expect(result!.syncResult.removedCount).toBe(0);
   });
 });
+
+describe('empty step ID handling', () => {
+  let tempDir: string;
+  let planMdPath: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'sync-empty-id-'));
+    planMdPath = path.join(tempDir, 'plan.md');
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(tempDir)) {
+      fs.rmSync(tempDir, { recursive: true });
+    }
+  });
+
+  it('should skip parsed steps with empty id from markdown', async () => {
+    // Initial plan with valid steps
+    const step1 = createMockStep('step-1', 'Valid Step', 'Valid description');
+    const initialPlan = createMockPlan([step1], 1);
+
+    // Markdown contains a step with empty id (malformed) and a valid step
+    const updatedMarkdown = `[PLAN_STEP id="" parent="null" status="pending"]
+Malformed Step
+This has an empty id.
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-2" parent="null" status="pending"]
+Valid New Step
+This is valid.
+[/PLAN_STEP]`;
+    fs.writeFileSync(planMdPath, updatedMarkdown, 'utf8');
+
+    const result = await syncPlanFromMarkdown(planMdPath, initialPlan);
+
+    expect(result).not.toBeNull();
+    // Only the valid step should be processed
+    expect(result!.updatedPlan.steps).toHaveLength(1);
+    expect(result!.updatedPlan.steps[0].id).toBe('step-2');
+    // step-1 is removed since it's not in markdown
+    expect(result!.syncResult.removedStepIds).toContain('step-1');
+    // The empty id step should not be added
+    expect(result!.syncResult.addedStepIds).not.toContain('');
+  });
+
+  it('should skip existing steps with empty id when building removed list', async () => {
+    // This tests the defense-in-depth: if a corrupted plan somehow has a step with empty id
+    const emptyIdStep = createMockStep('', 'Corrupted Step', 'Has empty id');
+    const validStep = createMockStep('step-1', 'Valid Step', 'Valid description');
+    const initialPlan = createMockPlan([emptyIdStep, validStep], 1);
+
+    // Markdown with only valid steps
+    const updatedMarkdown = createPlanMarkdown([
+      { id: 'step-2', title: 'New Step', description: 'A new step' },
+    ]);
+    fs.writeFileSync(planMdPath, updatedMarkdown, 'utf8');
+
+    const result = await syncPlanFromMarkdown(planMdPath, initialPlan);
+
+    expect(result).not.toBeNull();
+    // Empty id step should not be in removedStepIds
+    expect(result!.syncResult.removedStepIds).not.toContain('');
+    // step-1 should be in removedStepIds (it's valid but not in markdown)
+    expect(result!.syncResult.removedStepIds).toContain('step-1');
+    // Only the new step should be in the plan
+    expect(result!.updatedPlan.steps).toHaveLength(1);
+    expect(result!.updatedPlan.steps[0].id).toBe('step-2');
+  });
+
+  it('should skip parsed steps with whitespace-only id', async () => {
+    const step1 = createMockStep('step-1', 'Valid Step', 'Valid description');
+    const initialPlan = createMockPlan([step1], 1);
+
+    // Markdown contains a step with whitespace-only id
+    const updatedMarkdown = `[PLAN_STEP id="   " parent="null" status="pending"]
+Whitespace ID Step
+This has whitespace id.
+[/PLAN_STEP]
+
+[PLAN_STEP id="step-2" parent="null" status="pending"]
+Valid Step
+Valid description.
+[/PLAN_STEP]`;
+    fs.writeFileSync(planMdPath, updatedMarkdown, 'utf8');
+
+    const result = await syncPlanFromMarkdown(planMdPath, initialPlan);
+
+    expect(result).not.toBeNull();
+    // Only the valid step should be processed
+    expect(result!.updatedPlan.steps).toHaveLength(1);
+    expect(result!.updatedPlan.steps[0].id).toBe('step-2');
+  });
+});

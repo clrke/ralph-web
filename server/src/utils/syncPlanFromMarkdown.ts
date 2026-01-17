@@ -120,6 +120,13 @@ export async function syncPlanFromMarkdown(
   // Process steps from markdown
   for (let i = 0; i < parsedSteps.length; i++) {
     const parsedStep = parsedSteps[i];
+
+    // Skip steps with empty or missing IDs (defense against malformed parsing)
+    if (!parsedStep.id || parsedStep.id.trim() === '') {
+      console.warn('[syncPlanFromMarkdown] Skipping step with empty or missing id');
+      continue;
+    }
+
     const existingStep = existingStepMap.get(parsedStep.id);
 
     if (existingStep) {
@@ -215,6 +222,11 @@ export async function syncPlanFromMarkdown(
 
   // Check for removed steps (steps in plan.json but not in markdown AND not matched by hash)
   for (const existingStep of currentPlan.steps) {
+    // Skip steps with empty IDs (defense against corrupted plan data)
+    if (!existingStep.id || existingStep.id.trim() === '') {
+      console.warn('[syncPlanFromMarkdown] Skipping existing step with empty id');
+      continue;
+    }
     if (!matchedExistingIds.has(existingStep.id)) {
       result.removedCount++;
       result.removedStepIds.push(existingStep.id);

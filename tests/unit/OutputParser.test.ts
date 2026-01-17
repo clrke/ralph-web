@@ -932,4 +932,75 @@ Description without complexity or other new attributes.
       expect(result.planSteps[0].estimatedFiles).toBeUndefined();
     });
   });
+
+  describe('malformed PLAN_STEP handling', () => {
+    it('should skip PLAN_STEP markers without id attribute', () => {
+      const input = `
+[PLAN_STEP parent="null" status="pending"]
+Malformed step without id
+This should be skipped.
+[/PLAN_STEP]
+
+[PLAN_STEP id="valid-1" parent="null" status="pending"]
+Valid step
+This should be parsed.
+[/PLAN_STEP]
+`;
+      const result = parser.parse(input);
+
+      expect(result.planSteps).toHaveLength(1);
+      expect(result.planSteps[0].id).toBe('valid-1');
+    });
+
+    it('should skip PLAN_STEP markers with empty id=""', () => {
+      const input = `
+[PLAN_STEP id="" parent="null" status="pending"]
+Empty id step
+This should be skipped.
+[/PLAN_STEP]
+
+[PLAN_STEP id="valid-2" parent="null" status="pending"]
+Valid step
+This should be parsed.
+[/PLAN_STEP]
+`;
+      const result = parser.parse(input);
+
+      expect(result.planSteps).toHaveLength(1);
+      expect(result.planSteps[0].id).toBe('valid-2');
+    });
+
+    it('should skip PLAN_STEP markers with whitespace-only id', () => {
+      const input = `
+[PLAN_STEP id="   " parent="null" status="pending"]
+Whitespace id step
+This should be skipped.
+[/PLAN_STEP]
+
+[PLAN_STEP id="valid-3" parent="null" status="pending"]
+Valid step
+This should be parsed.
+[/PLAN_STEP]
+`;
+      const result = parser.parse(input);
+
+      expect(result.planSteps).toHaveLength(1);
+      expect(result.planSteps[0].id).toBe('valid-3');
+    });
+
+    it('should return empty array when all PLAN_STEP markers lack valid id', () => {
+      const input = `
+[PLAN_STEP parent="null" status="pending"]
+No id
+[/PLAN_STEP]
+
+[PLAN_STEP id="" parent="null" status="pending"]
+Empty id
+[/PLAN_STEP]
+`;
+      const result = parser.parse(input);
+
+      expect(result.planSteps).toHaveLength(0);
+    });
+  });
 });
