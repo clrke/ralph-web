@@ -18,6 +18,7 @@ import { EventBroadcaster } from './services/EventBroadcaster';
 import { withLock, SpawnLockError } from './services/SpawnLock';
 import {
   buildStage1Prompt,
+  buildStage1PromptStreamlined,
   buildStage2Prompt,
   buildStage2PromptLean,
   buildPlanReviewContinuationPrompt,
@@ -87,6 +88,29 @@ function releaseStage3Lock(projectId: string, featureId: string): void {
   const key = getSessionKey(projectId, featureId);
   stage3ExecutionLocks.delete(key);
   console.log(`[Stage 3 Lock] Released lock for ${featureId}`);
+}
+
+/**
+ * Select the appropriate Stage 1 prompt builder based on complexity assessment.
+ * Uses streamlined prompt for trivial/simple changes, full prompt for normal/complex.
+ */
+function selectStage1PromptBuilder(session: Session): string {
+  const complexity = session.assessedComplexity;
+
+  // Use streamlined prompt for trivial and simple changes
+  if (complexity === 'trivial' || complexity === 'simple') {
+    console.log(
+      `Using streamlined Stage 1 prompt for ${session.featureId} (complexity: ${complexity}, agents: ${session.suggestedAgents?.join(', ') || 'default'})`
+    );
+    return buildStage1PromptStreamlined(session);
+  }
+
+  // Use full prompt for normal, complex, or unassessed changes
+  if (complexity && complexity !== 'normal' && complexity !== 'complex') {
+    console.log(`Unknown complexity level '${complexity}' for ${session.featureId}, using full prompt`);
+  }
+
+  return buildStage1Prompt(session);
 }
 
 /**
@@ -2416,7 +2440,8 @@ export function createApp(
       }
 
       // Start Stage 1 Discovery asynchronously
-      const prompt = buildStage1Prompt(session);
+      // Select prompt based on complexity assessment (streamlined for simple, full for complex)
+      const prompt = selectStage1PromptBuilder(session);
       const statusPath = `${session.projectId}/${session.featureId}/status.json`;
 
       // Update status to running
@@ -2840,7 +2865,8 @@ export function createApp(
           console.log(`Starting queued session: ${nextSession.featureId}`);
 
           // Spawn Stage 1 for the new session
-          const prompt = buildStage1Prompt(startedSession);
+          // Select prompt based on complexity assessment (streamlined for simple, full for complex)
+          const prompt = selectStage1PromptBuilder(startedSession);
           const statusPath = `${startedSession.projectId}/${startedSession.featureId}/status.json`;
 
           // Update status to running
@@ -4035,7 +4061,8 @@ After creating all steps, write the plan to the file.`;
       switch (stage) {
         case 1: {
           // Stage 1: Discovery
-          const prompt = buildStage1Prompt(session);
+          // Select prompt based on complexity assessment (streamlined for simple, full for complex)
+          const prompt = selectStage1PromptBuilder(session);
           eventBroadcaster?.executionStatus(projectId, featureId, 'running', 'stage1_retry', { stage: 1, subState: 'spawning_agent' });
           await resultHandler.saveConversationStart(sessionDir, 1, prompt);
 

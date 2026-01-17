@@ -1,5 +1,6 @@
 import {
   buildStage1Prompt,
+  buildStage1PromptStreamlined,
   buildStage2Prompt,
   buildStage3Prompt,
   buildStage4Prompt,
@@ -216,6 +217,201 @@ describe('Stage Prompt Builders', () => {
         expect(prompt).toContain('Composable Plan Structure');
         expect(prompt).toContain('MUST include these sections');
       });
+    });
+  });
+
+  describe('buildStage1PromptStreamlined', () => {
+    it('should include feature title and description', () => {
+      const sessionWithComplexity = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend', 'testing'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithComplexity);
+
+      expect(prompt).toContain('Add User Authentication');
+      expect(prompt).toContain('JWT-based authentication');
+    });
+
+    it('should indicate this is a streamlined prompt', () => {
+      const sessionWithComplexity = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithComplexity);
+
+      expect(prompt).toContain('streamlined');
+      expect(prompt).toContain('Focused Exploration');
+    });
+
+    it('should only include suggested agents in exploration phase', () => {
+      const sessionWithFrontendOnly = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithFrontendOnly);
+
+      // Should include frontend agent
+      expect(prompt).toContain('Frontend Agent');
+      expect(prompt).toContain('UI layer patterns');
+
+      // Should NOT include backend agent
+      expect(prompt).not.toContain('Backend Agent');
+      expect(prompt).not.toContain('API/server layer patterns');
+    });
+
+    it('should include multiple agents when suggested', () => {
+      const sessionWithMultipleAgents = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend', 'backend', 'testing'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithMultipleAgents);
+
+      expect(prompt).toContain('Frontend Agent');
+      expect(prompt).toContain('Backend Agent');
+      expect(prompt).toContain('Test Agent');
+    });
+
+    it('should default to frontend and backend if no agents suggested', () => {
+      const sessionNoAgents = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: undefined,
+      };
+      const prompt = buildStage1PromptStreamlined(sessionNoAgents);
+
+      expect(prompt).toContain('Frontend Agent');
+      expect(prompt).toContain('Backend Agent');
+    });
+
+    it('should include complexity level in prompt', () => {
+      const sessionTrivial = {
+        ...mockSession,
+        assessedComplexity: 'trivial' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionTrivial);
+
+      expect(prompt).toContain('trivial');
+      expect(prompt).toContain('Complexity: trivial');
+    });
+
+    it('should include quick architecture check for small agent counts', () => {
+      const sessionWithOneAgent = {
+        ...mockSession,
+        assessedComplexity: 'trivial' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithOneAgent);
+
+      expect(prompt).toContain('Quick Architecture Check');
+    });
+
+    it('should include git setup phase', () => {
+      const sessionWithComplexity = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithComplexity);
+
+      expect(prompt).toContain('Phase 0: Git Setup');
+      expect(prompt).toContain('git checkout main');
+      expect(prompt).toContain('git checkout -b feature/add-auth');
+    });
+
+    it('should include composable plan structure', () => {
+      const sessionWithComplexity = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithComplexity);
+
+      expect(prompt).toContain('[PLAN_META]');
+      expect(prompt).toContain('[PLAN_STEP');
+      expect(prompt).toContain('[PLAN_DEPENDENCIES]');
+      expect(prompt).toContain('[PLAN_TEST_COVERAGE]');
+      expect(prompt).toContain('[PLAN_ACCEPTANCE_MAPPING]');
+    });
+
+    it('should include acceptance criteria mapping', () => {
+      const sessionWithComplexity = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithComplexity);
+
+      expect(prompt).toContain('AC-1: "Users can login with email/password"');
+      expect(prompt).toContain('AC-2: "JWT tokens are issued on successful login"');
+    });
+
+    it('should use correct output markers', () => {
+      const sessionWithComplexity = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithComplexity);
+
+      expect(prompt).toContain('[DECISION_NEEDED');
+      expect(prompt).toContain('[PLAN_MODE_EXITED]');
+      expect(prompt).toContain('[PLAN_FILE');
+    });
+
+    it('should suggest skipping questions phase for simple changes', () => {
+      const sessionWithComplexity = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithComplexity);
+
+      expect(prompt).toContain('ONLY IF NEEDED');
+      expect(prompt).toContain('Skip this phase entirely');
+    });
+
+    it('should handle all agent types correctly', () => {
+      const sessionAllAgents = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: [
+          'frontend',
+          'backend',
+          'database',
+          'testing',
+          'infrastructure',
+          'documentation',
+        ],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionAllAgents);
+
+      expect(prompt).toContain('Frontend Agent');
+      expect(prompt).toContain('Backend Agent');
+      expect(prompt).toContain('Database Agent');
+      expect(prompt).toContain('Test Agent');
+      expect(prompt).toContain('Infrastructure Agent');
+      expect(prompt).toContain('Documentation Agent');
+    });
+
+    it('should handle unknown agent types gracefully', () => {
+      const sessionWithUnknownAgent = {
+        ...mockSession,
+        assessedComplexity: 'simple' as const,
+        suggestedAgents: ['frontend', 'unknown-agent', 'backend'],
+      };
+      const prompt = buildStage1PromptStreamlined(sessionWithUnknownAgent);
+
+      // Should include known agents
+      expect(prompt).toContain('Frontend Agent');
+      expect(prompt).toContain('Backend Agent');
+
+      // Should not crash or include unknown agent
+      expect(prompt).not.toContain('unknown-agent');
     });
   });
 

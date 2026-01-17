@@ -214,6 +214,214 @@ Your plan will be automatically validated. To pass validation:
 }
 
 /**
+ * Agent definitions for streamlined prompts.
+ * Maps agent type to its exploration instructions.
+ */
+const AGENT_DEFINITIONS: Record<string, { name: string; instructions: string }> = {
+  frontend: {
+    name: 'Frontend Agent',
+    instructions: `Explore UI layer patterns.
+   - Find: Components related to this feature, state management, styling approach
+   - Check: Existing patterns for similar UI, reusable components, routing
+   - Output: Relevant UI files, patterns to follow, potential reuse`,
+  },
+  backend: {
+    name: 'Backend Agent',
+    instructions: `Explore API/server layer patterns.
+   - Find: Related API routes, controllers, middleware, business logic
+   - Check: Auth patterns, error handling, validation approach
+   - Output: Relevant API files, patterns to follow, potential reuse`,
+  },
+  database: {
+    name: 'Database Agent',
+    instructions: `Explore data layer patterns.
+   - Find: Related models/schemas, migrations, query patterns
+   - Check: ORM usage, relationships, indexing patterns
+   - Output: Relevant data files, schema patterns to follow`,
+  },
+  testing: {
+    name: 'Test Agent',
+    instructions: `Explore testing patterns.
+   - Find: Test files for similar features, test utilities, mocks
+   - Check: Testing framework, coverage patterns, test organization
+   - Output: Test patterns to follow, testing requirements`,
+  },
+  infrastructure: {
+    name: 'Infrastructure Agent',
+    instructions: `Explore infrastructure and CI/CD patterns.
+   - Find: CI/CD configs, deployment scripts, environment configs
+   - Check: Build process, deployment pipeline, environment management
+   - Output: Relevant config files, CI/CD patterns to follow`,
+  },
+  documentation: {
+    name: 'Documentation Agent',
+    instructions: `Explore documentation patterns.
+   - Find: README files, API docs, inline documentation
+   - Check: Documentation standards, existing doc structure
+   - Output: Relevant docs, documentation patterns to follow`,
+  },
+};
+
+/**
+ * Build Stage 1: Streamlined Feature Discovery prompt
+ * A focused version for simple/trivial changes that only spawns relevant agents.
+ * Uses session.suggestedAgents to determine which agents to spawn.
+ */
+export function buildStage1PromptStreamlined(session: Session): string {
+  // Sanitize user-provided fields to prevent marker injection
+  const sanitized = sanitizeSessionFields(session);
+
+  const acceptanceCriteriaSection =
+    sanitized.acceptanceCriteria.length > 0
+      ? `
+## Acceptance Criteria
+${sanitized.acceptanceCriteria.map((c, i) => `${i + 1}. ${c.text}`).join('\n')}`
+      : '';
+
+  const affectedFilesSection =
+    sanitized.affectedFiles.length > 0
+      ? `
+## Affected Files (User Hints)
+These files are likely to need changes:
+${sanitized.affectedFiles.join('\n')}`
+      : '';
+
+  const technicalNotesSection = sanitized.technicalNotes
+    ? `
+## Technical Notes
+${sanitized.technicalNotes}`
+    : '';
+
+  // Build agent section based on suggestedAgents
+  const suggestedAgents = session.suggestedAgents || ['frontend', 'backend'];
+  const agentSections = suggestedAgents
+    .map((agentType, index) => {
+      const agent = AGENT_DEFINITIONS[agentType];
+      if (!agent) return null;
+      return `${index + 1}. **${agent.name}**: ${agent.instructions}`;
+    })
+    .filter(Boolean)
+    .join('\n\n');
+
+  // For simple changes, always include a quick architecture check
+  const architectureNote =
+    suggestedAgents.length <= 2
+      ? `
+**Quick Architecture Check** (if not covered by agents above):
+   - Verify project structure and entry points
+   - Identify any dependencies that might be affected`
+      : '';
+
+  return `You are helping implement a focused change. Since this is a ${session.assessedComplexity || 'simple'} change, exploration is streamlined.
+
+## Feature
+Title: ${sanitized.title}
+Description: ${sanitized.featureDescription}
+Project Path: ${session.projectPath}
+Complexity: ${session.assessedComplexity || 'simple'} (streamlined exploration)
+${acceptanceCriteriaSection}${affectedFilesSection}${technicalNotesSection}
+
+## Instructions
+
+### Phase 0: Git Setup (MANDATORY - Do this IMMEDIATELY)
+Before exploring the codebase, you MUST set up the git branch:
+
+1. **Checkout base branch**: \`git checkout ${session.baseBranch}\`
+2. **Pull latest changes**: \`git pull origin ${session.baseBranch}\`
+3. **Create feature branch**: \`git checkout -b ${session.featureBranch}\`
+
+Run these commands NOW before proceeding.
+
+### Phase 1: Focused Exploration (MANDATORY)
+Since this is a ${session.assessedComplexity || 'simple'} change, spawn only the relevant exploration agents.
+
+**IMPORTANT - Subagent Restrictions:**
+When spawning Task subagents, instruct them to use READ-ONLY tools only:
+- Allowed: Read, Glob, Grep, WebFetch, WebSearch
+- NOT allowed: Edit, Write, Bash (except read-only commands like \`git status\`)
+
+**Spawn these agents:**
+
+${agentSections}
+${architectureNote}
+
+Wait for exploration agents to complete before proceeding.
+
+### Phase 2: Ask Informed Questions (ONLY IF NEEDED)
+For ${session.assessedComplexity || 'simple'} changes, you likely have enough context from exploration.
+Only ask questions if there are genuine ambiguities that can't be resolved from the codebase:
+
+[DECISION_NEEDED priority="1|2|3" category="scope|approach|technical|design"]
+Question here?
+- Option A: Description
+- Option B: Description
+[/DECISION_NEEDED]
+
+Skip this phase entirely if the change is clear and straightforward.
+
+### Phase 3: Generate Plan
+Create a concise implementation plan. For ${session.assessedComplexity || 'simple'} changes, plans should be:
+- 1-3 steps for trivial changes
+- 2-5 steps for simple changes
+
+## Composable Plan Structure
+Your plan MUST include these sections:
+
+### 1. Plan Meta (Required)
+\`\`\`
+[PLAN_META]
+version: 1.0.0
+isApproved: false
+[/PLAN_META]
+\`\`\`
+
+### 2. Plan Steps (Required)
+**NOTE:** The feature branch (${session.featureBranch}) was already created in Phase 0.
+\`\`\`
+[PLAN_STEP id="step-1" parent="null" status="pending" complexity="low"]
+Implementation step title
+Description with at least 50 characters of concrete details.
+[/PLAN_STEP]
+\`\`\`
+
+### 3. Dependencies (Required)
+\`\`\`
+[PLAN_DEPENDENCIES]
+Step Dependencies:
+- (list any step dependencies, or "None" for simple changes)
+
+External Dependencies:
+- (list any new packages needed, or "None")
+[/PLAN_DEPENDENCIES]
+\`\`\`
+
+### 4. Test Coverage (Required)
+\`\`\`
+[PLAN_TEST_COVERAGE]
+Framework: vitest|jest|other
+Required Types: unit
+
+Step Coverage:
+- step-1: unit (required)
+[/PLAN_TEST_COVERAGE]
+\`\`\`
+
+### 5. Acceptance Criteria Mapping (Required)
+\`\`\`
+[PLAN_ACCEPTANCE_MAPPING]
+${session.acceptanceCriteria.map((c, i) => `- AC-${i + 1}: "${c.text}" -> step-X`).join('\n')}
+[/PLAN_ACCEPTANCE_MAPPING]
+\`\`\`
+
+### Phase 4: Complete
+1. Use the Edit tool to write the complete plan to: ${session.claudePlanFilePath}
+   - This file already exists and you have permission to edit it
+   - Include ALL plan sections: meta, steps, dependencies, test coverage, acceptance mapping
+2. Output: [PLAN_FILE path="${session.claudePlanFilePath}"]
+3. Exit plan mode and output: [PLAN_MODE_EXITED]`;
+}
+
+/**
  * Build Stage 2: Plan Review prompt
  * Reviews implementation plan and finds issues to present as decisions.
  * If planValidationContext exists, prepends validation issues to be addressed.
