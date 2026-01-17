@@ -555,6 +555,18 @@ async function handleStage2Completion(
     `decision=${shouldContinue ? 'CONTINUE' : 'TRANSITION_TO_STAGE_3'}`
   );
 
+  // Broadcast iteration progress to frontend
+  eventBroadcaster?.planReviewIteration(
+    session.projectId,
+    session.featureId,
+    nextIteration,
+    MAX_PLAN_REVIEW_ITERATIONS,
+    hasDecisionNeeded,
+    planApproved,
+    shouldContinue ? 'continue' : 'transition_to_stage_3',
+    hasDecisionNeeded ? result.parsed.decisions.length : undefined
+  );
+
   if (shouldContinue) {
     console.log(`Continuing plan review iteration ${nextIteration}/${MAX_PLAN_REVIEW_ITERATIONS} for ${session.featureId} (${result.parsed.decisions.length} decisions pending)`);
 

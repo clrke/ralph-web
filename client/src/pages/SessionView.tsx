@@ -16,6 +16,7 @@ import type {
   StepStartedEvent,
   StepCompletedEvent,
   SessionUpdatedEvent,
+  PlanReviewIterationEvent,
   Session,
   Plan,
   PlanStep,
@@ -292,6 +293,12 @@ export default function SessionView() {
   const [isBackingOut, setIsBackingOut] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
 
+  // Plan review iteration progress state
+  const [reviewIteration, setReviewIteration] = useState<{
+    currentIteration: number;
+    maxIterations: number;
+  } | null>(null);
+
   // Socket.IO event handlers
   const handleExecutionStatus = useCallback((data: ExecutionStatusEvent) => {
     // Skip intermediate updates to prevent UI flickering from rapid updates
@@ -350,6 +357,17 @@ export default function SessionView() {
   const handleSessionUpdated = useCallback((data: SessionUpdatedEvent) => {
     applySessionUpdate(data.featureId, data.updatedFields, data.dataVersion);
   }, [applySessionUpdate]);
+
+  const handlePlanReviewIteration = useCallback((data: PlanReviewIterationEvent) => {
+    setReviewIteration({
+      currentIteration: data.currentIteration,
+      maxIterations: data.maxIterations,
+    });
+    // Clear iteration state when transitioning to Stage 3
+    if (data.decision === 'transition_to_stage_3') {
+      setReviewIteration(null);
+    }
+  }, []);
 
   // Stage transition handler
   const handleTransition = useCallback(async (targetStage: number) => {
@@ -426,6 +444,7 @@ export default function SessionView() {
     socket.on('claude.output', handleClaudeOutput);
     socket.on('questions.batch', handleQuestionsBatch);
     socket.on('plan.updated', handlePlanUpdated);
+    socket.on('plan.review.iteration', handlePlanReviewIteration);
     socket.on('stage.changed', handleStageChanged);
     socket.on('step.started', handleStepStarted);
     socket.on('step.completed', handleStepCompleted);
@@ -437,6 +456,7 @@ export default function SessionView() {
       socket.off('claude.output', handleClaudeOutput);
       socket.off('questions.batch', handleQuestionsBatch);
       socket.off('plan.updated', handlePlanUpdated);
+      socket.off('plan.review.iteration', handlePlanReviewIteration);
       socket.off('stage.changed', handleStageChanged);
       socket.off('step.started', handleStepStarted);
       socket.off('step.completed', handleStepCompleted);
@@ -444,7 +464,7 @@ export default function SessionView() {
       socket.off('session.updated', handleSessionUpdated);
       disconnectFromSession(projectId, featureId);
     };
-  }, [projectId, featureId, handleExecutionStatus, handleClaudeOutput, handleQuestionsBatch, handlePlanUpdated, handleStageChanged, handleStepStarted, handleStepCompleted, handleImplementationProgress, handleSessionUpdated]);
+  }, [projectId, featureId, handleExecutionStatus, handleClaudeOutput, handleQuestionsBatch, handlePlanUpdated, handlePlanReviewIteration, handleStageChanged, handleStepStarted, handleStepCompleted, handleImplementationProgress, handleSessionUpdated]);
 
   if (isLoading) {
     return (
@@ -719,7 +739,7 @@ export default function SessionView() {
 
           {/* Stage 2: Plan Review */}
           {currentStage === 2 && plan && (
-            <PlanReviewSection plan={plan} isRunning={executionStatus?.status === 'running'} executionStatus={executionStatus} />
+            <PlanReviewSection plan={plan} isRunning={executionStatus?.status === 'running'} executionStatus={executionStatus} reviewIteration={reviewIteration} />
           )}
 
           {/* Stage 3: Implementation Progress */}
@@ -1268,7 +1288,7 @@ function QuestionCard({
   );
 }
 
-function PlanReviewSection({ plan, isRunning, executionStatus }: { plan: Plan; isRunning?: boolean; executionStatus?: ExecutionStatus | null }) {
+function PlanReviewSection({ plan, isRunning, executionStatus, reviewIteration }: { plan: Plan; isRunning?: boolean; executionStatus?: ExecutionStatus | null; reviewIteration?: { currentIteration: number; maxIterations: number } | null }) {
   const { approvePlan, requestPlanChanges, questions, isAwaitingClaudeResponse } = useSessionStore();
   const [viewMode, setViewMode] = useState<'list' | 'timeline'>('timeline');
   const [selectedStep, setSelectedStep] = useState<PlanStep | null>(null);
@@ -1298,6 +1318,9 @@ function PlanReviewSection({ plan, isRunning, executionStatus }: { plan: Plan; i
           <p className="text-sm text-gray-400">
             Plan version: <span className="text-gray-300">v{plan.planVersion}</span> |
             Steps: <span className="text-gray-300">{plan.steps.length}</span>
+            {reviewIteration && (
+              <> | Review: <span className="text-gray-300">{reviewIteration.currentIteration} of {reviewIteration.maxIterations}</span></>
+            )}
           </p>
         </div>
       </div>
@@ -1311,6 +1334,9 @@ function PlanReviewSection({ plan, isRunning, executionStatus }: { plan: Plan; i
           <h2 className="text-xl font-semibold">Implementation Plan</h2>
           <div className="flex items-center gap-4">
             <span className="text-sm text-gray-400">v{plan.planVersion}</span>
+            {reviewIteration && (
+              <span className="text-sm text-blue-400">Review {reviewIteration.currentIteration} of {reviewIteration.maxIterations}</span>
+            )}
             <div className="flex bg-gray-700 rounded-lg p-1">
               <button
                 onClick={() => setViewMode('timeline')}

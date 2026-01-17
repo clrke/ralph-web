@@ -17,6 +17,7 @@ import {
   SessionUpdatedFields,
   BackoutReason,
   BackoutAction,
+  PlanReviewIterationEvent,
 } from '@claude-code-web/shared';
 
 /**
@@ -162,6 +163,33 @@ export class EventBroadcaster {
       planVersion: plan.planVersion,
       timestamp: new Date().toISOString(),
     });
+  }
+
+  /**
+   * Broadcast plan review iteration progress
+   * Used when continuing review after [PLAN_APPROVED] with pending [DECISION_NEEDED] markers.
+   */
+  planReviewIteration(
+    projectId: string,
+    featureId: string,
+    currentIteration: number,
+    maxIterations: number,
+    hasDecisionNeeded: boolean,
+    planApproved: boolean,
+    decision: 'continue' | 'transition_to_stage_3',
+    pendingDecisionCount?: number
+  ): void {
+    const room = this.getRoom(projectId, featureId);
+    const event: PlanReviewIterationEvent = {
+      currentIteration,
+      maxIterations,
+      hasDecisionNeeded,
+      planApproved,
+      decision,
+      ...(pendingDecisionCount !== undefined && { pendingDecisionCount }),
+      timestamp: new Date().toISOString(),
+    };
+    this.io.to(room).emit('plan.review.iteration', event);
   }
 
   /**
