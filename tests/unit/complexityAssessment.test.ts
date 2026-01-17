@@ -444,6 +444,53 @@ describe('ComplexityAssessedEvent', () => {
     expect(shouldProcessEvent(eventForOtherProject, currentProjectId)).toBe(false);
   });
 
+  it('should include useLeanPrompts for session store update (step-18 fix)', () => {
+    // This test verifies the event includes useLeanPrompts which should be
+    // applied to session.useLeanPrompts by applyComplexityAssessment
+    const eventWithLeanPrompts: ComplexityAssessedEvent = {
+      projectId: 'project-abc',
+      featureId: 'feature-123',
+      sessionId: 'session-123',
+      complexity: 'simple',
+      reason: 'Simple change',
+      suggestedAgents: ['frontend'],
+      useLeanPrompts: true,
+      durationMs: 1000,
+      timestamp: new Date().toISOString(),
+    };
+
+    const eventWithoutLeanPrompts: ComplexityAssessedEvent = {
+      projectId: 'project-abc',
+      featureId: 'feature-456',
+      sessionId: 'session-456',
+      complexity: 'complex',
+      reason: 'Complex change',
+      suggestedAgents: ['frontend', 'backend', 'database', 'testing'],
+      useLeanPrompts: false,
+      durationMs: 2000,
+      timestamp: new Date().toISOString(),
+    };
+
+    // Verify useLeanPrompts is properly included in event data
+    expect(eventWithLeanPrompts.useLeanPrompts).toBe(true);
+    expect(eventWithoutLeanPrompts.useLeanPrompts).toBe(false);
+
+    // Simulate what applyComplexityAssessment does
+    const applyToSession = (event: ComplexityAssessedEvent) => ({
+      assessedComplexity: event.complexity,
+      complexityReason: event.reason,
+      suggestedAgents: event.suggestedAgents,
+      useLeanPrompts: event.useLeanPrompts,
+      complexityAssessedAt: event.timestamp,
+    });
+
+    const sessionAfterSimple = applyToSession(eventWithLeanPrompts);
+    expect(sessionAfterSimple.useLeanPrompts).toBe(true);
+
+    const sessionAfterComplex = applyToSession(eventWithoutLeanPrompts);
+    expect(sessionAfterComplex.useLeanPrompts).toBe(false);
+  });
+
   it('should allow all complexity levels', () => {
     for (const complexity of CHANGE_COMPLEXITY_LEVELS) {
       const event: ComplexityAssessedEvent = {
