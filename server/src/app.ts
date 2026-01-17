@@ -2215,10 +2215,11 @@ export function createApp(
   const app = express();
 
   // Create decision validator for filtering false positives (README line 1461)
-  const decisionValidator = new DecisionValidator();
+  // TEMPORARILY DISABLED: validation is too heavy on tokens
+  // const decisionValidator = new DecisionValidator();
   // Create test requirement assessor to determine if tests are needed
   const testAssessor = new TestRequirementAssessor();
-  const resultHandler = new ClaudeResultHandler(storage, sessionManager, decisionValidator);
+  const resultHandler = new ClaudeResultHandler(storage, sessionManager, undefined);
 
   // Middleware
   app.use(express.json());
