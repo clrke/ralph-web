@@ -713,11 +713,19 @@ If all issues are resolved and the plan is ready for implementation, output:
  * Per README lines 1659-1700
  */
 export function buildStage3Prompt(session: Session, plan: Plan): string {
-  const planStepsText = plan.steps.map((step, i) => {
+  // Filter out completed steps to reduce token usage
+  const pendingSteps = plan.steps.filter(step => step.status !== 'completed');
+  const completedCount = plan.steps.length - pendingSteps.length;
+
+  const planStepsText = pendingSteps.map((step, i) => {
     const parentInfo = step.parentId ? ` (depends on: ${step.parentId})` : '';
     return `### Step ${i + 1}: [${step.id}] ${step.title}${parentInfo}
 ${step.description || 'No description provided.'}`;
   }).join('\n\n');
+
+  const completedNote = completedCount > 0
+    ? `\n(${completedCount} step${completedCount > 1 ? 's' : ''} already completed, not shown)`
+    : '';
 
   // Reference plan file for full context (handles context compaction)
   const planFileReference = session.claudePlanFilePath
@@ -772,7 +780,7 @@ Title: ${sanitized.title}
 Description: ${sanitized.featureDescription}
 Project Path: ${session.projectPath}
 
-## Approved Plan (${plan.steps.length} steps)
+## Approved Plan (${pendingSteps.length} remaining of ${plan.steps.length} total)${completedNote}
 ${planStepsText}${planFileReference}
 
 ## Instructions

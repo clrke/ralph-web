@@ -801,7 +801,27 @@ The plan structure is incomplete. Please address the following issues:
     it('should specify step count in header', () => {
       const prompt = buildStage3Prompt(mockSession, approvedPlan);
 
-      expect(prompt).toContain('Approved Plan (3 steps)');
+      expect(prompt).toContain('Approved Plan (3 remaining of 3 total)');
+    });
+
+    it('should filter out completed steps', () => {
+      const planWithCompletedSteps: Plan = {
+        version: 1,
+        steps: [
+          { id: 'step-1', title: 'Completed step', parentId: null, description: 'Already done', status: 'completed', orderIndex: 0, metadata: {} },
+          { id: 'step-2', title: 'Pending step', parentId: null, description: 'Still to do', status: 'pending', orderIndex: 1, metadata: {} },
+          { id: 'step-3', title: 'In progress step', parentId: null, description: 'Working on it', status: 'in_progress', orderIndex: 2, metadata: {} },
+        ],
+        updatedAt: new Date().toISOString(),
+        isApproved: true,
+      };
+      const prompt = buildStage3Prompt(mockSession, planWithCompletedSteps);
+
+      expect(prompt).toContain('Approved Plan (2 remaining of 3 total)');
+      expect(prompt).toContain('(1 step already completed, not shown)');
+      expect(prompt).not.toContain('Completed step');
+      expect(prompt).toContain('Pending step');
+      expect(prompt).toContain('In progress step');
     });
 
     it('should include [STEP_COMPLETE] marker format', () => {
@@ -955,7 +975,7 @@ The plan structure is incomplete. Please address the following issues:
 
       const prompt = buildStage3Prompt(mockSession, emptyPlan);
 
-      expect(prompt).toContain('Approved Plan (0 steps)');
+      expect(prompt).toContain('Approved Plan (0 remaining of 0 total)');
     });
   });
 
