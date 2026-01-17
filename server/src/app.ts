@@ -6,7 +6,7 @@ import { readFile } from 'fs/promises';
 import { ZodSchema, ZodError } from 'zod';
 import { FileStorageService } from './data/FileStorageService';
 import { SessionManager } from './services/SessionManager';
-import { ClaudeOrchestrator, hasActionableContent, MAX_PLAN_VALIDATION_ATTEMPTS } from './services/ClaudeOrchestrator';
+import { ClaudeOrchestrator, hasActionableContent, MAX_PLAN_VALIDATION_ATTEMPTS, MAX_PLAN_REVIEW_ITERATIONS } from './services/ClaudeOrchestrator';
 import { OutputParser } from './services/OutputParser';
 import { HaikuPostProcessor } from './services/HaikuPostProcessor';
 import { ClaudeResultHandler, StepModificationValidationError } from './services/ClaudeResultHandler';
