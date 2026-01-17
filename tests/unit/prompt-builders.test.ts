@@ -364,7 +364,6 @@ describe('Stage Prompt Builders', () => {
 
       expect(prompt).toContain('[DECISION_NEEDED');
       expect(prompt).toContain('[PLAN_MODE_EXITED]');
-      expect(prompt).toContain('[PLAN_FILE');
     });
 
     it('should suggest skipping questions phase for simple changes', () => {

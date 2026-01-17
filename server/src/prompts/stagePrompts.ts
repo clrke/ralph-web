@@ -420,8 +420,7 @@ ${session.acceptanceCriteria.map((c, i) => `- AC-${i + 1}: "${c.text}" -> step-X
 1. Use the Edit tool to write the complete plan to: ${session.claudePlanFilePath}
    - This file already exists and you have permission to edit it
    - Include ALL plan sections: meta, steps, dependencies, test coverage, acceptance mapping
-2. Output: [PLAN_FILE path="${session.claudePlanFilePath}"]
-3. Exit plan mode and output: [PLAN_MODE_EXITED]`;
+2. Exit plan mode and output: [PLAN_MODE_EXITED]`;
 }
 
 /**
