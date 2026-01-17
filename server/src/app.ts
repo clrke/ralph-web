@@ -409,6 +409,99 @@ async function verifyPRCreation(
 }
 
 /**
+ * Spawn Stage 1 for a promoted session (from queue).
+ * Used when an active session completes or backs out and the next queued session is promoted.
+ */
+async function spawnStage1ForPromotedSession(
+  promotedSession: Session,
+  storage: FileStorageService,
+  sessionManager: SessionManager,
+  resultHandler: ClaudeResultHandler,
+  eventBroadcaster: EventBroadcaster | undefined
+): Promise<void> {
+  console.log(`Auto-spawning Stage 1 for promoted session: ${promotedSession.featureId}`);
+
+  const prompt = selectStage1PromptBuilder(promotedSession);
+  const statusPath = `${promotedSession.projectId}/${promotedSession.featureId}/status.json`;
+  const sessionDir = `${promotedSession.projectId}/${promotedSession.featureId}`;
+
+  // Update status to running
+  const status = await storage.readJson<Record<string, unknown>>(statusPath);
+  if (status) {
+    status.status = 'running';
+    status.currentStage = 1;
+    status.lastAction = 'stage1_started';
+    status.lastActionAt = new Date().toISOString();
+    await storage.writeJson(statusPath, status);
+  }
+
+  // Broadcast execution started
+  eventBroadcaster?.stageChanged(promotedSession, 0);
+  eventBroadcaster?.executionStatus(promotedSession.projectId, promotedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'spawning_agent' });
+
+  // Save "started" conversation entry
+  await resultHandler.saveConversationStart(sessionDir, 1, prompt);
+
+  // Spawn Claude for Stage 1
+  let hasReceivedOutput = false;
+  orchestrator.spawn({
+    prompt,
+    projectPath: promotedSession.projectPath,
+    sessionId: promotedSession.claudeSessionId || undefined,
+    allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+    onOutput: (output, isComplete) => {
+      if (!hasReceivedOutput) {
+        hasReceivedOutput = true;
+        eventBroadcaster?.executionStatus(promotedSession.projectId, promotedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'processing_output' });
+      }
+      eventBroadcaster?.claudeOutput(promotedSession.projectId, promotedSession.featureId, output, isComplete);
+    },
+  }).then(async (result) => {
+    eventBroadcaster?.executionStatus(promotedSession.projectId, promotedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'parsing_response' });
+    await resultHandler.handleStage1Result(promotedSession, result, prompt);
+    eventBroadcaster?.executionStatus(promotedSession.projectId, promotedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'validating_output' });
+    const extractedCount = await applyHaikuPostProcessing(result, promotedSession.projectPath, storage, promotedSession, resultHandler);
+    eventBroadcaster?.executionStatus(promotedSession.projectId, promotedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'saving_results' });
+
+    if (eventBroadcaster) {
+      if (result.parsed.decisions.length > 0) {
+        const questionsPath = `${promotedSession.projectId}/${promotedSession.featureId}/questions.json`;
+        const questionsData = await storage.readJson<{ questions: Question[] }>(questionsPath);
+        if (questionsData) {
+          const newQuestions = questionsData.questions.slice(-result.parsed.decisions.length);
+          eventBroadcaster.questionsAsked(promotedSession.projectId, promotedSession.featureId, newQuestions);
+        }
+      }
+
+      if (result.parsed.planSteps.length > 0) {
+        const planPath = `${promotedSession.projectId}/${promotedSession.featureId}/plan.json`;
+        const plan = await storage.readJson<Plan>(planPath);
+        if (plan) {
+          eventBroadcaster.planUpdated(promotedSession.projectId, promotedSession.featureId, plan);
+        }
+      }
+
+      eventBroadcaster.executionStatus(
+        promotedSession.projectId,
+        promotedSession.featureId,
+        result.isError ? 'error' : 'idle',
+        result.isError ? 'stage1_error' : 'stage1_complete',
+        { stage: 1 }
+      );
+    }
+
+    if (!result.isError) {
+      await handleStage1Completion(promotedSession, result, storage, sessionManager, resultHandler, eventBroadcaster);
+    }
+
+    console.log(`Stage 1 ${result.isError ? 'failed' : 'completed'} for promoted session ${promotedSession.featureId}${extractedCount > 0 ? ` (${extractedCount} questions via Haiku)` : ''}`);
+  }).catch((error) => {
+    console.error(`Stage 1 spawn error for promoted session ${promotedSession.featureId}:`, error);
+    eventBroadcaster?.executionStatus(promotedSession.projectId, promotedSession.featureId, 'error', 'stage1_spawn_error', { stage: 1 });
+  });
+}
+
+/**
  * Spawn Stage 2 review Claude. Used by:
  * - Auto-transition from Stage 1 when plan file is created
  * - Manual /transition endpoint (kept for edge cases)
@@ -2972,87 +3065,15 @@ export function createApp(
           // Recalculate queue positions for remaining queued sessions
           await sessionManager.recalculateQueuePositions(projectId);
 
-          console.log(`Starting queued session: ${nextSession.featureId}`);
-
-          // Spawn Stage 1 for the new session
-          // Select prompt based on complexity assessment (streamlined for simple, full for complex)
-          const prompt = selectStage1PromptBuilder(startedSession);
-          const statusPath = `${startedSession.projectId}/${startedSession.featureId}/status.json`;
-
-          // Update status to running
-          const nextStatus = await storage.readJson<Record<string, unknown>>(statusPath);
-          if (nextStatus) {
-            nextStatus.status = 'running';
-            nextStatus.currentStage = 1;
-            nextStatus.lastAction = 'stage1_started';
-            nextStatus.lastActionAt = new Date().toISOString();
-            await storage.writeJson(statusPath, nextStatus);
-          }
-
-          // Broadcast execution started for the new session
-          eventBroadcaster?.stageChanged(startedSession, 0);
-          eventBroadcaster?.executionStatus(startedSession.projectId, startedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'spawning_agent' });
-
-          // Save "started" conversation entry
-          const nextSessionDir = `${startedSession.projectId}/${startedSession.featureId}`;
-          await resultHandler.saveConversationStart(nextSessionDir, 1, prompt);
-
-          // Spawn Claude for Stage 1
-          let hasReceivedOutput = false;
-          orchestrator.spawn({
-            prompt,
-            projectPath: startedSession.projectPath,
-            sessionId: startedSession.claudeSessionId || undefined,
-            allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
-            onOutput: (output, isComplete) => {
-              if (!hasReceivedOutput) {
-                hasReceivedOutput = true;
-                eventBroadcaster?.executionStatus(startedSession.projectId, startedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'processing_output' });
-              }
-              eventBroadcaster?.claudeOutput(startedSession.projectId, startedSession.featureId, output, isComplete);
-            },
-          }).then(async (result) => {
-            eventBroadcaster?.executionStatus(startedSession.projectId, startedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'parsing_response' });
-            await resultHandler.handleStage1Result(startedSession, result, prompt);
-            eventBroadcaster?.executionStatus(startedSession.projectId, startedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'validating_output' });
-            const extractedCount = await applyHaikuPostProcessing(result, startedSession.projectPath, storage, startedSession, resultHandler);
-            eventBroadcaster?.executionStatus(startedSession.projectId, startedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'saving_results' });
-
-            if (eventBroadcaster) {
-              if (result.parsed.decisions.length > 0) {
-                const questionsPath = `${startedSession.projectId}/${startedSession.featureId}/questions.json`;
-                const questionsData = await storage.readJson<{ questions: Question[] }>(questionsPath);
-                if (questionsData) {
-                  const newQuestions = questionsData.questions.slice(-result.parsed.decisions.length);
-                  eventBroadcaster.questionsAsked(startedSession.projectId, startedSession.featureId, newQuestions);
-                }
-              }
-
-              if (result.parsed.planSteps.length > 0) {
-                const planPath = `${startedSession.projectId}/${startedSession.featureId}/plan.json`;
-                const plan = await storage.readJson<Plan>(planPath);
-                if (plan) {
-                  eventBroadcaster.planUpdated(startedSession.projectId, startedSession.featureId, plan);
-                }
-              }
-
-              eventBroadcaster.executionStatus(
-                startedSession.projectId,
-                startedSession.featureId,
-                result.isError ? 'error' : 'idle',
-                result.isError ? 'stage1_error' : 'stage1_complete',
-                { stage: 1 }
-              );
-            }
-
-            if (!result.isError) {
-              await handleStage1Completion(startedSession, result, storage, sessionManager, resultHandler, eventBroadcaster);
-            }
-
-            console.log(`Stage 1 ${result.isError ? 'failed' : 'completed'} for ${startedSession.featureId}${extractedCount > 0 ? ` (${extractedCount} questions via Haiku)` : ''}`);
-          }).catch((error) => {
-            console.error(`Stage 1 spawn error for ${startedSession.featureId}:`, error);
-            eventBroadcaster?.executionStatus(startedSession.projectId, startedSession.featureId, 'error', 'stage1_spawn_error', { stage: 1 });
+          // Auto-spawn Stage 1 for the promoted session (fire and forget)
+          spawnStage1ForPromotedSession(
+            startedSession,
+            storage,
+            sessionManager,
+            resultHandler,
+            eventBroadcaster
+          ).catch((error) => {
+            console.error(`Failed to auto-spawn Stage 1 for promoted session ${startedSession.featureId}:`, error);
           });
 
           res.json({ success: true, session: updatedSession, nextSession: startedSession });
@@ -4404,7 +4425,7 @@ Please ensure you output proper completion markers when done.`;
           result.promotedSession?.featureId || null
         );
 
-        // If a session was promoted, broadcast its stage change
+        // If a session was promoted, broadcast its stage change and auto-spawn Stage 1
         if (result.promotedSession) {
           eventBroadcaster.stageChanged(result.promotedSession, 0);
           eventBroadcaster.executionStatus(
@@ -4415,6 +4436,19 @@ Please ensure you output proper completion markers when done.`;
             { stage: result.promotedSession.currentStage }
           );
         }
+      }
+
+      // Auto-spawn Stage 1 for promoted session (fire and forget)
+      if (result.promotedSession) {
+        spawnStage1ForPromotedSession(
+          result.promotedSession,
+          storage,
+          sessionManager,
+          resultHandler,
+          eventBroadcaster
+        ).catch((error) => {
+          console.error(`Failed to auto-spawn Stage 1 for promoted session ${result.promotedSession!.featureId}:`, error);
+        });
       }
 
       console.log(`Session ${featureId} backed out with action: ${action}, reason: ${result.session.backoutReason}`);
