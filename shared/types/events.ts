@@ -137,6 +137,31 @@ export interface ImplementationProgressEvent {
 }
 
 // =============================================================================
+// Plan Review Iteration Events
+// =============================================================================
+
+/**
+ * Event emitted during plan review iterations to track iteration progress.
+ * Used when continuing review after [PLAN_APPROVED] with pending [DECISION_NEEDED] markers.
+ */
+export interface PlanReviewIterationEvent {
+  /** Current iteration number (1-based) */
+  currentIteration: number;
+  /** Maximum allowed iterations before forced approval */
+  maxIterations: number;
+  /** Whether the result contained any DECISION_NEEDED markers */
+  hasDecisionNeeded: boolean;
+  /** Whether the plan is approved (via state or marker) */
+  planApproved: boolean;
+  /** Decision made: continue reviewing or transition to Stage 3 */
+  decision: 'continue' | 'transition_to_stage_3';
+  /** Number of pending decisions (if hasDecisionNeeded is true) */
+  pendingDecisionCount?: number;
+  /** Timestamp of the event */
+  timestamp: string;
+}
+
+// =============================================================================
 // Queue Events
 // =============================================================================
 
@@ -244,6 +269,7 @@ export interface ServerToClientEvents {
   'question.answered': (data: QuestionAnsweredEvent) => void;
   'plan.updated': (data: PlanUpdatedEvent) => void;
   'plan.approved': (data: PlanApprovedEvent) => void;
+  'plan.review.iteration': (data: PlanReviewIterationEvent) => void;
   'execution.status': (data: ExecutionStatusEvent) => void;
   'claude.output': (data: ClaudeOutputEvent) => void;
   'step.started': (data: StepStartedEvent) => void;
