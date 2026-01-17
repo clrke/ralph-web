@@ -393,7 +393,22 @@ How should we address this?
  * Supports step modifications: add, edit, and remove steps.
  * Uses direct Edit tool modifications instead of marker-based output.
  */
-export function buildPlanRevisionPrompt(session: Session, plan: Plan, feedback: string): string {
+/**
+ * Options for building plan revision prompt
+ */
+export interface PlanRevisionOptions {
+  /** Whether this revision is triggered by CI failure */
+  isCIFailure?: boolean;
+  /** PR URL for CI checks access */
+  prUrl?: string | null;
+}
+
+export function buildPlanRevisionPrompt(
+  session: Session,
+  plan: Plan,
+  feedback: string,
+  options?: PlanRevisionOptions
+): string {
   // Sanitize user-provided fields to prevent marker injection
   const sanitized = sanitizeSessionFields(session);
   const sanitizedFeedback = escapeMarkers(feedback);
@@ -513,8 +528,61 @@ Question about the feedback to clarify before modifying the plan...
 - Option B: Interpretation 2
 [/DECISION_NEEDED]
 \`\`\`
-
+${options?.isCIFailure ? buildCITroubleshootingSection(options.prUrl) : ''}
 The system will automatically detect changes to the plan files and process them accordingly.`;
+}
+
+/**
+ * Build CI troubleshooting section for plan revision prompt
+ */
+function buildCITroubleshootingSection(prUrl?: string | null): string {
+  const prNumber = prUrl?.split('/').pop() || '';
+  const ghChecksCommand = prUrl
+    ? `gh pr checks ${prNumber}`
+    : 'gh pr checks <pr-number>';
+  const ghViewCommand = prUrl
+    ? `gh pr view ${prNumber}`
+    : 'gh pr view <pr-number>';
+
+  return `
+## CI Failure Troubleshooting
+
+**IMPORTANT:** CI checks have failed. Before modifying the plan, investigate the actual failures.
+
+### Step 1: Read CI Check Results
+Run the following command to see CI check status and failure details:
+\`\`\`bash
+${ghChecksCommand}
+\`\`\`
+
+### Step 2: Get Failure Details
+For failed checks, view the logs to understand what went wrong:
+\`\`\`bash
+gh run view <run-id> --log-failed
+\`\`\`
+
+### Step 3: Determine the Fix
+Based on the CI failure, decide:
+1. **Plan needs changes** - If the implementation approach is wrong, modify the plan steps
+2. **Implementation needs fixes** - If the plan is correct but implementation has bugs:
+   - Set the affected step(s) status to "pending" in plan.json
+   - Clear the step's contentHash field (set to null) to force re-implementation
+   - Do NOT change the step's title/description unless the approach itself was wrong
+
+### Step 4: Mark Steps for Re-implementation
+If a step needs re-implementation (not plan changes), update plan.json:
+\`\`\`json
+{
+  "id": "step-X",
+  "status": "pending",
+  "contentHash": null,
+  ...
+}
+\`\`\`
+
+### PR Reference
+${prUrl ? `PR URL: ${prUrl}` : 'PR URL not available - use gh pr list to find it'}
+`;
 }
 
 /**

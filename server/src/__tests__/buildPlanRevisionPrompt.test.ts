@@ -485,3 +485,62 @@ describe('buildPlanRevisionPrompt - behavior changes from marker-based approach'
     expect(prompt).toContain('"id":');
   });
 });
+
+describe('buildPlanRevisionPrompt - CI failure handling', () => {
+  const session = createMockSession();
+  const steps = [createMockStep('step-1'), createMockStep('step-2', 'step-1')];
+  const plan = createMockPlan(steps);
+
+  it('should include CI troubleshooting section when isCIFailure is true', () => {
+    const feedback = 'CI checks failed';
+    const prompt = buildPlanRevisionPrompt(session, plan, feedback, {
+      isCIFailure: true,
+      prUrl: 'https://github.com/owner/repo/pull/123',
+    });
+
+    expect(prompt).toContain('## CI Failure Troubleshooting');
+    expect(prompt).toContain('gh pr checks 123');
+    expect(prompt).toContain('gh run view <run-id> --log-failed');
+    expect(prompt).toContain('PR URL: https://github.com/owner/repo/pull/123');
+  });
+
+  it('should not include CI troubleshooting section when isCIFailure is false', () => {
+    const feedback = 'Some feedback';
+    const prompt = buildPlanRevisionPrompt(session, plan, feedback, {
+      isCIFailure: false,
+    });
+
+    expect(prompt).not.toContain('## CI Failure Troubleshooting');
+  });
+
+  it('should not include CI troubleshooting section when options not provided', () => {
+    const feedback = 'Some feedback';
+    const prompt = buildPlanRevisionPrompt(session, plan, feedback);
+
+    expect(prompt).not.toContain('## CI Failure Troubleshooting');
+  });
+
+  it('should handle missing prUrl gracefully', () => {
+    const feedback = 'CI checks failed';
+    const prompt = buildPlanRevisionPrompt(session, plan, feedback, {
+      isCIFailure: true,
+      prUrl: null,
+    });
+
+    expect(prompt).toContain('## CI Failure Troubleshooting');
+    expect(prompt).toContain('gh pr checks <pr-number>');
+    expect(prompt).toContain('PR URL not available');
+  });
+
+  it('should include instructions for marking steps for re-implementation', () => {
+    const feedback = 'CI checks failed';
+    const prompt = buildPlanRevisionPrompt(session, plan, feedback, {
+      isCIFailure: true,
+      prUrl: 'https://github.com/owner/repo/pull/456',
+    });
+
+    expect(prompt).toContain('contentHash');
+    expect(prompt).toContain('"status": "pending"');
+    expect(prompt).toContain('Clear the step\'s contentHash field');
+  });
+});

@@ -13,7 +13,6 @@ import { ClaudeResultHandler, StepModificationValidationError } from './services
 import { planCompletionChecker, PlanCompletenessResult } from './services/PlanCompletionChecker';
 import { DecisionValidator } from './services/DecisionValidator';
 import { TestRequirementAssessor } from './services/TestRequirementAssessor';
-import { IncompleteStepsAssessor } from './services/IncompleteStepsAssessor';
 import { EventBroadcaster } from './services/EventBroadcaster';
 import { withLock, SpawnLockError } from './services/SpawnLock';
 import {
@@ -1975,48 +1974,26 @@ async function handleStage5Result(
   // Check for CI failure - requires return to Stage 2
   if (result.parsed.ciFailed || result.parsed.returnToStage2) {
     const reason = result.parsed.returnToStage2?.reason || 'CI checks failed';
-    console.log(`Stage 5 returning to Stage 2: ${reason}`);
+    console.log(`Stage 5 returning to Stage 2 for CI failure: ${reason}`);
 
     // Transition back to Stage 2
     const previousStage = session.currentStage;
     const updatedSession = await sessionManager.transitionStage(session.projectId, session.featureId, 2);
     eventBroadcaster?.stageChanged(updatedSession, previousStage);
 
-    // Use LLM to identify which steps are actually incomplete
+    // Load plan and mark as needing review (don't pre-mark steps - let Claude investigate)
     const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
     if (plan) {
-      // Assess which steps are affected by the CI/review issues
-      const incompleteAssessor = new IncompleteStepsAssessor();
-      const assessment = await incompleteAssessor.assess(plan, reason, session.projectPath);
-
-      // Save post-processing conversation
-      await resultHandler.savePostProcessingConversation(
-        sessionDir,
-        5, // Stage 5 spawned this
-        'incomplete_steps',
-        assessment.prompt,
-        assessment.output,
-        assessment.durationMs,
-        false
-      );
-
-      // Update plan based on assessment
       plan.isApproved = false;
       plan.planVersion = (plan.planVersion || 1) + 1;
-
-      // Only mark affected steps as needs_review or pending
-      for (const affected of assessment.affectedSteps) {
-        const step = plan.steps.find(s => s.id === affected.stepId);
-        if (step) {
-          step.status = affected.status;
-        }
-      }
-
       await storage.writeJson(`${sessionDir}/plan.json`, plan);
 
-      // Auto-spawn Stage 2 with plan revision prompt including assessment summary
-      const revisionFeedback = `CI/Review Issues from Stage 5:\n${reason}\n\nAssessment: ${assessment.summary}\n\nAffected steps:\n${assessment.affectedSteps.map(s => `- ${s.stepId}: ${s.reason}`).join('\n')}\n\nPlease update the plan to address these issues.`;
-      const revisionPrompt = buildPlanRevisionPrompt(updatedSession, plan, revisionFeedback);
+      // Auto-spawn Stage 2 - Claude will read CI details directly via gh pr commands
+      const revisionFeedback = `CI checks failed. Use \`gh pr checks\` and \`gh run view\` to investigate the failures and determine what needs to be fixed.`;
+      const revisionPrompt = buildPlanRevisionPrompt(updatedSession, plan, revisionFeedback, {
+        isCIFailure: true,
+        prUrl: updatedSession.prUrl,
+      });
       await spawnStage2Review(updatedSession, storage, sessionManager, resultHandler, eventBroadcaster, revisionPrompt);
     }
 
