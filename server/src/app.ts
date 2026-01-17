@@ -482,7 +482,11 @@ async function spawnStage2Review(
  *
  * @param reviewCount - Number of completed review iterations
  * @param hasDecisionNeeded - Whether the result contained any DECISION_NEEDED markers
- * @param _planApproved - Whether PLAN_APPROVED was present (reserved for future use)
+ * @param _planApproved - Whether PLAN_APPROVED was present. Reserved for future use:
+ *   Currently unused because we continue iterating based solely on pending decisions.
+ *   Future enhancement may use this to implement different behaviors when plan is
+ *   approved vs not approved (e.g., different iteration limits, different prompts).
+ *   Kept in signature to maintain API stability when that enhancement is added.
  * @returns true if review should continue, false otherwise
  */
 export function shouldContinuePlanReview(
@@ -599,7 +603,21 @@ async function handleStage2Completion(
       });
     } catch (error) {
       if (error instanceof SpawnLockError) {
-        console.log(`[Plan Review] ${session.featureId}: Lock already held, skipping iteration ${nextIteration} spawn`);
+        // Elevated to WARNING: Lock contention during iteration continuation
+        // This could indicate concurrent access or hung process
+        console.warn(`[Plan Review] ${session.featureId}: Lock already held, skipping iteration ${nextIteration} spawn - potential concurrent access`);
+
+        // Notify frontend about the lock contention so user is aware
+        eventBroadcaster?.planReviewIteration(
+          session.projectId,
+          session.featureId,
+          nextIteration,
+          MAX_PLAN_REVIEW_ITERATIONS,
+          hasDecisionNeeded,
+          planApproved,
+          'lock_contention_skipped',
+          result.parsed.decisions.length
+        );
       } else {
         throw error;
       }

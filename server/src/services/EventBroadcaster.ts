@@ -176,7 +176,7 @@ export class EventBroadcaster {
     maxIterations: number,
     hasDecisionNeeded: boolean,
     planApproved: boolean,
-    decision: 'continue' | 'transition_to_stage_3',
+    decision: 'continue' | 'transition_to_stage_3' | 'lock_contention_skipped',
     pendingDecisionCount?: number
   ): void {
     const room = this.getRoom(projectId, featureId);

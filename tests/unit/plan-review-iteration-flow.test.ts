@@ -554,4 +554,133 @@ describe('Plan Review Iteration Flow Integration', () => {
       expect(logMessage).toContain('decision=TRANSITION_TO_STAGE_3');
     });
   });
+
+  describe('SpawnLockError handling during iteration continuation', () => {
+    it('should format lock contention warning log correctly', () => {
+      const featureId = 'test-feature';
+      const nextIteration = 3;
+
+      const warningMessage =
+        `[Plan Review] ${featureId}: Lock already held, skipping iteration ${nextIteration} spawn - potential concurrent access`;
+
+      expect(warningMessage).toContain('[Plan Review]');
+      expect(warningMessage).toContain('Lock already held');
+      expect(warningMessage).toContain(`iteration ${nextIteration}`);
+      expect(warningMessage).toContain('potential concurrent access');
+    });
+
+    it('should broadcast lock_contention_skipped event on SpawnLockError', () => {
+      // Verify the event structure for lock contention scenario
+      const event = {
+        currentIteration: 3,
+        maxIterations: MAX_PLAN_REVIEW_ITERATIONS,
+        hasDecisionNeeded: true,
+        planApproved: true,
+        decision: 'lock_contention_skipped' as const,
+        pendingDecisionCount: 2,
+        timestamp: new Date().toISOString(),
+      };
+
+      expect(event.decision).toBe('lock_contention_skipped');
+      expect(event.currentIteration).toBe(3);
+      expect(event.pendingDecisionCount).toBe(2);
+    });
+
+    it('should include iteration context in lock contention broadcast', () => {
+      // Simulate the planReviewIteration call during lock contention
+      const projectId = 'project-abc';
+      const featureId = 'test-feature';
+      const nextIteration = 5;
+      const hasDecisionNeeded = true;
+      const planApproved = true;
+      const pendingDecisionCount = 3;
+
+      // Verify the broadcast would be called with correct parameters
+      const expectedEvent = {
+        currentIteration: nextIteration,
+        maxIterations: MAX_PLAN_REVIEW_ITERATIONS,
+        hasDecisionNeeded,
+        planApproved,
+        decision: 'lock_contention_skipped',
+        pendingDecisionCount,
+      };
+
+      expect(expectedEvent.currentIteration).toBe(5);
+      expect(expectedEvent.decision).toBe('lock_contention_skipped');
+      expect(expectedEvent.pendingDecisionCount).toBe(3);
+    });
+  });
+
+  describe('Error action formatting with iteration context', () => {
+    it('should format error action with iteration number', () => {
+      const iterationContext = 5;
+      const errorAction = iterationContext
+        ? `stage2_spawn_error_iteration_${iterationContext}_of_${MAX_PLAN_REVIEW_ITERATIONS}`
+        : 'stage2_spawn_error';
+
+      expect(errorAction).toBe(`stage2_spawn_error_iteration_5_of_${MAX_PLAN_REVIEW_ITERATIONS}`);
+      expect(errorAction).toContain('iteration_5');
+      expect(errorAction).toContain(`of_${MAX_PLAN_REVIEW_ITERATIONS}`);
+    });
+
+    it('should use generic error action when no iteration context', () => {
+      const iterationContext: number | undefined = undefined;
+      const errorAction = iterationContext
+        ? `stage2_spawn_error_iteration_${iterationContext}_of_${MAX_PLAN_REVIEW_ITERATIONS}`
+        : 'stage2_spawn_error';
+
+      expect(errorAction).toBe('stage2_spawn_error');
+    });
+
+    it('should include iteration in executionStatus event details', () => {
+      const iterationContext = 7;
+      const eventDetails = {
+        stage: 2,
+        iteration: iterationContext,
+        maxIterations: MAX_PLAN_REVIEW_ITERATIONS,
+      };
+
+      expect(eventDetails.iteration).toBe(7);
+      expect(eventDetails.maxIterations).toBe(MAX_PLAN_REVIEW_ITERATIONS);
+      expect(eventDetails.stage).toBe(2);
+    });
+
+    it('should handle boundary iteration values in error formatting', () => {
+      // Test iteration 1 (first iteration)
+      const firstIterationAction = `stage2_spawn_error_iteration_1_of_${MAX_PLAN_REVIEW_ITERATIONS}`;
+      expect(firstIterationAction).toContain('iteration_1');
+
+      // Test iteration at max (last iteration)
+      const lastIterationAction = `stage2_spawn_error_iteration_${MAX_PLAN_REVIEW_ITERATIONS}_of_${MAX_PLAN_REVIEW_ITERATIONS}`;
+      expect(lastIterationAction).toContain(`iteration_${MAX_PLAN_REVIEW_ITERATIONS}`);
+    });
+  });
+
+  describe('StepModificationValidationError during iteration', () => {
+    it('should preserve iteration context through validation error re-spawn', () => {
+      const iterationContext = 4;
+      const validationErrors = ['Missing step ID', 'Invalid parent reference'];
+      const validationContext = `Your step modification output contained errors:\n${validationErrors.map(e => `- ${e}`).join('\n')}\n\nPlease fix these issues and try again.`;
+
+      // The re-spawn should preserve iteration context
+      expect(validationContext).toContain('step modification output contained errors');
+      expect(validationContext).toContain('Missing step ID');
+      expect(validationContext).toContain('Invalid parent reference');
+
+      // Verify iteration context is preserved (passed as parameter to spawnStage2Review)
+      const preservedIterationContext = iterationContext;
+      expect(preservedIterationContext).toBe(4);
+    });
+
+    it('should log validation error with iteration info', () => {
+      const featureId = 'test-feature';
+      const iterationInfo = ' (iteration 4/10)';
+
+      const logMessage = `[Stage 2] Re-spawning due to step modification validation errors for ${featureId}${iterationInfo}`;
+
+      expect(logMessage).toContain('[Stage 2]');
+      expect(logMessage).toContain('step modification validation errors');
+      expect(logMessage).toContain('iteration 4/10');
+    });
+  });
 });

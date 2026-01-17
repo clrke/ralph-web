@@ -153,8 +153,8 @@ export interface PlanReviewIterationEvent {
   hasDecisionNeeded: boolean;
   /** Whether the plan is approved (via state or marker) */
   planApproved: boolean;
-  /** Decision made: continue reviewing or transition to Stage 3 */
-  decision: 'continue' | 'transition_to_stage_3';
+  /** Decision made: continue reviewing, transition to Stage 3, or skipped due to lock contention */
+  decision: 'continue' | 'transition_to_stage_3' | 'lock_contention_skipped';
   /** Number of pending decisions (if hasDecisionNeeded is true) */
   pendingDecisionCount?: number;
   /** Timestamp of the event */
