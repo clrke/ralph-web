@@ -21,6 +21,30 @@ export const BACKOUT_REASONS: BackoutReason[] = ['user_requested', 'blocked', 'd
 
 export type CircuitBreakerState = 'CLOSED' | 'HALF_OPEN' | 'OPEN';
 
+/** Complexity classification for feature requests */
+export type ChangeComplexity = 'trivial' | 'simple' | 'normal' | 'complex';
+
+/** All valid change complexity values for runtime validation */
+export const CHANGE_COMPLEXITY_LEVELS: ChangeComplexity[] = ['trivial', 'simple', 'normal', 'complex'];
+
+/** Result of AI-based complexity assessment */
+export interface ComplexityAssessment {
+  /** The assessed complexity level */
+  complexity: ChangeComplexity;
+  /** Explanation of why this complexity was assigned */
+  reason: string;
+  /** Suggested agent types for this change (e.g., ['frontend'], ['backend', 'database']) */
+  suggestedAgents: string[];
+  /** Whether to use lean prompts for this change */
+  useLeanPrompts: boolean;
+  /** Duration of the assessment in milliseconds */
+  durationMs: number;
+  /** The prompt used for assessment */
+  prompt: string;
+  /** Raw output from the assessment */
+  output: string;
+}
+
 /** User preferences for decision filtering in plan review */
 export interface UserPreferences {
   /** How comfortable with experimental/risky approaches */

@@ -1,4 +1,4 @@
-import type { Plan, Session, UserPreferences } from '@claude-code-web/shared';
+import type { Plan, Session, UserPreferences, AcceptanceCriterion } from '@claude-code-web/shared';
 import type { ParsedDecision } from '../services/OutputParser';
 
 /**
@@ -308,4 +308,87 @@ ${issueReason}
 - If unsure, mark as "needs_review" (safer than leaving as completed)
 - Be specific about why each step is affected
 - Consider dependencies - if step A affects step B, both may need review`;
+}
+
+/**
+ * Build prompt for Haiku to assess the complexity of a feature request.
+ * Called at session creation/edit time, before queueing.
+ *
+ * Complexity levels:
+ * - trivial: Single-line changes, typo fixes, config tweaks
+ * - simple: Localized changes (e.g., frontend label change, single file modification)
+ * - normal: Standard features requiring multiple files/components
+ * - complex: Large features, architectural changes, cross-cutting concerns
+ */
+export function buildComplexityAssessmentPrompt(
+  title: string,
+  description: string,
+  acceptanceCriteria: AcceptanceCriterion[]
+): string {
+  const criteriaText = acceptanceCriteria.length > 0
+    ? acceptanceCriteria.map((ac, i) => `${i + 1}. ${ac.text}`).join('\n')
+    : 'No acceptance criteria specified.';
+
+  return `Classify the complexity of this feature request to optimize stage execution.
+
+## Feature Request
+Title: ${title}
+Description: ${description}
+
+## Acceptance Criteria
+${criteriaText}
+
+## Instructions
+
+1. **Analyze the scope**: What changes are being requested?
+2. **Identify affected areas**: Which parts of the codebase will be touched?
+3. **Determine complexity**: Based on the criteria below, classify the complexity level
+
+## Complexity Levels
+
+**trivial**: Single-line changes, typo fixes, config value tweaks
+- Examples: Fix a typo in a string, update a version number, change a constant value
+- Expected file count: 1 file, 1-5 lines changed
+- Suggested agents: Usually just the most relevant one (e.g., Frontend, Backend, or Docs)
+
+**simple**: Localized changes that don't require architectural understanding
+- Examples: Change a button label, update color/styling, add a simple validation message
+- Expected file count: 1-3 files, < 50 lines changed
+- Suggested agents: 1-2 relevant agents (e.g., Frontend + CI Agent for UI changes)
+
+**normal**: Standard features requiring understanding of multiple components
+- Examples: Add a new API endpoint, implement a form with validation, add a new page/route
+- Expected file count: 3-10 files, < 500 lines changed
+- Suggested agents: 3-4 agents based on feature scope
+
+**complex**: Large features, architectural changes, or cross-cutting concerns
+- Examples: Add authentication system, refactor database schema, implement real-time features
+- Expected file count: 10+ files, 500+ lines changed
+- Suggested agents: All 6 agents (full exploration needed)
+
+## Agent Types
+Available agents for suggestion:
+- "frontend": UI components, client-side logic, styling
+- "backend": API endpoints, server logic, services
+- "database": Schema changes, migrations, queries
+- "testing": Test files, test utilities
+- "infrastructure": CI/CD, deployment, config files
+- "documentation": README, docs, comments
+
+## Response Format (JSON only)
+
+{
+  "complexity": "trivial" | "simple" | "normal" | "complex",
+  "reason": "Brief explanation of why this complexity level was chosen",
+  "suggestedAgents": ["frontend", "testing"],
+  "useLeanPrompts": true | false
+}
+
+## Rules
+- Err on the side of higher complexity if unsure (better to be thorough than miss something)
+- For trivial/simple: suggest only 1-2 most relevant agents
+- For normal: suggest 3-4 agents based on the specific feature
+- For complex: suggest all 6 agents
+- useLeanPrompts should be true for trivial/simple, false for normal/complex
+- Consider the acceptance criteria - more criteria usually means higher complexity`;
 }
