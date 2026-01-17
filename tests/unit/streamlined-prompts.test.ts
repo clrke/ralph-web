@@ -286,6 +286,76 @@ describe('Streamlined Prompts', () => {
         expect(streamlinedPrompt.length).toBeLessThan(fullPrompt.length * 0.8);
       });
     });
+
+    describe('invalid agent fallback (step-17 fix)', () => {
+      it('should fallback to all agents when suggestedAgents contains only invalid values', () => {
+        const session: Session = {
+          ...baseSession,
+          assessedComplexity: 'simple',
+          suggestedAgents: ['invalid_agent_1', 'unknown_agent_2'],
+        };
+
+        const prompt = buildStage1PromptStreamlined(session);
+
+        // Should include ALL valid agents as fallback
+        expect(prompt).toContain('Frontend Agent');
+        expect(prompt).toContain('Backend Agent');
+        expect(prompt).toContain('Database Agent');
+        expect(prompt).toContain('Test Agent');
+        expect(prompt).toContain('Infrastructure Agent');
+        expect(prompt).toContain('Documentation Agent');
+      });
+
+      it('should filter out invalid agents but keep valid ones', () => {
+        const session: Session = {
+          ...baseSession,
+          assessedComplexity: 'simple',
+          suggestedAgents: ['frontend', 'invalid_agent', 'testing'],
+        };
+
+        const prompt = buildStage1PromptStreamlined(session);
+
+        // Should include only the valid agents
+        expect(prompt).toContain('Frontend Agent');
+        expect(prompt).toContain('Test Agent');
+        // Should NOT include invalid agents or other valid agents not in the list
+        expect(prompt).not.toContain('Backend Agent');
+        expect(prompt).not.toContain('Database Agent');
+      });
+
+      it('should use default agents when suggestedAgents is undefined', () => {
+        const session: Session = {
+          ...baseSession,
+          assessedComplexity: 'simple',
+          suggestedAgents: undefined,
+        };
+
+        const prompt = buildStage1PromptStreamlined(session);
+
+        // Default is ['frontend', 'backend']
+        expect(prompt).toContain('Frontend Agent');
+        expect(prompt).toContain('Backend Agent');
+        expect(prompt).not.toContain('Database Agent');
+      });
+
+      it('should use default agents when suggestedAgents is empty array', () => {
+        const session: Session = {
+          ...baseSession,
+          assessedComplexity: 'simple',
+          suggestedAgents: [],
+        };
+
+        const prompt = buildStage1PromptStreamlined(session);
+
+        // Empty array should fallback to all agents
+        expect(prompt).toContain('Frontend Agent');
+        expect(prompt).toContain('Backend Agent');
+        expect(prompt).toContain('Database Agent');
+        expect(prompt).toContain('Test Agent');
+        expect(prompt).toContain('Infrastructure Agent');
+        expect(prompt).toContain('Documentation Agent');
+      });
+    });
   });
 
   describe('buildStage2PromptStreamlined', () => {

@@ -293,14 +293,17 @@ ${sanitized.technicalNotes}`
     : '';
 
   // Build agent section based on suggestedAgents
-  const suggestedAgents = session.suggestedAgents || ['frontend', 'backend'];
+  // Filter to only valid agent types, fallback to all agents if none are valid
+  const ALL_AGENT_KEYS = Object.keys(AGENT_DEFINITIONS);
+  const rawSuggestedAgents = session.suggestedAgents || ['frontend', 'backend'];
+  const validAgents = rawSuggestedAgents.filter((a) => AGENT_DEFINITIONS[a]);
+  const suggestedAgents = validAgents.length > 0 ? validAgents : ALL_AGENT_KEYS;
+
   const agentSections = suggestedAgents
     .map((agentType, index) => {
       const agent = AGENT_DEFINITIONS[agentType];
-      if (!agent) return null;
       return `${index + 1}. **${agent.name}**: ${agent.instructions}`;
     })
-    .filter(Boolean)
     .join('\n\n');
 
   // For simple changes, always include a quick architecture check
