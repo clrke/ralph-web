@@ -507,4 +507,104 @@ describe('buildStage5PromptStreamlined', () => {
       expect(prompt).toContain('[READ-ONLY] Review API changes');
     });
   });
+
+  describe('STAGE5_REVIEW_AGENTS read-only prefixes', () => {
+    it('should include [READ-ONLY] prefix for frontend agent', () => {
+      const session = createMockSession({
+        assessedComplexity: 'simple',
+        suggestedAgents: ['frontend'],
+      });
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5PromptStreamlined(session, plan, prInfo);
+
+      expect(prompt).toContain('[READ-ONLY] Review UI changes');
+    });
+
+    it('should include [READ-ONLY] prefix for backend agent', () => {
+      const session = createMockSession({
+        assessedComplexity: 'simple',
+        suggestedAgents: ['backend'],
+      });
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5PromptStreamlined(session, plan, prInfo);
+
+      expect(prompt).toContain('[READ-ONLY] Review API changes');
+    });
+
+    it('should include [READ-ONLY] prefix for database agent', () => {
+      const session = createMockSession({
+        assessedComplexity: 'simple',
+        suggestedAgents: ['database'],
+      });
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5PromptStreamlined(session, plan, prInfo);
+
+      expect(prompt).toContain('[READ-ONLY] Review data layer');
+    });
+
+    it('should include [READ-ONLY] prefix for testing agent', () => {
+      const session = createMockSession({
+        assessedComplexity: 'simple',
+        suggestedAgents: ['testing'],
+      });
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5PromptStreamlined(session, plan, prInfo);
+
+      expect(prompt).toContain('[READ-ONLY] Verify test coverage');
+    });
+
+    it('should include [READ-ONLY] prefix for infrastructure agent', () => {
+      const session = createMockSession({
+        assessedComplexity: 'simple',
+        suggestedAgents: ['infrastructure'],
+      });
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5PromptStreamlined(session, plan, prInfo);
+
+      expect(prompt).toContain('[READ-ONLY] Check CI status');
+    });
+
+    it('should include [READ-ONLY] prefix for documentation agent', () => {
+      const session = createMockSession({
+        assessedComplexity: 'simple',
+        suggestedAgents: ['documentation'],
+      });
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5PromptStreamlined(session, plan, prInfo);
+
+      expect(prompt).toContain('[READ-ONLY] Review documentation changes');
+    });
+
+    it('should include [READ-ONLY] prefix for all 6 agent types when all are requested', () => {
+      const allAgents = ['frontend', 'backend', 'database', 'testing', 'infrastructure', 'documentation'];
+      const session = createMockSession({
+        assessedComplexity: 'simple',
+        suggestedAgents: allAgents,
+      });
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5PromptStreamlined(session, plan, prInfo);
+
+      // Verify all 6 agents have [READ-ONLY] prefix
+      expect(prompt).toContain('[READ-ONLY] Review UI changes'); // frontend
+      expect(prompt).toContain('[READ-ONLY] Review API changes'); // backend
+      expect(prompt).toContain('[READ-ONLY] Review data layer'); // database
+      expect(prompt).toContain('[READ-ONLY] Verify test coverage'); // testing
+      expect(prompt).toContain('[READ-ONLY] Check CI status'); // infrastructure
+      expect(prompt).toContain('[READ-ONLY] Review documentation changes'); // documentation
+    });
+  });
 });
