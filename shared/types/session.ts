@@ -116,6 +116,8 @@ export interface Session {
   planValidationContext?: string | null;
   /** Number of plan validation attempts in current Stage 2 session */
   planValidationAttempts?: number;
+  /** Number of Stage 1 output format validation attempts */
+  stage1ValidationAttempts?: number;
   /** Queue position when status is 'queued' (1 = next in line) */
   queuePosition?: number | null;
   /** Timestamp when session was queued */

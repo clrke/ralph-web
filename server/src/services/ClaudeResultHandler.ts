@@ -59,6 +59,22 @@ interface ConversationEntry {
 }
 
 /**
+ * Stage 1 validation result - checks if output contains expected markers.
+ */
+export interface Stage1ValidationResult {
+  /** Whether the output is valid (has expected markers) */
+  isValid: boolean;
+  /** Whether output has DECISION_NEEDED markers */
+  hasDecisions: boolean;
+  /** Whether output has PLAN_STEP markers */
+  hasPlanSteps: boolean;
+  /** Whether output has PLAN_MODE_EXITED marker */
+  hasPlanModeExited: boolean;
+  /** Missing markers for reprompt context */
+  missingContext?: string;
+}
+
+/**
  * Error thrown when step modification validation fails.
  * Includes the list of validation errors for re-prompting context.
  */
@@ -116,12 +132,13 @@ export class ClaudeResultHandler {
   /**
    * Handle Stage 1 (Discovery) result from Claude.
    * Saves conversation, extracts questions/plan steps, updates session.
+   * Returns validation result indicating if output has expected markers.
    */
   async handleStage1Result(
     session: Session,
     result: ClaudeResult,
     prompt: string
-  ): Promise<void> {
+  ): Promise<Stage1ValidationResult> {
     const sessionDir = `${session.projectId}/${session.featureId}`;
     const now = new Date().toISOString();
 
@@ -168,6 +185,63 @@ export class ClaudeResultHandler {
 
     // Update status.json
     await this.updateStatus(sessionDir, result, 1);
+
+    // Validate Stage 1 output - must have at least one expected marker
+    return this.validateStage1Output(result, planSteps.length);
+  }
+
+  /**
+   * Validate Stage 1 output has expected markers.
+   * Valid output must have at least one of:
+   * - [DECISION_NEEDED] markers (questions to ask)
+   * - [PLAN_STEP] markers (plan generated)
+   * - [PLAN_MODE_EXITED] marker (discovery complete)
+   */
+  private validateStage1Output(result: ClaudeResult, planStepsCount: number): Stage1ValidationResult {
+    const hasDecisions = result.parsed.decisions.length > 0;
+    const hasPlanSteps = planStepsCount > 0;
+    const hasPlanModeExited = result.output.includes('[PLAN_MODE_EXITED]');
+
+    // Output is valid if it has at least one expected marker
+    const isValid = hasDecisions || hasPlanSteps || hasPlanModeExited;
+
+    // Build missing context for reprompt if invalid
+    let missingContext: string | undefined;
+    if (!isValid) {
+      missingContext = `Your output did not contain any expected markers.
+
+Stage 1 (Discovery) output must include at least one of:
+1. **[DECISION_NEEDED]** markers - Use these to ask clarifying questions
+2. **[PLAN_STEP]** markers - Use these to define the implementation plan
+3. **[PLAN_MODE_EXITED]** marker - Use this when discovery is complete
+
+Example formats:
+
+\`\`\`
+[DECISION_NEEDED priority="1" category="scope"]
+Question text here
+- Option A (recommended)
+- Option B
+[/DECISION_NEEDED]
+\`\`\`
+
+\`\`\`
+[PLAN_STEP id="step-1" parent="null" status="pending" complexity="low"]
+Step title
+Step description
+[/PLAN_STEP]
+\`\`\`
+
+Please continue your analysis and output your findings using the appropriate markers.`;
+    }
+
+    return {
+      isValid,
+      hasDecisions,
+      hasPlanSteps,
+      hasPlanModeExited,
+      missingContext,
+    };
   }
 
   /**

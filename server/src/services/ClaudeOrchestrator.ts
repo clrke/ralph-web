@@ -63,6 +63,12 @@ const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 export const MAX_PLAN_VALIDATION_ATTEMPTS = 3;
 
 /**
+ * Maximum number of Stage 1 validation attempts before giving up.
+ * Each attempt re-prompts Claude to output proper markers.
+ */
+export const MAX_STAGE1_VALIDATION_ATTEMPTS = 2;
+
+/**
  * Maximum number of plan review iterations.
  * Review continues until either:
  * 1. This limit is reached with [PLAN_APPROVED], OR

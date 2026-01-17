@@ -6,10 +6,10 @@ import { readFile } from 'fs/promises';
 import { ZodSchema, ZodError } from 'zod';
 import { FileStorageService } from './data/FileStorageService';
 import { SessionManager } from './services/SessionManager';
-import { ClaudeOrchestrator, hasActionableContent, MAX_PLAN_VALIDATION_ATTEMPTS, MAX_PLAN_REVIEW_ITERATIONS } from './services/ClaudeOrchestrator';
+import { ClaudeOrchestrator, hasActionableContent, MAX_PLAN_VALIDATION_ATTEMPTS, MAX_PLAN_REVIEW_ITERATIONS, MAX_STAGE1_VALIDATION_ATTEMPTS } from './services/ClaudeOrchestrator';
 import { OutputParser } from './services/OutputParser';
 import { HaikuPostProcessor } from './services/HaikuPostProcessor';
-import { ClaudeResultHandler, StepModificationValidationError } from './services/ClaudeResultHandler';
+import { ClaudeResultHandler, StepModificationValidationError, Stage1ValidationResult } from './services/ClaudeResultHandler';
 import { planCompletionChecker, PlanCompletenessResult } from './services/PlanCompletionChecker';
 import { DecisionValidator } from './services/DecisionValidator';
 import { TestRequirementAssessor } from './services/TestRequirementAssessor';
@@ -458,9 +458,58 @@ async function spawnStage1ForPromotedSession(
     },
   }).then(async (result) => {
     eventBroadcaster?.executionStatus(promotedSession.projectId, promotedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'parsing_response' });
-    await resultHandler.handleStage1Result(promotedSession, result, prompt);
+    const stage1Validation = await resultHandler.handleStage1Result(promotedSession, result, prompt);
     eventBroadcaster?.executionStatus(promotedSession.projectId, promotedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'validating_output' });
     const extractedCount = await applyHaikuPostProcessing(result, promotedSession.projectPath, storage, promotedSession, resultHandler);
+
+    // Re-check validation after Haiku post-processing
+    const effectiveValidation: Stage1ValidationResult = extractedCount > 0
+      ? { ...stage1Validation, isValid: true, hasDecisions: true }
+      : stage1Validation;
+
+    // Handle Stage 1 validation failures - re-prompt if output lacks expected markers
+    if (!effectiveValidation.isValid && !result.isError) {
+      const currentAttempts = promotedSession.stage1ValidationAttempts ?? 0;
+      const nextAttempt = currentAttempts + 1;
+
+      if (nextAttempt < MAX_STAGE1_VALIDATION_ATTEMPTS) {
+        console.log(`[Stage 1] Output validation failed for promoted ${promotedSession.featureId} - re-prompting (attempt ${nextAttempt}/${MAX_STAGE1_VALIDATION_ATTEMPTS})`);
+
+        await sessionManager.updateSession(promotedSession.projectId, promotedSession.featureId, {
+          stage1ValidationAttempts: nextAttempt,
+        });
+
+        const updatedSession = await sessionManager.getSession(promotedSession.projectId, promotedSession.featureId);
+        if (updatedSession && effectiveValidation.missingContext) {
+          orchestrator.spawn({
+            prompt: effectiveValidation.missingContext,
+            projectPath: updatedSession.projectPath,
+            sessionId: result.sessionId || undefined,
+            allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+            onOutput: (output, isComplete) => {
+              eventBroadcaster?.claudeOutput(updatedSession.projectId, updatedSession.featureId, output, isComplete);
+            },
+          }).then(async (retryResult) => {
+            const retryValidation = await resultHandler.handleStage1Result(updatedSession, retryResult, effectiveValidation.missingContext!);
+            if (retryValidation.isValid || nextAttempt + 1 >= MAX_STAGE1_VALIDATION_ATTEMPTS) {
+              if (!retryResult.isError) {
+                await handleStage1Completion(updatedSession, retryResult, storage, sessionManager, resultHandler, eventBroadcaster);
+              }
+              eventBroadcaster?.executionStatus(updatedSession.projectId, updatedSession.featureId, retryResult.isError ? 'error' : 'idle', 'stage1_complete', { stage: 1 });
+              console.log(`Stage 1 ${retryResult.isError ? 'failed' : 'completed'} for promoted ${updatedSession.featureId} (after validation re-prompt)`);
+            }
+          }).catch((retryError) => {
+            console.error(`Stage 1 validation re-prompt error for promoted ${promotedSession.featureId}:`, retryError);
+            eventBroadcaster?.executionStatus(promotedSession.projectId, promotedSession.featureId, 'error', 'stage1_validation_error', { stage: 1 });
+          });
+
+          return;
+        }
+      } else {
+        console.warn(`[Stage 1] Max validation attempts (${MAX_STAGE1_VALIDATION_ATTEMPTS}) reached for promoted ${promotedSession.featureId} - proceeding anyway`);
+      }
+    }
+
     eventBroadcaster?.executionStatus(promotedSession.projectId, promotedSession.featureId, 'running', 'stage1_started', { stage: 1, subState: 'saving_results' });
 
     if (eventBroadcaster) {
@@ -2687,14 +2736,65 @@ export function createApp(
         // Broadcast parsing_response before handling result
         eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage1_started', { stage: 1, subState: 'parsing_response' });
 
-        // Use ClaudeResultHandler to save all parsed data
-        await resultHandler.handleStage1Result(session, result, prompt);
+        // Use ClaudeResultHandler to save all parsed data and validate output format
+        const stage1Validation = await resultHandler.handleStage1Result(session, result, prompt);
 
         // Broadcast validating_output before Haiku post-processing
         eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage1_started', { stage: 1, subState: 'validating_output' });
 
         // Apply Haiku fallback if no decisions were parsed but output looks like questions
         const extractedCount = await applyHaikuPostProcessing(result, session.projectPath, storage, session, resultHandler);
+
+        // Re-check validation after Haiku post-processing (may have extracted decisions)
+        const effectiveValidation: Stage1ValidationResult = extractedCount > 0
+          ? { ...stage1Validation, isValid: true, hasDecisions: true }
+          : stage1Validation;
+
+        // Handle Stage 1 validation failures - re-prompt if output lacks expected markers
+        if (!effectiveValidation.isValid && !result.isError) {
+          const currentAttempts = session.stage1ValidationAttempts ?? 0;
+          const nextAttempt = currentAttempts + 1;
+
+          if (nextAttempt < MAX_STAGE1_VALIDATION_ATTEMPTS) {
+            console.log(`[Stage 1] Output validation failed for ${session.featureId} - re-prompting (attempt ${nextAttempt}/${MAX_STAGE1_VALIDATION_ATTEMPTS})`);
+
+            // Update session with incremented attempt count
+            await sessionManager.updateSession(session.projectId, session.featureId, {
+              stage1ValidationAttempts: nextAttempt,
+            });
+
+            // Re-spawn with validation context
+            const updatedSession = await sessionManager.getSession(session.projectId, session.featureId);
+            if (updatedSession && effectiveValidation.missingContext) {
+              orchestrator.spawn({
+                prompt: effectiveValidation.missingContext,
+                projectPath: updatedSession.projectPath,
+                sessionId: result.sessionId || undefined,
+                onOutput: (output: string, isComplete: boolean) => {
+                  eventBroadcaster?.claudeOutput(updatedSession.projectId, updatedSession.featureId, output, isComplete);
+                },
+              }).then(async (retryResult) => {
+                // Handle retry result recursively (simplified - just save and check)
+                const retryValidation = await resultHandler.handleStage1Result(updatedSession, retryResult, effectiveValidation.missingContext!);
+                if (retryValidation.isValid || nextAttempt + 1 >= MAX_STAGE1_VALIDATION_ATTEMPTS) {
+                  // Proceed with completion
+                  if (!retryResult.isError) {
+                    await handleStage1Completion(updatedSession, retryResult, storage, sessionManager, resultHandler, eventBroadcaster);
+                  }
+                  eventBroadcaster?.executionStatus(updatedSession.projectId, updatedSession.featureId, retryResult.isError ? 'error' : 'idle', 'stage1_complete', { stage: 1 });
+                  console.log(`Stage 1 ${retryResult.isError ? 'failed' : 'completed'} for ${updatedSession.featureId} (after validation re-prompt)`);
+                }
+              }).catch((retryError) => {
+                console.error(`Stage 1 validation re-prompt error for ${session.featureId}:`, retryError);
+                eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'error', 'stage1_validation_error', { stage: 1 });
+              });
+
+              return; // Don't proceed with normal completion flow
+            }
+          } else {
+            console.warn(`[Stage 1] Max validation attempts (${MAX_STAGE1_VALIDATION_ATTEMPTS}) reached for ${session.featureId} - proceeding anyway`);
+          }
+        }
 
         // Broadcast saving_results before broadcasting events
         eventBroadcaster?.executionStatus(session.projectId, session.featureId, 'running', 'stage1_started', { stage: 1, subState: 'saving_results' });
@@ -4205,8 +4305,51 @@ After creating all steps, write the plan to the file.`;
               eventBroadcaster?.claudeOutput(projectId, featureId, output, isComplete);
             },
           }).then(async (result) => {
-            await resultHandler.handleStage1Result(session, result, prompt);
-            await applyHaikuPostProcessing(result, session.projectPath, storage, session, resultHandler);
+            const stage1Validation = await resultHandler.handleStage1Result(session, result, prompt);
+            const extractedCount = await applyHaikuPostProcessing(result, session.projectPath, storage, session, resultHandler);
+
+            // Re-check validation after Haiku post-processing
+            const effectiveValidation: Stage1ValidationResult = extractedCount > 0
+              ? { ...stage1Validation, isValid: true, hasDecisions: true }
+              : stage1Validation;
+
+            // Handle validation failures with re-prompt
+            if (!effectiveValidation.isValid && !result.isError) {
+              const currentAttempts = session.stage1ValidationAttempts ?? 0;
+              const nextAttempt = currentAttempts + 1;
+
+              if (nextAttempt < MAX_STAGE1_VALIDATION_ATTEMPTS && effectiveValidation.missingContext) {
+                console.log(`[Stage 1 Retry] Output validation failed for ${featureId} - re-prompting (attempt ${nextAttempt}/${MAX_STAGE1_VALIDATION_ATTEMPTS})`);
+
+                await sessionManager.updateSession(projectId, featureId, { stage1ValidationAttempts: nextAttempt });
+                const updatedSession = await sessionManager.getSession(projectId, featureId);
+
+                if (updatedSession) {
+                  // Fire-and-forget re-prompt
+                  orchestrator.spawn({
+                    prompt: effectiveValidation.missingContext,
+                    projectPath: updatedSession.projectPath,
+                    sessionId: result.sessionId || undefined,
+                    allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+                    onOutput: (out: string, done: boolean) => eventBroadcaster?.claudeOutput(projectId, featureId, out, done),
+                  }).then(async (retryResult) => {
+                    await resultHandler.handleStage1Result(updatedSession, retryResult, effectiveValidation.missingContext!);
+                    if (!retryResult.isError) {
+                      await handleStage1Completion(updatedSession, retryResult, storage, sessionManager, resultHandler, eventBroadcaster);
+                    }
+                    eventBroadcaster?.executionStatus(projectId, featureId, retryResult.isError ? 'error' : 'idle', 'stage1_complete', { stage: 1 });
+                    console.log(`Stage 1 retry ${retryResult.isError ? 'failed' : 'completed'} for ${featureId} (after validation re-prompt)`);
+                  }).catch((retryError) => {
+                    console.error(`Stage 1 retry validation re-prompt error for ${featureId}:`, retryError);
+                    eventBroadcaster?.executionStatus(projectId, featureId, 'error', 'stage1_validation_error', { stage: 1 });
+                  });
+                  return; // Don't proceed with normal completion flow - re-prompt handles it
+                }
+              } else {
+                console.warn(`[Stage 1 Retry] Max validation attempts reached for ${featureId} - proceeding anyway`);
+              }
+            }
+
             if (!result.isError) {
               await handleStage1Completion(session, result, storage, sessionManager, resultHandler, eventBroadcaster);
             }
