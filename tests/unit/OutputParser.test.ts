@@ -95,6 +95,77 @@ Three critical gaps:
       expect(result.decisions[0].options[0].label).toContain('Add comprehensive tests');
       expect(result.decisions[0].options[0].recommended).toBe(true);
     });
+
+    it('should parse DECISION_NEEDED markers without closing tags (lenient mode)', () => {
+      // Claude sometimes forgets to add closing tags - parser should handle gracefully
+      const input = `
+I've analyzed the codebase and have a question:
+
+[DECISION_NEEDED priority="1" category="scope"]
+Should we also update the related utility functions?
+- Option A: Yes, update utilities (recommended)
+- Option B: No, keep scope minimal
+
+[PLAN_STEP id="step-1" parent="null" status="pending"]
+Implement the feature
+Description here.
+[/PLAN_STEP]
+`;
+      const result = parser.parse(input);
+
+      expect(result.decisions).toHaveLength(1);
+      expect(result.decisions[0]).toMatchObject({
+        priority: 1,
+        category: 'scope',
+        questionText: expect.stringContaining('update the related utility'),
+        options: [
+          { label: 'Yes, update utilities', recommended: true },
+          { label: 'No, keep scope minimal', recommended: false },
+        ],
+      });
+      // Should also still parse the plan step
+      expect(result.planSteps).toHaveLength(1);
+    });
+
+    it('should parse multiple DECISION_NEEDED markers without closing tags', () => {
+      const input = `
+[DECISION_NEEDED priority="1" category="blocker"]
+First question?
+- Option A
+- Option B
+
+[DECISION_NEEDED priority="2" category="scope"]
+Second question?
+- Option C
+- Option D
+
+[PLAN_APPROVED]
+`;
+      const result = parser.parse(input);
+
+      expect(result.decisions).toHaveLength(2);
+      expect(result.decisions[0].questionText).toContain('First question');
+      expect(result.decisions[1].questionText).toContain('Second question');
+      expect(result.planApproved).toBe(true);
+    });
+
+    it('should prefer strict parsing when closing tags are present', () => {
+      // When closing tags exist, strict mode should be used
+      const input = `
+[DECISION_NEEDED priority="1" category="test"]
+Question with proper closing tag?
+- Option A
+- Option B
+[/DECISION_NEEDED]
+
+Some other content here.
+`;
+      const result = parser.parse(input);
+
+      expect(result.decisions).toHaveLength(1);
+      // Content should NOT include "Some other content" when strict parsing works
+      expect(result.decisions[0].questionText).not.toContain('Some other content');
+    });
   });
 
   describe('parsePlanStep', () => {

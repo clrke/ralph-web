@@ -112,10 +112,23 @@ export class OutputParser {
 
   private parseDecisions(input: string): ParsedDecision[] {
     const decisions: ParsedDecision[] = [];
-    const regex = /\[DECISION_NEEDED([^\]]*)\]([\s\S]*?)\[\/DECISION_NEEDED\]/g;
 
-    let match;
-    while ((match = regex.exec(input)) !== null) {
+    // Try with closing tags first (strict mode)
+    const strictRegex = /\[DECISION_NEEDED([^\]]*)\]([\s\S]*?)\[\/DECISION_NEEDED\]/g;
+
+    // Fallback: match without closing tags - content ends at next marker or end
+    // This handles cases where Claude forgets to add closing tags
+    const lenientRegex = /\[DECISION_NEEDED([^\]]*)\]([\s\S]*?)(?=\[DECISION_NEEDED|\[PLAN_STEP|\[PLAN_APPROVED|\[PLAN_MODE_EXITED|$)/g;
+
+    // Use strict regex first, fall back to lenient if no matches
+    let regex = strictRegex;
+    let match = regex.exec(input);
+    if (!match) {
+      regex = lenientRegex;
+      match = regex.exec(input);
+    }
+
+    while (match !== null) {
       const attrs = this.parseAttributes(match[1]);
       const content = match[2].trim();
 
@@ -176,6 +189,8 @@ export class OutputParser {
         file: attrs.file,
         line: attrs.line ? this.safeParseInt(attrs.line, undefined) : undefined,
       });
+
+      match = regex.exec(input);
     }
 
     return decisions;
