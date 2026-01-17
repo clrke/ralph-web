@@ -85,46 +85,44 @@ function createMockPrInfo(overrides: Partial<{ title: string; branch: string; ur
 }
 
 // =============================================================================
-// Core Functionality Tests - Plan Step Editing
+// Core Functionality Tests - Document Findings in Plan
 // =============================================================================
 
 describe('buildStage5Prompt', () => {
-  describe('Plan Step Editing section', () => {
-    it('should include Plan Step Editing section', () => {
+  describe('Document Findings section', () => {
+    it('should include Document Findings in Plan section', () => {
       const session = createMockSession();
       const plan = createMockPlan([createMockStep('step-1')]);
       const prInfo = createMockPrInfo();
 
       const prompt = buildStage5Prompt(session, plan, prInfo);
 
-      expect(prompt).toContain('Plan Step Editing');
+      expect(prompt).toContain('Document Findings in Plan');
     });
 
-    it('should explain when to edit plan steps', () => {
+    it('should explain how to add finding steps', () => {
       const session = createMockSession();
       const plan = createMockPlan([createMockStep('step-1')]);
       const prInfo = createMockPrInfo();
 
       const prompt = buildStage5Prompt(session, plan, prInfo);
 
-      expect(prompt).toContain('When to Edit Plan Steps');
-      expect(prompt).toContain("doesn't accurately reflect");
-      expect(prompt).toContain('complexity rating is incorrect');
-      expect(prompt).toContain('reordered or dependencies corrected');
-      expect(prompt).toContain('split or combined');
-    });
-
-    it('should explain how to edit using Edit tool', () => {
-      const session = createMockSession();
-      const plan = createMockPlan([createMockStep('step-1')]);
-      const prInfo = createMockPrInfo();
-
-      const prompt = buildStage5Prompt(session, plan, prInfo);
-
-      expect(prompt).toContain('How to Edit');
-      expect(prompt).toContain('Edit tool');
-      expect(prompt).toContain('modify plan.md');
+      expect(prompt).toContain('How to Add Finding Steps');
+      expect(prompt).toContain('EACH issue found');
+      expect(prompt).toContain('add a new step to plan.md');
       expect(prompt).toContain('Update plan.json');
+    });
+
+    it('should explain plan step format for findings', () => {
+      const session = createMockSession();
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5Prompt(session, plan, prInfo);
+
+      expect(prompt).toContain('[PLAN_STEP id=');
+      expect(prompt).toContain('status="pending"');
+      expect(prompt).toContain('complexity=');
     });
 
     it('should include claudePlanFilePath in instructions', () => {
@@ -164,27 +162,38 @@ describe('buildStage5Prompt', () => {
     });
   });
 
-  describe('Phase 4 Decision updates', () => {
-    it('should mention plan step correction as an option', () => {
+  describe('Phase 4 Document Findings', () => {
+    it('should instruct to add findings as new plan steps', () => {
       const session = createMockSession();
       const plan = createMockPlan([createMockStep('step-1')]);
       const prInfo = createMockPrInfo();
 
       const prompt = buildStage5Prompt(session, plan, prInfo);
 
-      expect(prompt).toContain('plan steps need correction');
-      expect(prompt).toContain('no code changes needed');
+      expect(prompt).toContain('Document Findings in Plan');
+      expect(prompt).toContain('add them as new plan steps');
     });
 
-    it('should include DECISION_NEEDED for code fixes', () => {
+    it('should instruct NOT to ask questions', () => {
       const session = createMockSession();
       const plan = createMockPlan([createMockStep('step-1')]);
       const prInfo = createMockPrInfo();
 
       const prompt = buildStage5Prompt(session, plan, prInfo);
 
-      expect(prompt).toContain('[DECISION_NEEDED]');
-      expect(prompt).toContain('require code fixes');
+      expect(prompt).toContain('Do NOT present issues as questions');
+      expect(prompt).toContain('Do NOT ask questions');
+    });
+
+    it('should explain auto-detection of plan changes', () => {
+      const session = createMockSession();
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5Prompt(session, plan, prInfo);
+
+      expect(prompt).toContain('system will automatically detect plan changes');
+      expect(prompt).toContain('return to Stage 2');
     });
   });
 
@@ -200,28 +209,39 @@ describe('buildStage5Prompt', () => {
       expect(prompt).toContain('can edit plan files');
     });
 
-    it('should reference Plan Step Editing section in subagent restrictions', () => {
+    it('should reference Document Findings section in subagent restrictions', () => {
       const session = createMockSession();
       const plan = createMockPlan([createMockStep('step-1')]);
       const prInfo = createMockPrInfo();
 
       const prompt = buildStage5Prompt(session, plan, prInfo);
 
-      expect(prompt).toContain('Plan Step Editing');
-      expect(prompt).toContain('section below');
+      expect(prompt).toContain('Document Findings');
+      expect(prompt).toContain('Phase 4');
     });
   });
 
   describe('Important Rules updates', () => {
-    it('should include rule about editing plan files', () => {
+    it('should include rule about not asking questions', () => {
       const session = createMockSession();
       const plan = createMockPlan([createMockStep('step-1')]);
       const prInfo = createMockPrInfo();
 
       const prompt = buildStage5Prompt(session, plan, prInfo);
 
-      expect(prompt).toContain('Edit plan files directly');
-      expect(prompt).toContain('step descriptions need correction');
+      expect(prompt).toContain('Do NOT ask questions');
+      expect(prompt).toContain('document findings as new plan steps');
+    });
+
+    it('should include rule about auto-detection', () => {
+      const session = createMockSession();
+      const plan = createMockPlan([createMockStep('step-1')]);
+      const prInfo = createMockPrInfo();
+
+      const prompt = buildStage5Prompt(session, plan, prInfo);
+
+      expect(prompt).toContain('auto-detects plan changes');
+      expect(prompt).toContain('returns to Stage 2');
     });
   });
 

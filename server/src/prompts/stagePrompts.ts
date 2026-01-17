@@ -1125,7 +1125,7 @@ When spawning Task subagents in this stage, instruct them to use READ-ONLY tools
 - NOT allowed: Edit, Write, Bash with modifications (no commits, no file changes)
 Include this restriction in each subagent prompt to prevent unintended modifications.
 
-**Note:** You (main agent) can edit plan files directly - see "Plan Step Editing" section below.
+**Note:** You (main agent) can edit plan files directly - see "Phase 4: Document Findings" section below.
 
 1. **Frontend Agent**: Review UI/client-side changes.
    - Run: git diff main...HEAD -- '*.tsx' '*.ts' '*.css' (client paths)
@@ -1166,30 +1166,23 @@ Include this restriction in each subagent prompt to prevent unintended modificat
 Wait for ALL agents to complete before proceeding.
 
 ### Phase 2: Compile Findings
-Batch all findings into a review checkpoint:
+Summarize all findings in a review checkpoint:
 
 \`\`\`
 [REVIEW_CHECKPOINT]
 ## Review Findings
 
-[DECISION_NEEDED priority="1" category="critical" file="path/to/file.ts" line="42"]
-Issue: Critical problem that must be fixed before merge.
-Impact: What could go wrong in production.
+### Critical Issues (Priority 1)
+- [file.ts:42] Issue description and impact
 
-How should we fix this?
-- Option A: Recommended fix approach (recommended)
-- Option B: Alternative fix approach
-[/DECISION_NEEDED]
+### Major Issues (Priority 2)
+- [file.ts:88] Issue description and impact
 
-[DECISION_NEEDED priority="2" category="major" file="path/to/file.ts" line="88"]
-Issue: Important issue that should be addressed.
-Impact: Affects code quality or maintainability.
+### Minor Issues (Priority 3)
+- [file.ts:120] Issue description (optional fix)
 
-How should we handle this?
-- Option A: Fix now before merge (recommended)
-- Option B: Create follow-up ticket
-- Option C: Accept as-is with justification
-[/DECISION_NEEDED]
+### No Issues Found
+All review agents found no significant issues.
 [/REVIEW_CHECKPOINT]
 \`\`\`
 
@@ -1203,42 +1196,52 @@ Check Name: Status
 [/CI_STATUS]
 \`\`\`
 
-### Plan Step Editing (When Needed)
-If during review you find that plan step descriptions don't match the actual implementation, or the step structure is incorrect, you can edit the plan directly.
+### Phase 4: Document Findings in Plan (CRITICAL)
+If you found ANY issues (Priority 1, 2, or 3) or CI failures, you MUST add them as new plan steps.
 
-**When to Edit Plan Steps:**
-- Step description doesn't accurately reflect what was implemented
-- Step complexity rating is incorrect (actual work was harder/easier)
-- Steps need to be reordered or dependencies corrected
-- A step should be split or combined based on implementation
+**IMPORTANT:** Do NOT present issues as questions to the user. Instead, document them as plan steps. The system will automatically detect plan changes and return to Stage 2, where questions will be asked if needed.
 
-**How to Edit (Use Edit tool directly):**
-1. Read the current plan file: ${session.claudePlanFilePath || '~/.claude-web/<session>/plan.md'}
-2. Use the Edit tool to modify plan.md with updated step content
-3. Update plan.json (${planJsonPath || 'same directory'}) to match your changes
+**How to Add Finding Steps:**
+1. Read the current plan files:
+   - ${session.claudePlanFilePath || '~/.claude-web/<session>/plan.md'}
+   - ${planJsonPath || 'same directory as plan.json'}
+
+2. For EACH issue found, add a new step to plan.md:
+\`\`\`
+[PLAN_STEP id="step-N" parent="null" status="pending" complexity="low|medium|high"]
+Fix: [Brief title of the fix]
+[Priority X] [file.ts:line] Full description of the issue and what needs to be fixed.
+Impact: What could go wrong if not addressed.
+Suggested approach: How to fix it.
+[/PLAN_STEP]
+\`\`\`
+
+3. Update plan.json with matching step entries (id, title, description, status="pending")
+
+4. Also update existing steps if descriptions don't match implementation or complexity was different.
 
 **IMPORTANT:** You can ONLY edit plan files in ~/.claude-web/. You cannot edit the codebase itself.
 
-### Phase 4: Decision
+### Phase 5: Decision
 Based on findings and CI status:
 
 **If CI is failing:**
+1. Add new plan steps for each CI failure fix needed
+2. Output:
 \`\`\`
 [CI_FAILED]
 The following CI checks are failing:
 - Check name: Error message
 
-These failures need to be addressed.
+New plan steps added to address these failures.
 [/CI_FAILED]
 \`\`\`
 
-**If issues found that require code fixes:**
-Present as \`[DECISION_NEEDED]\` blocks and wait for user response.
+**If issues found (any priority):**
+1. Add new plan steps for each issue (as described in Phase 4)
+2. The system will automatically detect plan changes and return to Plan Review
 
-**If plan steps need correction (no code changes needed):**
-Use the Edit tool to modify the plan files directly as described above.
-
-**If CI passes and no blocking issues:**
+**If CI passes AND no issues found:**
 \`\`\`
 [PR_APPROVED]
 The PR is ready to merge. All CI checks passing.
@@ -1254,9 +1257,9 @@ Summary:
 ### Important Rules
 1. Be objective - review as if you didn't write the code
 2. Check CI status before approving
-3. Present issues as prioritized decisions
-4. Only output PR_APPROVED when CI passes AND no blocking issues
-5. Edit plan files directly when step descriptions need correction`;
+3. Do NOT ask questions - document findings as new plan steps instead
+4. Only output PR_APPROVED when CI passes AND no issues found
+5. The system auto-detects plan changes and returns to Stage 2 for review`;
 }
 
 // ============================================================================
