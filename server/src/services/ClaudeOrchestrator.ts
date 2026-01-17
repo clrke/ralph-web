@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import { OutputParser, ParsedMarker } from './OutputParser';
 import type { AgentConfig, AgentsJson } from '../config/agentSchema';
+import { validateAgentsConfig, serializeAgentsConfig } from '../config/agentSchema';
 
 export type OutputCallback = (chunk: string, isComplete: boolean) => void;
 
@@ -12,6 +13,8 @@ export interface SpawnOptions {
   skipPermissions?: boolean;
   timeoutMs?: number;
   onOutput?: OutputCallback;
+  /** Optional subagent configurations to pass via --agents flag */
+  agents?: AgentsJson;
 }
 
 export interface ClaudeCommand {
@@ -451,6 +454,21 @@ export class ClaudeOrchestrator {
 
     if (options.skipPermissions) {
       args.push('--dangerously-skip-permissions');
+    }
+
+    // Add --agents flag if agents are provided
+    if (options.agents && Object.keys(options.agents).length > 0) {
+      // Validate agents configuration with Zod
+      const validation = validateAgentsConfig(options.agents);
+      if (!validation.success) {
+        throw new Error(
+          `Invalid agents configuration: ${validation.errors?.join(', ')}`
+        );
+      }
+
+      // Serialize and check size limit (throws if exceeds 10KB)
+      const agentsJson = serializeAgentsConfig(options.agents);
+      args.push('--agents', agentsJson);
     }
 
     args.push('-p', options.prompt);

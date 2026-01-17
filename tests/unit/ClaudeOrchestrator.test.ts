@@ -80,6 +80,154 @@ describe('ClaudeOrchestrator', () => {
 
       expect(cmd.cwd).toBe('/my/project');
     });
+
+    it('should include --agents flag when agents are provided', () => {
+      const agents = {
+        reviewer: {
+          description: 'Code reviewer',
+          prompt: 'Review code for quality',
+          tools: ['Read', 'Grep'],
+          model: 'haiku' as const,
+        },
+      };
+
+      const cmd = orchestrator.buildCommand({
+        prompt: 'Review code',
+        projectPath: '/test/project',
+        agents,
+      });
+
+      expect(cmd.args).toContain('--agents');
+      // Find the agents JSON argument
+      const agentsIndex = cmd.args.indexOf('--agents');
+      const agentsJson = cmd.args[agentsIndex + 1];
+      const parsedAgents = JSON.parse(agentsJson);
+      expect(parsedAgents.reviewer.description).toBe('Code reviewer');
+      expect(parsedAgents.reviewer.prompt).toBe('Review code for quality');
+      expect(parsedAgents.reviewer.tools).toEqual(['Read', 'Grep']);
+      expect(parsedAgents.reviewer.model).toBe('haiku');
+    });
+
+    it('should not include --agents flag when agents is empty object', () => {
+      const cmd = orchestrator.buildCommand({
+        prompt: 'Test',
+        projectPath: '/test/project',
+        agents: {},
+      });
+
+      expect(cmd.args).not.toContain('--agents');
+    });
+
+    it('should not include --agents flag when agents is undefined', () => {
+      const cmd = orchestrator.buildCommand({
+        prompt: 'Test',
+        projectPath: '/test/project',
+      });
+
+      expect(cmd.args).not.toContain('--agents');
+    });
+
+    it('should throw error for invalid agent configuration (missing description)', () => {
+      const invalidAgents = {
+        reviewer: {
+          prompt: 'Review code',
+          tools: ['Read'],
+        },
+      } as any;
+
+      expect(() => {
+        orchestrator.buildCommand({
+          prompt: 'Test',
+          projectPath: '/test/project',
+          agents: invalidAgents,
+        });
+      }).toThrow('Invalid agents configuration');
+    });
+
+    it('should throw error for invalid agent configuration (missing prompt)', () => {
+      const invalidAgents = {
+        reviewer: {
+          description: 'Code reviewer',
+          tools: ['Read'],
+        },
+      } as any;
+
+      expect(() => {
+        orchestrator.buildCommand({
+          prompt: 'Test',
+          projectPath: '/test/project',
+          agents: invalidAgents,
+        });
+      }).toThrow('Invalid agents configuration');
+    });
+
+    it('should throw error when agents JSON exceeds size limit', () => {
+      // Create a very large agent config
+      const largePrompt = 'x'.repeat(15000); // 15KB prompt alone
+      const largeAgents = {
+        reviewer: {
+          description: 'Code reviewer',
+          prompt: largePrompt,
+        },
+      };
+
+      expect(() => {
+        orchestrator.buildCommand({
+          prompt: 'Test',
+          projectPath: '/test/project',
+          agents: largeAgents,
+        });
+      }).toThrow('exceeds maximum allowed size');
+    });
+
+    it('should include multiple agents in --agents flag', () => {
+      const agents = {
+        frontend: {
+          description: 'Frontend reviewer',
+          prompt: 'Review UI code',
+          tools: ['Read', 'Glob'],
+          model: 'haiku' as const,
+        },
+        backend: {
+          description: 'Backend reviewer',
+          prompt: 'Review API code',
+          tools: ['Read', 'Grep'],
+          model: 'haiku' as const,
+        },
+      };
+
+      const cmd = orchestrator.buildCommand({
+        prompt: 'Review all code',
+        projectPath: '/test/project',
+        agents,
+      });
+
+      const agentsIndex = cmd.args.indexOf('--agents');
+      const agentsJson = cmd.args[agentsIndex + 1];
+      const parsedAgents = JSON.parse(agentsJson);
+      expect(Object.keys(parsedAgents)).toHaveLength(2);
+      expect(parsedAgents.frontend).toBeDefined();
+      expect(parsedAgents.backend).toBeDefined();
+    });
+
+    it('should place --agents before -p in arguments', () => {
+      const agents = {
+        reviewer: {
+          description: 'Code reviewer',
+          prompt: 'Review code',
+        },
+      };
+
+      const cmd = orchestrator.buildCommand({
+        prompt: 'Review code',
+        projectPath: '/test/project',
+        agents,
+      });
+
+      const agentsIndex = cmd.args.indexOf('--agents');
+      const promptIndex = cmd.args.indexOf('-p');
+      expect(agentsIndex).toBeLessThan(promptIndex);
+    });
   });
 
   describe('spawn', () => {
