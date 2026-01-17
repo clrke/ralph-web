@@ -456,20 +456,26 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       const data = await response.json();
 
-      // Update local session state with the backed out session
-      set({
-        session: data.session,
-        isLoading: false,
-      });
+      // Combine all state updates into single atomic set() call to prevent inconsistent state
+      set((state) => {
+        // Filter out the backed-out session from queuedSessions
+        let updatedQueuedSessions = state.queuedSessions.filter(
+          (s) => s.featureId !== featureId
+        );
 
-      // If a session was promoted, update queued sessions list
-      if (data.promotedSession) {
-        set((state) => ({
-          queuedSessions: state.queuedSessions.filter(
+        // If a session was promoted, also remove it from queued sessions list
+        if (data.promotedSession) {
+          updatedQueuedSessions = updatedQueuedSessions.filter(
             (s) => s.featureId !== data.promotedSession.featureId
-          ),
-        }));
-      }
+          );
+        }
+
+        return {
+          session: data.session,
+          isLoading: false,
+          queuedSessions: updatedQueuedSessions,
+        };
+      });
     } catch (error) {
       set({
         error: error instanceof Error ? error.message : 'Failed to back out session',

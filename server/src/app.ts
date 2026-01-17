@@ -4451,6 +4451,13 @@ Please ensure you output proper completion markers when done.`;
         });
       }
 
+      // Broadcast queue.reordered event so other clients can update their queue view
+      // This is needed because backing out a queued session changes the queue positions
+      if (eventBroadcaster) {
+        const remainingQueuedSessions = await sessionManager.getQueuedSessions(projectId);
+        eventBroadcaster.queueReordered(projectId, remainingQueuedSessions);
+      }
+
       console.log(`Session ${featureId} backed out with action: ${action}, reason: ${result.session.backoutReason}`);
 
       res.json({

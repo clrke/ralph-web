@@ -1,8 +1,9 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { Session, QueueReorderedEvent, ComplexityAssessedEvent } from '@claude-code-web/shared';
+import type { Session, QueueReorderedEvent, ComplexityAssessedEvent, SessionBackedOutEvent } from '@claude-code-web/shared';
 import { useSessionStore } from '../stores/sessionStore';
 import QueuedSessionsList, { ChangeComplexityBadge } from '../components/QueuedSessionsList';
+import CancelQueuedSessionModal from '../components/CancelQueuedSessionModal';
 import { connectToProject, disconnectFromProject, getSocket } from '../services/socket';
 
 type SessionFilter = 'all' | 'active' | 'paused' | 'completed' | 'failed';
@@ -59,6 +60,11 @@ export default function Dashboard() {
   const [filter, setFilter] = useState<SessionFilter>('all');
   const [resumingSessionId, setResumingSessionId] = useState<string | null>(null);
 
+  // Cancel modal state
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [sessionToCancel, setSessionToCancel] = useState<Session | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
+
   const navigate = useNavigate();
 
   // Store state for queue management
@@ -68,6 +74,7 @@ export default function Dashboard() {
     isReorderingQueue,
     reorderQueue,
     resumeSession,
+    backoutSession,
     applyComplexityAssessment,
     error: storeError,
     setError: setStoreError,
@@ -158,21 +165,34 @@ export default function Dashboard() {
     const handleQueueReordered = (event: QueueReorderedEvent) => {
       if (event.projectId === projectId) {
         // Update queued sessions with new positions using store's method
+        // Also filter out sessions that are no longer in the queue (handles cancelled sessions)
         const { queuedSessions: currentSessions } = useSessionStore.getState();
-        const updatedSessions = currentSessions.map((session) => {
-          const update = event.queuedSessions.find(
-            (q) => q.featureId === session.featureId
-          );
-          if (update) {
+        const eventFeatureIds = new Set(event.queuedSessions.map((q) => q.featureId));
+        const updatedSessions = currentSessions
+          .filter((session) => eventFeatureIds.has(session.featureId))
+          .map((session) => {
+            const update = event.queuedSessions.find(
+              (q) => q.featureId === session.featureId
+            );
+            // Guard against missing data even though filter should ensure match exists
+            if (!update) return session;
             return { ...session, queuePosition: update.queuePosition };
-          }
-          return session;
-        });
+          });
         // Sort by queue position and update store
         const sortedSessions = updatedSessions.sort(
           (a, b) => (a.queuePosition ?? 0) - (b.queuePosition ?? 0)
         );
         setQueuedSessions(sortedSessions);
+        // Also filter local sessions state to remove cancelled sessions
+        setSessions((prev) => {
+          const cancelled = prev.filter(
+            (s) => s.status === 'queued' && !eventFeatureIds.has(s.featureId)
+          );
+          if (cancelled.length > 0) {
+            return prev.filter((s) => s.status !== 'queued' || eventFeatureIds.has(s.featureId));
+          }
+          return prev;
+        });
       }
     };
 
@@ -183,12 +203,28 @@ export default function Dashboard() {
       }
     };
 
+    // Listen for session backout events (from other clients cancelling queued sessions)
+    const handleSessionBackedOut = (event: SessionBackedOutEvent) => {
+      if (event.projectId === projectId) {
+        // Remove the backed-out session from queuedSessions
+        const { queuedSessions: currentSessions } = useSessionStore.getState();
+        const filteredSessions = currentSessions.filter(
+          (session) => session.featureId !== event.featureId
+        );
+        setQueuedSessions(filteredSessions);
+        // Also update local sessions state
+        setSessions((prev) => prev.filter((s) => s.featureId !== event.featureId));
+      }
+    };
+
     socket.on('queue.reordered', handleQueueReordered);
     socket.on('complexity.assessed', handleComplexityAssessed);
+    socket.on('session.backedout', handleSessionBackedOut);
 
     return () => {
       socket.off('queue.reordered', handleQueueReordered);
       socket.off('complexity.assessed', handleComplexityAssessed);
+      socket.off('session.backedout', handleSessionBackedOut);
       if (connectedProjectRef.current) {
         disconnectFromProject(connectedProjectRef.current);
         connectedProjectRef.current = null;
@@ -227,6 +263,44 @@ export default function Dashboard() {
     },
     [resumeSession, navigate]
   );
+
+  // Handle cancel session button click (opens modal)
+  const handleCancelSession = useCallback((session: Session) => {
+    setSessionToCancel(session);
+    setCancelModalOpen(true);
+  }, []);
+
+  // Handle cancel modal close
+  const handleCancelModalClose = useCallback(() => {
+    if (!isCancelling) {
+      setCancelModalOpen(false);
+      setSessionToCancel(null);
+    }
+  }, [isCancelling]);
+
+  // Handle cancel confirmation
+  const handleCancelConfirm = useCallback(async () => {
+    if (!sessionToCancel) return;
+
+    setIsCancelling(true);
+    try {
+      await backoutSession(
+        sessionToCancel.projectId,
+        sessionToCancel.featureId,
+        'abandon',
+        'user_requested'
+      );
+      // Store's backoutSession removes from queuedSessions, and socket events
+      // (session.backedout, queue.reordered) also trigger removal - no manual
+      // local state update needed
+      setCancelModalOpen(false);
+      setSessionToCancel(null);
+    } catch {
+      // Error is already set in store
+    } finally {
+      setIsCancelling(false);
+    }
+  }, [sessionToCancel, backoutSession]);
 
   // Clear store error when component unmounts
   useEffect(() => {
@@ -294,6 +368,7 @@ export default function Dashboard() {
                 onReorder={handleReorder}
                 isReordering={isReorderingQueue}
                 formatRelativeTime={formatRelativeTime}
+                onCancelSession={handleCancelSession}
               />
             </section>
           )}
@@ -470,6 +545,15 @@ export default function Dashboard() {
           </section>
         </>
       )}
+
+      {/* Cancel Queued Session Modal */}
+      <CancelQueuedSessionModal
+        isOpen={cancelModalOpen}
+        onClose={handleCancelModalClose}
+        onConfirm={handleCancelConfirm}
+        sessionTitle={sessionToCancel?.title || ''}
+        isLoading={isCancelling}
+      />
     </div>
   );
 }

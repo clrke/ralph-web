@@ -36,6 +36,7 @@ const createMockSession = (featureId: string, queuePosition: number): Session =>
 });
 
 const mockFormatRelativeTime = vi.fn(() => 'active just now');
+const mockOnCancelSession = vi.fn();
 
 const renderWithRouter = (ui: React.ReactElement) => {
   return render(<MemoryRouter>{ui}</MemoryRouter>);
@@ -44,6 +45,7 @@ const renderWithRouter = (ui: React.ReactElement) => {
 describe('QueuedSessionsList', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockOnCancelSession.mockClear();
   });
 
   it('renders queued sessions in correct order', () => {
@@ -58,6 +60,7 @@ describe('QueuedSessionsList', () => {
         sessions={sessions}
         onReorder={vi.fn()}
         formatRelativeTime={mockFormatRelativeTime}
+        onCancelSession={mockOnCancelSession}
       />
     );
 
@@ -81,6 +84,7 @@ describe('QueuedSessionsList', () => {
         sessions={sessions}
         onReorder={vi.fn()}
         formatRelativeTime={mockFormatRelativeTime}
+        onCancelSession={mockOnCancelSession}
       />
     );
 
@@ -99,6 +103,7 @@ describe('QueuedSessionsList', () => {
         sessions={sessions}
         onReorder={vi.fn()}
         formatRelativeTime={mockFormatRelativeTime}
+        onCancelSession={mockOnCancelSession}
       />
     );
 
@@ -117,6 +122,7 @@ describe('QueuedSessionsList', () => {
         sessions={sessions}
         onReorder={vi.fn()}
         formatRelativeTime={mockFormatRelativeTime}
+        onCancelSession={mockOnCancelSession}
       />
     );
 
@@ -132,6 +138,7 @@ describe('QueuedSessionsList', () => {
         sessions={sessions}
         onReorder={vi.fn()}
         formatRelativeTime={mockFormatRelativeTime}
+        onCancelSession={mockOnCancelSession}
       />
     );
 
@@ -144,6 +151,7 @@ describe('QueuedSessionsList', () => {
         sessions={[]}
         onReorder={vi.fn()}
         formatRelativeTime={mockFormatRelativeTime}
+        onCancelSession={mockOnCancelSession}
       />
     );
 
@@ -158,6 +166,7 @@ describe('QueuedSessionsList', () => {
         sessions={sessions}
         onReorder={vi.fn()}
         formatRelativeTime={mockFormatRelativeTime}
+        onCancelSession={mockOnCancelSession}
       />
     );
 
@@ -173,6 +182,7 @@ describe('QueuedSessionsList', () => {
         sessions={sessions}
         onReorder={vi.fn()}
         formatRelativeTime={mockFormatRelativeTime}
+        onCancelSession={mockOnCancelSession}
       />
     );
 
@@ -191,6 +201,7 @@ describe('QueuedSessionsList', () => {
         sessions={sessions}
         onReorder={vi.fn()}
         formatRelativeTime={mockFormatRelativeTime}
+        onCancelSession={mockOnCancelSession}
       />
     );
 
@@ -205,6 +216,7 @@ describe('QueuedSessionsList', () => {
         sessions={sessions}
         onReorder={vi.fn()}
         formatRelativeTime={mockFormatRelativeTime}
+        onCancelSession={mockOnCancelSession}
       />
     );
 
@@ -219,6 +231,7 @@ describe('QueuedSessionsList', () => {
         sessions={sessions}
         onReorder={vi.fn()}
         formatRelativeTime={mockFormatRelativeTime}
+        onCancelSession={mockOnCancelSession}
       />
     );
 
@@ -233,6 +246,7 @@ describe('QueuedSessionsList', () => {
         sessions={sessions}
         onReorder={vi.fn()}
         formatRelativeTime={mockFormatRelativeTime}
+        onCancelSession={mockOnCancelSession}
       />
     );
 
@@ -252,6 +266,7 @@ describe('QueuedSessionsList', () => {
           sessions={sessions}
           onReorder={mockOnReorder}
           formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
         />
       );
 
@@ -274,6 +289,7 @@ describe('QueuedSessionsList', () => {
           sessions={sessions}
           onReorder={vi.fn()}
           formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
           isReordering={true}
         />
       );
@@ -296,6 +312,7 @@ describe('QueuedSessionsList', () => {
           sessions={sessions}
           onReorder={vi.fn()}
           formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
           isReordering={false}
         />
       );
@@ -319,6 +336,7 @@ describe('QueuedSessionsList', () => {
           sessions={sessions}
           onReorder={vi.fn()}
           formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
         />
       );
 
@@ -339,6 +357,7 @@ describe('QueuedSessionsList', () => {
             sessions={reorderedSessions}
             onReorder={vi.fn()}
             formatRelativeTime={mockFormatRelativeTime}
+            onCancelSession={mockOnCancelSession}
           />
         </MemoryRouter>
       );
@@ -359,6 +378,7 @@ describe('QueuedSessionsList', () => {
           sessions={[]}
           onReorder={vi.fn()}
           formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
           isReordering={true}
         />
       );
@@ -378,6 +398,7 @@ describe('QueuedSessionsList', () => {
           sessions={sessions}
           onReorder={vi.fn()}
           formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
         />
       );
 
@@ -394,6 +415,7 @@ describe('QueuedSessionsList', () => {
               sessions={shuffled}
               onReorder={vi.fn()}
               formatRelativeTime={mockFormatRelativeTime}
+              onCancelSession={mockOnCancelSession}
             />
           </MemoryRouter>
         );
@@ -419,6 +441,7 @@ describe('QueuedSessionsList', () => {
           sessions={sessions}
           onReorder={mockOnReorder}
           formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
         />
       );
 
@@ -442,6 +465,7 @@ describe('QueuedSessionsList', () => {
           sessions={sessions}
           onReorder={vi.fn()}
           formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
         />
       );
 
@@ -463,6 +487,7 @@ describe('QueuedSessionsList', () => {
           sessions={sessions}
           onReorder={vi.fn()}
           formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
         />
       );
 
@@ -478,6 +503,7 @@ describe('QueuedSessionsList', () => {
           sessions={sessions}
           onReorder={vi.fn()}
           formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
         />
       );
 
@@ -492,6 +518,7 @@ describe('QueuedSessionsList', () => {
           sessions={sessions}
           onReorder={vi.fn()}
           formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
         />
       );
 
@@ -513,6 +540,7 @@ describe('QueuedSessionsList', () => {
                   sessions={sessions}
                   onReorder={vi.fn()}
                   formatRelativeTime={mockFormatRelativeTime}
+                  onCancelSession={mockOnCancelSession}
                 />
               }
             />
@@ -544,6 +572,7 @@ describe('QueuedSessionsList', () => {
                   sessions={sessions}
                   onReorder={vi.fn()}
                   formatRelativeTime={mockFormatRelativeTime}
+                  onCancelSession={mockOnCancelSession}
                 />
               }
             />
@@ -584,6 +613,7 @@ describe('QueuedSessionsList', () => {
                   sessions={sessions}
                   onReorder={vi.fn()}
                   formatRelativeTime={mockFormatRelativeTime}
+                  onCancelSession={mockOnCancelSession}
                 />
               }
             />
@@ -600,6 +630,153 @@ describe('QueuedSessionsList', () => {
       await user.click(editButton);
 
       expect(screen.getByTestId('edit-page')).toBeInTheDocument();
+    });
+  });
+
+  describe('cancel button', () => {
+    it('renders cancel button for each queued session', () => {
+      const sessions = [
+        createMockSession('feature-1', 1),
+        createMockSession('feature-2', 2),
+      ];
+
+      renderWithRouter(
+        <QueuedSessionsList
+          sessions={sessions}
+          onReorder={vi.fn()}
+          formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
+        />
+      );
+
+      expect(screen.getByTestId('cancel-session-feature-1')).toBeInTheDocument();
+      expect(screen.getByTestId('cancel-session-feature-2')).toBeInTheDocument();
+    });
+
+    it('renders cancel button for single session (no drag-and-drop)', () => {
+      const sessions = [createMockSession('feature-1', 1)];
+
+      renderWithRouter(
+        <QueuedSessionsList
+          sessions={sessions}
+          onReorder={vi.fn()}
+          formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
+        />
+      );
+
+      expect(screen.getByTestId('cancel-session-feature-1')).toBeInTheDocument();
+    });
+
+    it('cancel button has correct aria-label', () => {
+      const sessions = [createMockSession('my-feature', 1)];
+
+      renderWithRouter(
+        <QueuedSessionsList
+          sessions={sessions}
+          onReorder={vi.fn()}
+          formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
+        />
+      );
+
+      const cancelButton = screen.getByTestId('cancel-session-my-feature');
+      expect(cancelButton).toHaveAttribute('aria-label', 'Cancel Feature my-feature');
+    });
+
+    it('calls onCancelSession with session when cancel button is clicked', async () => {
+      const user = userEvent.setup();
+      const sessions = [createMockSession('my-feature', 1)];
+
+      renderWithRouter(
+        <QueuedSessionsList
+          sessions={sessions}
+          onReorder={vi.fn()}
+          formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
+        />
+      );
+
+      const cancelButton = screen.getByTestId('cancel-session-my-feature');
+      await user.click(cancelButton);
+
+      expect(mockOnCancelSession).toHaveBeenCalledTimes(1);
+      expect(mockOnCancelSession).toHaveBeenCalledWith(sessions[0]);
+    });
+
+    it('clicking cancel button does not navigate to session view', async () => {
+      const user = userEvent.setup();
+      const sessions = [createMockSession('my-feature', 1)];
+
+      render(
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <QueuedSessionsList
+                  sessions={sessions}
+                  onReorder={vi.fn()}
+                  formatRelativeTime={mockFormatRelativeTime}
+                  onCancelSession={mockOnCancelSession}
+                />
+              }
+            />
+            <Route
+              path="/session/:projectId/:featureId"
+              element={<div data-testid="session-view">Session View</div>}
+            />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      const cancelButton = screen.getByTestId('cancel-session-my-feature');
+      await user.click(cancelButton);
+
+      // Should NOT navigate to session view
+      expect(screen.queryByTestId('session-view')).not.toBeInTheDocument();
+      // Should call the callback
+      expect(mockOnCancelSession).toHaveBeenCalled();
+    });
+
+    it('cancel button works in multi-session drag-and-drop mode', async () => {
+      const user = userEvent.setup();
+      const sessions = [
+        createMockSession('feature-1', 1),
+        createMockSession('feature-2', 2),
+      ];
+
+      renderWithRouter(
+        <QueuedSessionsList
+          sessions={sessions}
+          onReorder={vi.fn()}
+          formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
+        />
+      );
+
+      // Click cancel button on second session
+      const cancelButton = screen.getByTestId('cancel-session-feature-2');
+      await user.click(cancelButton);
+
+      expect(mockOnCancelSession).toHaveBeenCalledTimes(1);
+      expect(mockOnCancelSession).toHaveBeenCalledWith(sessions[1]);
+    });
+
+    it('cancel button has red hover style', () => {
+      const sessions = [createMockSession('feature-1', 1)];
+
+      renderWithRouter(
+        <QueuedSessionsList
+          sessions={sessions}
+          onReorder={vi.fn()}
+          formatRelativeTime={mockFormatRelativeTime}
+          onCancelSession={mockOnCancelSession}
+        />
+      );
+
+      const cancelButton = screen.getByTestId('cancel-session-feature-1');
+      expect(cancelButton).toHaveClass('hover:bg-red-600');
     });
   });
 });

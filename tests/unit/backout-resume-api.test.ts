@@ -3,8 +3,10 @@ import express, { Express } from 'express';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as os from 'os';
+import { Server } from 'socket.io';
 import { FileStorageService } from '../../server/src/data/FileStorageService';
 import { SessionManager } from '../../server/src/services/SessionManager';
+import { EventBroadcaster } from '../../server/src/services/EventBroadcaster';
 import { createApp } from '../../server/src/app';
 
 describe('Backout/Resume API Endpoints', () => {
@@ -477,6 +479,157 @@ describe('Backout/Resume API Endpoints', () => {
       expect(resumeResponse.body.session.status).toBe('implementing');
       expect(resumeResponse.body.session.currentStage).toBe(3);
       expect(resumeResponse.body.session.backoutReason).toBeNull();
+    });
+  });
+
+  describe('queue.reordered event emission', () => {
+    let mockIo: jest.Mocked<Server>;
+    let mockRoom: { emit: jest.Mock };
+    let eventBroadcaster: EventBroadcaster;
+    let appWithBroadcaster: Express;
+
+    beforeEach(() => {
+      mockRoom = { emit: jest.fn() };
+      mockIo = {
+        to: jest.fn().mockReturnValue(mockRoom),
+      } as unknown as jest.Mocked<Server>;
+      eventBroadcaster = new EventBroadcaster(mockIo);
+      const result = createApp(storage, sessionManager, eventBroadcaster);
+      appWithBroadcaster = result.app;
+    });
+
+    it('should emit queue.reordered event when queued session is backed out', async () => {
+      // Create active session
+      await sessionManager.createSession({
+        title: 'Active Feature',
+        featureDescription: 'Test',
+        projectPath: '/test/project',
+      });
+
+      // Create two queued sessions
+      const queued1 = await sessionManager.createSession({
+        title: 'Queued Feature 1',
+        featureDescription: 'Test',
+        projectPath: '/test/project',
+      });
+
+      const queued2 = await sessionManager.createSession({
+        title: 'Queued Feature 2',
+        featureDescription: 'Test',
+        projectPath: '/test/project',
+      });
+
+      expect(queued1.status).toBe('queued');
+      expect(queued2.status).toBe('queued');
+      expect(queued1.queuePosition).toBe(1);
+      expect(queued2.queuePosition).toBe(2);
+
+      // Back out the first queued session
+      const response = await request(appWithBroadcaster)
+        .post(`/api/sessions/${queued1.projectId}/${queued1.featureId}/backout`)
+        .send({ action: 'abandon', reason: 'user_requested' });
+
+      expect(response.status).toBe(200);
+
+      // Verify queue.reordered event was emitted
+      expect(mockIo.to).toHaveBeenCalledWith(queued1.projectId);
+      expect(mockRoom.emit).toHaveBeenCalledWith(
+        'queue.reordered',
+        expect.objectContaining({
+          projectId: queued1.projectId,
+          queuedSessions: expect.arrayContaining([
+            expect.objectContaining({
+              featureId: queued2.featureId,
+              queuePosition: 1, // Position recalculated after removal
+            }),
+          ]),
+          timestamp: expect.any(String),
+        })
+      );
+
+      // Verify only the remaining session is in the event
+      const queueReorderedCall = mockRoom.emit.mock.calls.find(
+        (call: unknown[]) => call[0] === 'queue.reordered'
+      );
+      expect(queueReorderedCall[1].queuedSessions).toHaveLength(1);
+    });
+
+    it('should emit queue.reordered event with empty array when last queued session is backed out', async () => {
+      // Create active session
+      const active = await sessionManager.createSession({
+        title: 'Active Feature',
+        featureDescription: 'Test',
+        projectPath: '/test/project',
+      });
+
+      // Create one queued session
+      const queued = await sessionManager.createSession({
+        title: 'Queued Feature',
+        featureDescription: 'Test',
+        projectPath: '/test/project',
+      });
+
+      expect(queued.status).toBe('queued');
+
+      // Back out the queued session
+      const response = await request(appWithBroadcaster)
+        .post(`/api/sessions/${queued.projectId}/${queued.featureId}/backout`)
+        .send({ action: 'abandon', reason: 'user_requested' });
+
+      expect(response.status).toBe(200);
+
+      // Verify queue.reordered event was emitted with empty array
+      const queueReorderedCall = mockRoom.emit.mock.calls.find(
+        (call: unknown[]) => call[0] === 'queue.reordered'
+      );
+      expect(queueReorderedCall).toBeDefined();
+      expect(queueReorderedCall[1].queuedSessions).toHaveLength(0);
+    });
+
+    it('should emit queue.reordered event when active session is backed out and promotes queued session', async () => {
+      // Create active session
+      const active = await sessionManager.createSession({
+        title: 'Active Feature',
+        featureDescription: 'Test',
+        projectPath: '/test/project',
+      });
+
+      // Create two queued sessions
+      const queued1 = await sessionManager.createSession({
+        title: 'Queued Feature 1',
+        featureDescription: 'Test',
+        projectPath: '/test/project',
+      });
+
+      const queued2 = await sessionManager.createSession({
+        title: 'Queued Feature 2',
+        featureDescription: 'Test',
+        projectPath: '/test/project',
+      });
+
+      // Clear previous emit calls
+      mockRoom.emit.mockClear();
+      mockIo.to.mockClear();
+
+      // Back out the active session (should promote queued1)
+      const response = await request(appWithBroadcaster)
+        .post(`/api/sessions/${active.projectId}/${active.featureId}/backout`)
+        .send({ action: 'pause' });
+
+      expect(response.status).toBe(200);
+      expect(response.body.promotedSession).not.toBeNull();
+      expect(response.body.promotedSession.featureId).toBe(queued1.featureId);
+
+      // Verify queue.reordered event was emitted
+      const queueReorderedCall = mockRoom.emit.mock.calls.find(
+        (call: unknown[]) => call[0] === 'queue.reordered'
+      );
+      expect(queueReorderedCall).toBeDefined();
+
+      // After promotion, only queued2 should remain in queue
+      expect(queueReorderedCall[1].queuedSessions).toHaveLength(1);
+      expect(queueReorderedCall[1].queuedSessions[0].featureId).toBe(queued2.featureId);
+      expect(queueReorderedCall[1].queuedSessions[0].queuePosition).toBe(1);
     });
   });
 });

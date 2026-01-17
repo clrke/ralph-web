@@ -720,6 +720,35 @@ describe('sessionStore selector hooks', () => {
         expect(state.queuedSessions).toHaveLength(0);
       });
 
+      it('removes cancelled queued session from queuedSessions', async () => {
+        const queuedSession1 = createMockSession('feature-1', 1);
+        const queuedSession2 = createMockSession('feature-2', 2);
+
+        act(() => {
+          useSessionStore.setState({
+            session: null,
+            queuedSessions: [queuedSession1, queuedSession2],
+          });
+        });
+
+        const cancelledSession = { ...queuedSession1, status: 'failed', backoutReason: 'user_requested' };
+
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          json: () => Promise.resolve({ session: cancelledSession, promotedSession: null }),
+        });
+        global.fetch = fetchMock;
+
+        await act(async () => {
+          await useSessionStore.getState().backoutSession('test-project', 'feature-1', 'abandon', 'user_requested');
+        });
+
+        const state = useSessionStore.getState();
+        // The cancelled session should be removed from queuedSessions
+        expect(state.queuedSessions).toHaveLength(1);
+        expect(state.queuedSessions[0].featureId).toBe('feature-2');
+      });
+
       it('sets error on API failure', async () => {
         const mockSession = createMockSession('feature-1', null);
         mockSession.status = 'discovery';
