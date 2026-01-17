@@ -531,8 +531,12 @@ export class OutputParser {
     // Parse framework
     const framework = getValue('framework') || 'unknown';
 
-    // Parse required test types (comma-separated)
-    const requiredTestTypesStr = getValue('requiredTestTypes') || getValue('required_test_types') || getValue('testTypes');
+    // Parse required test types (comma-separated, may be wrapped in brackets)
+    let requiredTestTypesStr = getValue('requiredTestTypes') || getValue('required_test_types') || getValue('testTypes');
+    // Strip surrounding brackets if present: [unit, integration, e2e] → unit, integration, e2e
+    if (requiredTestTypesStr.startsWith('[') && requiredTestTypesStr.endsWith(']')) {
+      requiredTestTypesStr = requiredTestTypesStr.slice(1, -1);
+    }
     const requiredTestTypes = requiredTestTypesStr
       ? requiredTestTypesStr.split(',').map(s => s.trim()).filter(Boolean)
       : ['unit'];
