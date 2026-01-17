@@ -5,6 +5,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import {
   parsePlanMarkdown,
@@ -821,7 +822,7 @@ describe('empty step ID handling', () => {
   let planMdPath: string;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'sync-empty-id-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-empty-id-'));
     planMdPath = path.join(tempDir, 'plan.md');
   });
 
