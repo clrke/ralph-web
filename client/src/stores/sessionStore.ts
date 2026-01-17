@@ -121,7 +121,7 @@ interface SessionState {
   resumeSession: (projectId: string, featureId: string) => Promise<void>;
   editQueuedSession: (projectId: string, featureId: string, dataVersion: number, updates: SessionUpdatedFields) => Promise<EditQueuedSessionResult | EditQueuedSessionConflictError>;
   applySessionUpdate: (featureId: string, updatedFields: SessionUpdatedFields, dataVersion: number) => void;
-  applyComplexityAssessment: (featureId: string, complexity: ChangeComplexity, reason: string, suggestedAgents: string[]) => void;
+  applyComplexityAssessment: (featureId: string, complexity: ChangeComplexity, reason: string, suggestedAgents: string[], useLeanPrompts: boolean) => void;
 }
 
 const initialState = {
@@ -625,7 +625,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  applyComplexityAssessment: (featureId, complexity, reason, suggestedAgents) => {
+  applyComplexityAssessment: (featureId, complexity, reason, suggestedAgents, useLeanPrompts) => {
     const { session, queuedSessions } = get();
 
     // Update the current session if it matches
@@ -636,6 +636,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           assessedComplexity: complexity,
           complexityReason: reason,
           suggestedAgents,
+          useLeanPrompts,
           complexityAssessedAt: new Date().toISOString(),
         },
       });
@@ -652,6 +653,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                 assessedComplexity: complexity,
                 complexityReason: reason,
                 suggestedAgents,
+                useLeanPrompts,
                 complexityAssessedAt: new Date().toISOString(),
               }
             : s

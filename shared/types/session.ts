@@ -144,6 +144,8 @@ export interface Session {
   complexityReason?: string;
   /** Suggested agent types based on complexity (e.g., ['frontend'], ['backend', 'database']) */
   suggestedAgents?: string[];
+  /** Whether to use lean/streamlined prompts for this change */
+  useLeanPrompts?: boolean;
   /** Timestamp when complexity was assessed (ISO string) */
   complexityAssessedAt?: string;
 }

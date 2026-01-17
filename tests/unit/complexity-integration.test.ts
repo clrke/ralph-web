@@ -353,11 +353,71 @@ describe('Complexity Assessment Integration', () => {
       const updatedSession = {
         assessedComplexity: assessment.complexity,
         suggestedAgents: assessment.suggestedAgents,
+        useLeanPrompts: assessment.useLeanPrompts,
       };
 
       // Verify the session now has complexity data for prompt selection
       expect(updatedSession.assessedComplexity).toBe('simple');
       expect(updatedSession.suggestedAgents).toEqual(['frontend']);
+      expect(updatedSession.useLeanPrompts).toBe(true);
+    });
+
+    it('should persist useLeanPrompts field in session (step-13 fix)', async () => {
+      const assessor = new ComplexityAssessor();
+
+      // Test with simple change (useLeanPrompts: true)
+      let assessPromise = assessor.assess(
+        'Fix typo',
+        'Correct spelling mistake',
+        [],
+        '/test/project'
+      );
+
+      let response = JSON.stringify({
+        result: JSON.stringify({
+          complexity: 'trivial',
+          reason: 'Simple typo fix',
+          suggestedAgents: ['frontend'],
+          useLeanPrompts: true,
+        }),
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      let assessment = await assessPromise;
+      expect(assessment.useLeanPrompts).toBe(true);
+
+      // Reset mock for second test
+      mockChildProcess = new EventEmitter();
+      mockChildProcess.stdout = new EventEmitter() as any;
+      mockChildProcess.stderr = new EventEmitter() as any;
+      mockChildProcess.kill = jest.fn();
+      mockSpawn.mockReturnValue(mockChildProcess as ChildProcess);
+
+      // Test with complex change (useLeanPrompts: false)
+      assessPromise = assessor.assess(
+        'Add auth system',
+        'Implement full OAuth2 flow',
+        [
+          { text: 'OAuth works', checked: false, type: 'manual' },
+          { text: 'JWT validated', checked: false, type: 'manual' },
+        ],
+        '/test/project'
+      );
+
+      response = JSON.stringify({
+        result: JSON.stringify({
+          complexity: 'complex',
+          reason: 'Multi-layer authentication',
+          suggestedAgents: ['frontend', 'backend', 'database', 'testing'],
+          useLeanPrompts: false,
+        }),
+      });
+      mockChildProcess.stdout!.emit('data', Buffer.from(response));
+      mockChildProcess.emit('close', 0);
+
+      assessment = await assessPromise;
+      expect(assessment.useLeanPrompts).toBe(false);
     });
 
     it('should allow prompt selection to proceed with full prompt on assessment error', async () => {

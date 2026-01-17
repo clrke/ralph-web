@@ -2483,6 +2483,7 @@ export function createApp(
               assessedComplexity: assessment.complexity,
               complexityReason: assessment.reason,
               suggestedAgents: assessment.suggestedAgents,
+              useLeanPrompts: assessment.useLeanPrompts,
               complexityAssessedAt: new Date().toISOString(),
             });
             eventBroadcaster?.complexityAssessed(
@@ -2527,6 +2528,7 @@ export function createApp(
           assessedComplexity: assessment.complexity,
           complexityReason: assessment.reason,
           suggestedAgents: assessment.suggestedAgents,
+          useLeanPrompts: assessment.useLeanPrompts,
           complexityAssessedAt: new Date().toISOString(),
         });
 
@@ -2722,6 +2724,7 @@ export function createApp(
                 assessedComplexity: assessment.complexity,
                 complexityReason: assessment.reason,
                 suggestedAgents: assessment.suggestedAgents,
+                useLeanPrompts: assessment.useLeanPrompts,
                 complexityAssessedAt: new Date().toISOString(),
               });
 

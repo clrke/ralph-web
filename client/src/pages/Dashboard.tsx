@@ -179,7 +179,7 @@ export default function Dashboard() {
     // Listen for complexity assessment events
     const handleComplexityAssessed = (event: ComplexityAssessedEvent) => {
       if (event.projectId === projectId) {
-        applyComplexityAssessment(event.featureId, event.complexity, event.reason, event.suggestedAgents);
+        applyComplexityAssessment(event.featureId, event.complexity, event.reason, event.suggestedAgents, event.useLeanPrompts);
       }
     };
 

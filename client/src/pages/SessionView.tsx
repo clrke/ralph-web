@@ -373,7 +373,7 @@ export default function SessionView() {
   }, []);
 
   const handleComplexityAssessed = useCallback((data: ComplexityAssessedEvent) => {
-    applyComplexityAssessment(data.featureId, data.complexity, data.reason, data.suggestedAgents);
+    applyComplexityAssessment(data.featureId, data.complexity, data.reason, data.suggestedAgents, data.useLeanPrompts);
   }, [applyComplexityAssessment]);
 
   // Stage transition handler
