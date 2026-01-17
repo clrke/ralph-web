@@ -746,6 +746,84 @@ describe('ComplexityAssessor', () => {
     });
   });
 
+  describe('stderr capture (step-14 fix)', () => {
+    it('should log stderr when process exits with non-zero code', async () => {
+      const consoleSpy = jest.spyOn(console, 'log');
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      // Emit stderr before process closes
+      mockChildProcess.stderr!.emit('data', Buffer.from('Error: Model validation failed'));
+      mockChildProcess.emit('close', 1);
+
+      const result = await resultPromise;
+
+      expect(result.complexity).toBe('normal');
+      expect(consoleSpy).toHaveBeenCalledWith('Complexity assessment stderr:', 'Error: Model validation failed');
+    });
+
+    it('should log stderr on spawn error', async () => {
+      const consoleSpy = jest.spyOn(console, 'log');
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      // Emit stderr before error
+      mockChildProcess.stderr!.emit('data', Buffer.from('Permission denied'));
+      mockChildProcess.emit('error', new Error('spawn failed'));
+
+      const result = await resultPromise;
+
+      expect(result.complexity).toBe('normal');
+      expect(consoleSpy).toHaveBeenCalledWith('Complexity assessment stderr:', 'Permission denied');
+    });
+
+    it('should log stderr on timeout', async () => {
+      jest.useFakeTimers();
+      const consoleSpy = jest.spyOn(console, 'log');
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      // Emit stderr before timeout
+      mockChildProcess.stderr!.emit('data', Buffer.from('Slow response warning'));
+
+      // Advance past timeout
+      jest.advanceTimersByTime(120_001);
+
+      const result = await resultPromise;
+
+      expect(result.complexity).toBe('normal');
+      expect(consoleSpy).toHaveBeenCalledWith('Complexity assessment stderr at timeout:', 'Slow response warning');
+
+      jest.useRealTimers();
+    });
+
+    it('should not log stderr when empty', async () => {
+      const consoleSpy = jest.spyOn(console, 'log');
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      // No stderr emitted
+      mockChildProcess.emit('close', 1);
+
+      const result = await resultPromise;
+
+      expect(result.complexity).toBe('normal');
+      // Should NOT have logged stderr (since it was empty)
+      expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringMatching(/Complexity assessment stderr/), expect.any(String));
+    });
+
+    it('should accumulate multiple stderr chunks', async () => {
+      const consoleSpy = jest.spyOn(console, 'log');
+      const resultPromise = assessor.assess(mockTitle, mockDescription, mockCriteria, '/project');
+
+      // Emit multiple stderr chunks
+      mockChildProcess.stderr!.emit('data', Buffer.from('Error part 1\n'));
+      mockChildProcess.stderr!.emit('data', Buffer.from('Error part 2'));
+      mockChildProcess.emit('close', 1);
+
+      const result = await resultPromise;
+
+      expect(result.complexity).toBe('normal');
+      expect(consoleSpy).toHaveBeenCalledWith('Complexity assessment stderr:', 'Error part 1\nError part 2');
+    });
+  });
+
   describe('timeout behavior', () => {
     it('should include partial output when timeout occurs', async () => {
       jest.useFakeTimers();

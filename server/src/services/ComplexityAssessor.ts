@@ -44,9 +44,13 @@ export class ComplexityAssessor {
       });
 
       let stdout = '';
+      let stderr = '';
       const timeoutId = setTimeout(() => {
         childProcess.kill();
         console.log('Complexity assessment timed out - using normal complexity (conservative)');
+        if (stderr) {
+          console.log('Complexity assessment stderr at timeout:', stderr);
+        }
         resolve({
           complexity: DEFAULT_COMPLEXITY,
           reason: 'Assessment timed out - using normal complexity conservatively',
@@ -62,12 +66,19 @@ export class ComplexityAssessor {
         stdout += data.toString();
       });
 
+      childProcess.stderr?.on('data', (data: Buffer) => {
+        stderr += data.toString();
+      });
+
       childProcess.on('close', (code: number | null) => {
         clearTimeout(timeoutId);
         const durationMs = Date.now() - startTime;
 
         if (code !== 0) {
           console.log(`Complexity assessment failed (code ${code}) - using normal complexity`);
+          if (stderr) {
+            console.log('Complexity assessment stderr:', stderr);
+          }
           resolve({
             complexity: DEFAULT_COMPLEXITY,
             reason: `Assessment failed (code ${code}) - using normal complexity conservatively`,
@@ -156,6 +167,9 @@ export class ComplexityAssessor {
       childProcess.on('error', (error) => {
         clearTimeout(timeoutId);
         console.log('Complexity assessment spawn error:', error.message);
+        if (stderr) {
+          console.log('Complexity assessment stderr:', stderr);
+        }
         resolve({
           complexity: DEFAULT_COMPLEXITY,
           reason: `Assessment spawn error: ${error.message} - using normal complexity conservatively`,
