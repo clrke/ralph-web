@@ -48,12 +48,14 @@ interface QueuedSessionsListProps {
   onReorder: (orderedFeatureIds: string[]) => Promise<void>;
   isReordering?: boolean;
   formatRelativeTime: (date: Date) => string;
+  onCancelSession: (session: Session) => void;
 }
 
 interface SortableSessionCardProps {
   session: Session;
   formatRelativeTime: (date: Date) => string;
   isReordering?: boolean;
+  onCancel: (session: Session) => void;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -90,7 +92,15 @@ function EditIcon() {
   );
 }
 
-function SortableSessionCard({ session, formatRelativeTime, isReordering }: SortableSessionCardProps) {
+function CancelIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+    </svg>
+  );
+}
+
+function SortableSessionCard({ session, formatRelativeTime, isReordering, onCancel }: SortableSessionCardProps) {
   const navigate = useNavigate();
   const {
     attributes,
@@ -110,6 +120,12 @@ function SortableSessionCard({ session, formatRelativeTime, isReordering }: Sort
     e.preventDefault();
     e.stopPropagation();
     navigate(`/session/${session.projectId}/${session.featureId}/edit`);
+  };
+
+  const handleCancelClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onCancel(session);
   };
 
   return (
@@ -175,6 +191,16 @@ function SortableSessionCard({ session, formatRelativeTime, isReordering }: Sort
       >
         <EditIcon />
       </button>
+
+      {/* Cancel button */}
+      <button
+        onClick={handleCancelClick}
+        className="flex items-center px-3 bg-gray-900/50 hover:bg-red-600 transition-colors text-gray-400 hover:text-white"
+        aria-label={`Cancel ${session.title}`}
+        data-testid={`cancel-session-${session.featureId}`}
+      >
+        <CancelIcon />
+      </button>
     </div>
   );
 }
@@ -182,15 +208,22 @@ function SortableSessionCard({ session, formatRelativeTime, isReordering }: Sort
 interface SingleSessionCardProps {
   session: Session;
   formatRelativeTime: (date: Date) => string;
+  onCancel: (session: Session) => void;
 }
 
-function SingleSessionCard({ session, formatRelativeTime }: SingleSessionCardProps) {
+function SingleSessionCard({ session, formatRelativeTime, onCancel }: SingleSessionCardProps) {
   const navigate = useNavigate();
 
   const handleEditClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     navigate(`/session/${session.projectId}/${session.featureId}/edit`);
+  };
+
+  const handleCancelClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onCancel(session);
   };
 
   return (
@@ -241,6 +274,16 @@ function SingleSessionCard({ session, formatRelativeTime }: SingleSessionCardPro
       >
         <EditIcon />
       </button>
+
+      {/* Cancel button */}
+      <button
+        onClick={handleCancelClick}
+        className="flex items-center px-3 bg-gray-900/50 hover:bg-red-600 transition-colors text-gray-400 hover:text-white"
+        aria-label={`Cancel ${session.title}`}
+        data-testid={`cancel-session-${session.featureId}`}
+      >
+        <CancelIcon />
+      </button>
     </div>
   );
 }
@@ -250,6 +293,7 @@ export default function QueuedSessionsList({
   onReorder,
   isReordering = false,
   formatRelativeTime,
+  onCancelSession,
 }: QueuedSessionsListProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -296,6 +340,7 @@ export default function QueuedSessionsList({
             key={session.featureId}
             session={session}
             formatRelativeTime={formatRelativeTime}
+            onCancel={onCancelSession}
           />
         ))}
       </div>
@@ -316,6 +361,7 @@ export default function QueuedSessionsList({
               session={session}
               formatRelativeTime={formatRelativeTime}
               isReordering={isReordering}
+              onCancel={onCancelSession}
             />
           ))}
         </div>
