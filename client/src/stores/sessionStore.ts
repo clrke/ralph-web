@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Session, Plan, Question, PlanStepStatus, ImplementationProgressEvent, ValidationAction, ExecutionSubState, StepProgress, BackoutAction, BackoutReason, SessionUpdatedFields } from '@claude-code-web/shared';
+import type { Session, Plan, Question, PlanStepStatus, ImplementationProgressEvent, ValidationAction, ExecutionSubState, StepProgress, BackoutAction, BackoutReason, SessionUpdatedFields, ChangeComplexity } from '@claude-code-web/shared';
 
 export type { ValidationAction } from '@claude-code-web/shared';
 
@@ -121,6 +121,7 @@ interface SessionState {
   resumeSession: (projectId: string, featureId: string) => Promise<void>;
   editQueuedSession: (projectId: string, featureId: string, dataVersion: number, updates: SessionUpdatedFields) => Promise<EditQueuedSessionResult | EditQueuedSessionConflictError>;
   applySessionUpdate: (featureId: string, updatedFields: SessionUpdatedFields, dataVersion: number) => void;
+  applyComplexityAssessment: (featureId: string, complexity: ChangeComplexity, reason: string, suggestedAgents: string[]) => void;
 }
 
 const initialState = {
@@ -618,6 +619,41 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         queuedSessions: queuedSessions.map((s) =>
           s.featureId === featureId
             ? { ...s, ...updatedFields, dataVersion }
+            : s
+        ),
+      });
+    }
+  },
+
+  applyComplexityAssessment: (featureId, complexity, reason, suggestedAgents) => {
+    const { session, queuedSessions } = get();
+
+    // Update the current session if it matches
+    if (session && session.featureId === featureId) {
+      set({
+        session: {
+          ...session,
+          assessedComplexity: complexity,
+          complexityReason: reason,
+          suggestedAgents,
+          complexityAssessedAt: new Date().toISOString(),
+        },
+      });
+    }
+
+    // Update in queuedSessions if present
+    const queuedIndex = queuedSessions.findIndex((s) => s.featureId === featureId);
+    if (queuedIndex !== -1) {
+      set({
+        queuedSessions: queuedSessions.map((s) =>
+          s.featureId === featureId
+            ? {
+                ...s,
+                assessedComplexity: complexity,
+                complexityReason: reason,
+                suggestedAgents,
+                complexityAssessedAt: new Date().toISOString(),
+              }
             : s
         ),
       });

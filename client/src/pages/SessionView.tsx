@@ -17,6 +17,7 @@ import type {
   StepCompletedEvent,
   SessionUpdatedEvent,
   PlanReviewIterationEvent,
+  ComplexityAssessedEvent,
   Session,
   Plan,
   PlanStep,
@@ -26,6 +27,7 @@ import type {
   UserPreferences,
 } from '@claude-code-web/shared';
 import { ComplexityBadge } from '../components/PlanEditor/PlanNode';
+import { ChangeComplexityBadge as SessionComplexityBadge } from '../components/QueuedSessionsList';
 import { StageStatusBadge } from '../components/StageStatusBadge';
 import type { ExecutionSubState } from '@claude-code-web/shared';
 
@@ -280,6 +282,7 @@ export default function SessionView() {
     backoutSession,
     resumeSession,
     applySessionUpdate,
+    applyComplexityAssessment,
   } = useSessionStore();
 
   const navigate = useNavigate();
@@ -369,6 +372,10 @@ export default function SessionView() {
     }
   }, []);
 
+  const handleComplexityAssessed = useCallback((data: ComplexityAssessedEvent) => {
+    applyComplexityAssessment(data.featureId, data.complexity, data.reason, data.suggestedAgents);
+  }, [applyComplexityAssessment]);
+
   // Stage transition handler
   const handleTransition = useCallback(async (targetStage: number) => {
     if (!projectId || !featureId || isTransitioning) return;
@@ -450,6 +457,7 @@ export default function SessionView() {
     socket.on('step.completed', handleStepCompleted);
     socket.on('implementation.progress', handleImplementationProgress);
     socket.on('session.updated', handleSessionUpdated);
+    socket.on('complexity.assessed', handleComplexityAssessed);
 
     return () => {
       socket.off('execution.status', handleExecutionStatus);
@@ -462,9 +470,10 @@ export default function SessionView() {
       socket.off('step.completed', handleStepCompleted);
       socket.off('implementation.progress', handleImplementationProgress);
       socket.off('session.updated', handleSessionUpdated);
+      socket.off('complexity.assessed', handleComplexityAssessed);
       disconnectFromSession(projectId, featureId);
     };
-  }, [projectId, featureId, handleExecutionStatus, handleClaudeOutput, handleQuestionsBatch, handlePlanUpdated, handlePlanReviewIteration, handleStageChanged, handleStepStarted, handleStepCompleted, handleImplementationProgress, handleSessionUpdated]);
+  }, [projectId, featureId, handleExecutionStatus, handleClaudeOutput, handleQuestionsBatch, handlePlanUpdated, handlePlanReviewIteration, handleStageChanged, handleStepStarted, handleStepCompleted, handleImplementationProgress, handleSessionUpdated, handleComplexityAssessed]);
 
   if (isLoading) {
     return (
@@ -630,7 +639,12 @@ export default function SessionView() {
             </button>
           )}
         </div>
-        <h1 className="text-3xl font-bold">{session.title}</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-3xl font-bold">{session.title}</h1>
+          {session.assessedComplexity && (
+            <SessionComplexityBadge complexity={session.assessedComplexity} />
+          )}
+        </div>
         <p className="text-gray-400 mt-2 line-clamp-2" title={session.featureDescription}>
           {session.featureDescription}
         </p>
