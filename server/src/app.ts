@@ -2566,10 +2566,58 @@ export function createApp(
         );
       }
 
-      // Note: We intentionally do NOT re-assess complexity on edits because:
-      // 1. The async complexity assessment can cause race conditions with concurrent edits
-      // 2. Complexity was already assessed on session creation
-      // 3. For queued sessions, users can re-create the session if they need a fresh assessment
+      // Re-assess complexity if title, description, or acceptance criteria changed
+      const shouldReassess =
+        updates.title !== undefined ||
+        updates.featureDescription !== undefined ||
+        updates.acceptanceCriteria !== undefined;
+
+      if (shouldReassess) {
+        // Run complexity assessment asynchronously (fire and forget)
+        complexityAssessor
+          .assess(
+            session.title,
+            session.featureDescription,
+            session.acceptanceCriteria,
+            session.projectPath
+          )
+          .then(async (assessment) => {
+            try {
+              // Update session with complexity results
+              await sessionManager.updateSession(projectId, featureId, {
+                assessedComplexity: assessment.complexity,
+                complexityReason: assessment.reason,
+                suggestedAgents: assessment.suggestedAgents,
+                complexityAssessedAt: new Date().toISOString(),
+              });
+
+              // Broadcast complexity assessed event
+              eventBroadcaster?.complexityAssessed(
+                projectId,
+                featureId,
+                session.id,
+                assessment.complexity,
+                assessment.reason,
+                assessment.suggestedAgents,
+                assessment.useLeanPrompts,
+                assessment.durationMs
+              );
+
+              console.log(
+                `Complexity re-assessed for ${featureId}: ${assessment.complexity} (${assessment.durationMs}ms)`
+              );
+            } catch (updateError) {
+              // Session update failed (possibly due to concurrent edit) - non-critical
+              console.log(
+                `Complexity update skipped for ${featureId}: ${updateError instanceof Error ? updateError.message : 'unknown error'}`
+              );
+            }
+          })
+          .catch((error) => {
+            console.error(`Complexity re-assessment error for ${featureId}:`, error);
+            // Non-critical: session continues with previous complexity info
+          });
+      }
 
       res.json(session);
     } catch (error) {
