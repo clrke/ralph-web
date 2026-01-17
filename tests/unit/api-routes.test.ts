@@ -293,10 +293,7 @@ describe('API Routes', () => {
             parsed: {
               decisions: [],
               planSteps: [],
-              planFilePath: null,
               planApproved: false,
-              planModeEntered: false,
-              planModeExited: false,
             },
           },
         ],
@@ -328,7 +325,7 @@ describe('API Routes', () => {
             sessionId: 'session-1',
             costUsd: 0.03,
             isError: false,
-            parsed: { decisions: [], planSteps: [], planApproved: false, planModeEntered: false, planModeExited: false },
+            parsed: { decisions: [], planSteps: [], planApproved: false },
           },
           {
             stage: 2,
@@ -338,7 +335,7 @@ describe('API Routes', () => {
             sessionId: 'session-1',
             costUsd: 0.07,
             isError: false,
-            parsed: { decisions: [], planSteps: [], planApproved: true, planModeEntered: false, planModeExited: false },
+            parsed: { decisions: [], planSteps: [], planApproved: true },
           },
         ],
       };
@@ -366,7 +363,7 @@ describe('API Routes', () => {
             costUsd: 0,
             isError: true,
             error: 'Claude process timed out',
-            parsed: { decisions: [], planSteps: [], planApproved: false, planModeEntered: false, planModeExited: false },
+            parsed: { decisions: [], planSteps: [], planApproved: false },
           },
         ],
       };
@@ -400,7 +397,7 @@ describe('API Routes', () => {
             sessionId: 'claude-session-123',
             costUsd: 0.05,
             isError: false,
-            parsed: { decisions: [], planSteps: [], planApproved: false, planModeEntered: false, planModeExited: false },
+            parsed: { decisions: [], planSteps: [], planApproved: false },
           },
           {
             stage: 1,
@@ -410,7 +407,7 @@ describe('API Routes', () => {
             sessionId: null,
             costUsd: 0,
             isError: false,
-            parsed: { decisions: [], planSteps: [], planApproved: false, planModeEntered: false, planModeExited: false },
+            parsed: { decisions: [], planSteps: [], planApproved: false },
             postProcessingType: 'decision_validation',
             validationAction: 'pass',
             questionIndex: 1,
@@ -423,7 +420,7 @@ describe('API Routes', () => {
             sessionId: null,
             costUsd: 0,
             isError: false,
-            parsed: { decisions: [], planSteps: [], planApproved: false, planModeEntered: false, planModeExited: false },
+            parsed: { decisions: [], planSteps: [], planApproved: false },
             postProcessingType: 'decision_validation',
             validationAction: 'filter',
             questionIndex: 2,
@@ -467,7 +464,7 @@ describe('API Routes', () => {
             sessionId: 'claude-session-456',
             costUsd: 0.10,
             isError: false,
-            parsed: { decisions: [], planSteps: [], planApproved: false, planModeEntered: false, planModeExited: false },
+            parsed: { decisions: [], planSteps: [], planApproved: false },
           },
         ],
       };

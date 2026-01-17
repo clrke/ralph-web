@@ -75,9 +75,6 @@ const MIN_OUTPUT_LENGTH_FOR_POSTPROCESS = 100; // Minimum output length to consi
 /**
  * Check if parsed output contains any actionable markers.
  * If false, the output may need post-processing to extract content.
- *
- * Note: planModeEntered/planModeExited removed (deprecated) -
- * planFilePath is sufficient to detect plan file activity.
  */
 export function hasActionableContent(parsed: ParsedMarker): boolean {
   return (
@@ -85,7 +82,6 @@ export function hasActionableContent(parsed: ParsedMarker): boolean {
     parsed.planSteps.length > 0 ||
     parsed.stepCompleted !== null ||
     parsed.stepsCompleted.length > 0 ||
-    parsed.planFilePath !== null ||
     parsed.implementationComplete ||
     parsed.implementationSummary !== null ||
     parsed.implementationStatus !== null ||

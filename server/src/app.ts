@@ -2128,57 +2128,54 @@ async function handleStage5Result(
 }
 
 /**
- * Handle Stage 1 completion - auto-transition to Stage 2 when plan file is created
+ * Handle Stage 1 completion - auto-transition to Stage 2 when plan file has valid steps
  */
 async function handleStage1Completion(
   session: Session,
-  result: ClaudeResult,
+  _result: ClaudeResult,
   storage: FileStorageService,
   sessionManager: SessionManager,
   resultHandler: ClaudeResultHandler,
   eventBroadcaster: EventBroadcaster | undefined
 ): Promise<void> {
-  let planFilePath = result.parsed.planFilePath;
+  // Check if plan.md has valid steps (deterministic detection, no markers needed)
+  if (!session.claudePlanFilePath) return;
 
-  // Fallback: If no planFilePath but planModeExited is true, check if plan.md exists
-  if (!planFilePath && result.parsed.planModeExited && session.claudePlanFilePath) {
-    try {
-      const planContent = await readFile(session.claudePlanFilePath, 'utf-8');
-      const parser = new OutputParser();
-      const planSteps = parser.parsePlanSteps(planContent);
+  try {
+    const planContent = await readFile(session.claudePlanFilePath, 'utf-8');
+    const parser = new OutputParser();
+    const planSteps = parser.parsePlanSteps(planContent);
 
-      if (planSteps.length > 0) {
-        console.log(`Fallback: Found ${planSteps.length} plan steps in ${session.claudePlanFilePath}`);
-        planFilePath = session.claudePlanFilePath;
-
-        // Update plan.json with the parsed steps
-        const sessionDir = `${session.projectId}/${session.featureId}`;
-        const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
-        if (plan) {
-          plan.steps = planSteps.map((step, index) => ({
-            id: step.id,
-            parentId: step.parentId,
-            orderIndex: index,
-            title: step.title,
-            description: step.description,
-            status: (step.status || 'pending') as PlanStep['status'],
-            metadata: {},
-            complexity: step.complexity,
-            acceptanceCriteriaIds: step.acceptanceCriteriaIds,
-            estimatedFiles: step.estimatedFiles,
-          }));
-          await storage.writeJson(`${sessionDir}/plan.json`, plan);
-          console.log(`Updated plan.json with ${plan.steps.length} steps from fallback`);
-        }
-      }
-    } catch (error) {
-      console.log(`Fallback plan file check failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    if (planSteps.length === 0) {
+      console.log(`Plan file exists but has no valid steps yet for ${session.featureId}`);
+      return;
     }
+
+    // Sync plan.md steps to plan.json
+    const sessionDir = `${session.projectId}/${session.featureId}`;
+    const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
+    if (plan && plan.steps.length !== planSteps.length) {
+      plan.steps = planSteps.map((step, index) => ({
+        id: step.id,
+        parentId: step.parentId,
+        orderIndex: index,
+        title: step.title,
+        description: step.description,
+        status: (step.status || 'pending') as PlanStep['status'],
+        metadata: {},
+        complexity: step.complexity,
+        acceptanceCriteriaIds: step.acceptanceCriteriaIds,
+        estimatedFiles: step.estimatedFiles,
+      }));
+      await storage.writeJson(`${sessionDir}/plan.json`, plan);
+      console.log(`Synced plan.json with ${plan.steps.length} steps from plan.md`);
+    }
+  } catch (error) {
+    console.log(`Plan file check failed for ${session.featureId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    return;
   }
 
-  if (!planFilePath) return;
-
-  console.log(`Plan file created at ${planFilePath}, auto-transitioning to Stage 2`);
+  console.log(`Plan file has valid steps at ${session.claudePlanFilePath}, auto-transitioning to Stage 2`);
 
   // Transition to Stage 2
   const previousStage = session.currentStage;
@@ -3187,12 +3184,13 @@ Please pay special attention to the above areas during your review.`;
 
             // Check if we need to auto-resume: Stage 1, no plan, no unanswered questions
             // This handles the case where validation filtered all new questions
-            if (session.currentStage === 1 && !result.isError && !result.parsed.planFilePath) {
+            if (session.currentStage === 1 && !result.isError) {
               const questionsData = await storage.readJson<{ questions: Question[] }>(`${sessionDir}/questions.json`);
               const plan = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
               const unansweredCount = questionsData?.questions.filter(q => !q.answer).length || 0;
               const planStepsCount = plan?.steps?.length || 0;
 
+              // Only auto-resume if no plan created yet (planStepsCount === 0 covers the case where plan was just created)
               if (unansweredCount === 0 && planStepsCount === 0) {
                 console.log(`No unanswered questions and no plan - auto-resuming to create plan for ${featureId}`);
                 // Resume Claude to create the plan
@@ -3204,8 +3202,7 @@ Step title
 Step description referencing specific files found during exploration.
 [/PLAN_STEP]
 
-After creating all steps, write the plan to a file and output:
-[PLAN_MODE_EXITED]`;
+After creating all steps, write the plan to the file.`;
 
                 // Fire and forget - spawn Claude to create plan
                 orchestrator.spawn({
@@ -3529,7 +3526,7 @@ If all issues are resolved, output [PR_APPROVED]. Otherwise, raise new [DECISION
 
           // Check if we need to auto-resume: Stage 1, no plan, no unanswered questions
           // This handles the case where validation filtered all new questions
-          if (session.currentStage === 1 && !result.isError && !result.parsed.planFilePath) {
+          if (session.currentStage === 1 && !result.isError) {
             const questionsData = await storage.readJson<{ questions: Question[] }>(`${sessionDir}/questions.json`);
             const planData = await storage.readJson<Plan>(`${sessionDir}/plan.json`);
             const unansweredCount = questionsData?.questions.filter(q => !q.answer).length || 0;
@@ -3545,8 +3542,7 @@ Step title
 Step description referencing specific files found during exploration.
 [/PLAN_STEP]
 
-After creating all steps, write the plan to a file and output:
-[PLAN_MODE_EXITED]`;
+After creating all steps, write the plan to the file.`;
 
               // Save "started" conversation entry
               await resultHandler.saveConversationStart(sessionDir, 1, createPlanPrompt);

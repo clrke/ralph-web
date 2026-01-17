@@ -122,9 +122,6 @@ describe('ClaudeResultHandler', () => {
           planSteps: [],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: false,
-          planModeExited: false,
-          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -182,8 +179,6 @@ describe('ClaudeResultHandler', () => {
           planSteps: [],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: true,
-          planModeExited: false,
           
           implementationComplete: false,
           implementationSummary: null,
@@ -226,9 +221,6 @@ describe('ClaudeResultHandler', () => {
           planSteps: [],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: false,
-          planModeExited: false,
-          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -276,8 +268,6 @@ describe('ClaudeResultHandler', () => {
           ],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: true,
-          planModeExited: true,
           
           implementationComplete: false,
           implementationSummary: null,
@@ -314,9 +304,6 @@ describe('ClaudeResultHandler', () => {
           planSteps: [],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: false,
-          planModeExited: false,
-          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -393,9 +380,6 @@ describe('ClaudeResultHandler', () => {
           planSteps: [],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: false,
-          planModeExited: false,
-          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -441,9 +425,6 @@ describe('ClaudeResultHandler', () => {
           planSteps: [],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: false,
-          planModeExited: false,
-          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -481,9 +462,6 @@ describe('ClaudeResultHandler', () => {
           planSteps: [],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: false,
-          planModeExited: false,
-          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -515,9 +493,6 @@ describe('ClaudeResultHandler', () => {
           planSteps: [],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: false,
-          planModeExited: false,
-          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -553,9 +528,6 @@ describe('ClaudeResultHandler', () => {
           planSteps: [],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: false,
-          planModeExited: false,
-          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -675,8 +647,6 @@ describe('ClaudeResultHandler', () => {
         planSteps: [],
         stepCompleted: null,
         stepsCompleted: [],
-        planModeEntered: false,
-        planModeExited: false,
         
         implementationComplete: false,
         implementationSummary: null,
@@ -1558,9 +1528,6 @@ describe('ClaudeResultHandler', () => {
           planSteps: [],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: false,
-          planModeExited: false,
-          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -1635,9 +1602,6 @@ describe('ClaudeResultHandler', () => {
           planSteps: [],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: false,
-          planModeExited: false,
-          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -1694,9 +1658,6 @@ describe('ClaudeResultHandler', () => {
           planSteps: [],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: false,
-          planModeExited: false,
-          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -1757,9 +1718,6 @@ describe('ClaudeResultHandler', () => {
           planSteps: [],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: false,
-          planModeExited: false,
-          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -1829,9 +1787,6 @@ describe('ClaudeResultHandler', () => {
           planSteps: [],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: false,
-          planModeExited: false,
-          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -1877,9 +1832,6 @@ describe('ClaudeResultHandler', () => {
           planSteps: [],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: false,
-          planModeExited: false,
-          
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -1912,8 +1864,6 @@ describe('ClaudeResultHandler', () => {
         planSteps: [],
         stepCompleted: null,
         stepsCompleted: [],
-        planModeEntered: false,
-        planModeExited: false,
         
         implementationComplete: false,
         implementationSummary: null,
@@ -2111,8 +2061,6 @@ describe('ClaudeResultHandler', () => {
           ],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: true,
-          planModeExited: true,
           
           implementationComplete: false,
           implementationSummary: null,
@@ -2158,8 +2106,6 @@ describe('ClaudeResultHandler', () => {
           ],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: true,
-          planModeExited: true,
           
           implementationComplete: false,
           implementationSummary: null,
@@ -2272,8 +2218,6 @@ describe('ClaudeResultHandler', () => {
         })),
         stepCompleted: null,
         stepsCompleted: [],
-        planModeEntered: false,
-        planModeExited: false,
         
         implementationComplete: false,
         implementationSummary: null,

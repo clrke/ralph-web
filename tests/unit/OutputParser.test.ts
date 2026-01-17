@@ -207,23 +207,6 @@ Step 14 is complete.
     });
   });
 
-  describe('parsePlanModeState', () => {
-    it('should detect PLAN_MODE_ENTERED', () => {
-      const input = `Starting analysis...\n[PLAN_MODE_ENTERED]\nNow in plan mode.`;
-      const result = parser.parse(input);
-
-      expect(result.planModeEntered).toBe(true);
-      expect(result.planModeExited).toBe(false);
-    });
-
-    it('should detect PLAN_MODE_EXITED', () => {
-      const input = `Plan complete.\n[PLAN_MODE_EXITED]\nReady for approval.`;
-      const result = parser.parse(input);
-
-      expect(result.planModeExited).toBe(true);
-    });
-  });
-
   describe('parseImplementationComplete', () => {
     it('should parse IMPLEMENTATION_COMPLETE marker', () => {
       const input = `

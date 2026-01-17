@@ -85,9 +85,6 @@ describe('Stage Prompt Builders', () => {
 
       // Should use [PLAN_STEP] format
       expect(prompt).toContain('[PLAN_STEP');
-
-      // Should reference plan mode exit marker
-      expect(prompt).toContain('[PLAN_MODE_EXITED]');
     });
 
     it('should instruct Claude to explore codebase first', () => {

@@ -146,11 +146,11 @@ export class ClaudeResultHandler {
     }
 
     // Save parsed plan steps to plan.json
-    // If no plan steps in output but planFilePath exists, read steps from the plan file
+    // If no plan steps in output but claudePlanFilePath exists, read steps from the plan file
     let planSteps = result.parsed.planSteps;
-    if (planSteps.length === 0 && result.parsed.planFilePath) {
-      console.log(`No PLAN_STEP markers in output, reading from plan file: ${result.parsed.planFilePath}`);
-      planSteps = await this.parsePlanStepsFromFile(result.parsed.planFilePath, session.projectPath);
+    if (planSteps.length === 0 && session.claudePlanFilePath) {
+      console.log(`No PLAN_STEP markers in output, reading from plan file: ${session.claudePlanFilePath}`);
+      planSteps = await this.parsePlanStepsFromFile(session.claudePlanFilePath, session.projectPath);
       console.log(`Found ${planSteps.length} plan steps in file`);
     }
     if (planSteps.length > 0) {
@@ -204,9 +204,9 @@ export class ClaudeResultHandler {
 
     // Parse and add any new plan steps (supports plan modifications during re-review)
     let planSteps = result.parsed.planSteps;
-    if (planSteps.length === 0 && result.parsed.planFilePath) {
-      console.log(`[Stage 2] No PLAN_STEP markers in output, reading from plan file: ${result.parsed.planFilePath}`);
-      planSteps = await this.parsePlanStepsFromFile(result.parsed.planFilePath, session.projectPath);
+    if (planSteps.length === 0 && session.claudePlanFilePath) {
+      console.log(`[Stage 2] No PLAN_STEP markers in output, reading from plan file: ${session.claudePlanFilePath}`);
+      planSteps = await this.parsePlanStepsFromFile(session.claudePlanFilePath, session.projectPath);
       console.log(`[Stage 2] Found ${planSteps.length} plan steps in file`);
     }
 
@@ -806,9 +806,6 @@ export class ClaudeResultHandler {
         planSteps: [],
         stepCompleted: null,
         stepsCompleted: [],
-        planModeEntered: false,
-        planModeExited: false,
-        planFilePath: null,
         implementationComplete: false,
         implementationSummary: null,
         implementationStatus: null,
@@ -859,9 +856,6 @@ export class ClaudeResultHandler {
           planSteps: [],
           stepCompleted: null,
           stepsCompleted: [],
-          planModeEntered: false,
-          planModeExited: false,
-          planFilePath: null,
           implementationComplete: false,
           implementationSummary: null,
           implementationStatus: null,
@@ -973,9 +967,6 @@ export class ClaudeResultHandler {
         planSteps: [],
         stepCompleted: null,
         stepsCompleted: [],
-        planModeEntered: false,
-        planModeExited: false,
-        planFilePath: null,
         implementationComplete: false,
         implementationSummary: null,
         implementationStatus: null,

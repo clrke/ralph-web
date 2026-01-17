@@ -33,8 +33,6 @@ const MARKER_PATTERNS = [
   /\[\/DECISION_NEEDED\]/,
   /\[PLAN_STEP[^\]]*\]/,
   /\[\/PLAN_STEP\]/,
-  /\[PLAN_FILE[^\]]*\]/,
-  /\[\/PLAN_FILE\]/,
   /\[PR_CREATED[^\]]*\]/,
   /\[\/PR_CREATED\]/,
   /\[CI_STATUS[^\]]*\]/,

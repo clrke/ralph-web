@@ -174,11 +174,9 @@ describe('ClaudeOrchestrator', () => {
 
       const mockOutput = JSON.stringify({
         result: `
-[PLAN_MODE_ENTERED]
 [PLAN_STEP id="1" parent="null" status="pending"]
 Create authentication
 [/PLAN_STEP]
-[PLAN_MODE_EXITED]
 `,
         session_id: 'session-456',
         cost_usd: 0.02,
@@ -190,8 +188,6 @@ Create authentication
 
       const result = await spawnPromise;
 
-      expect(result.parsed.planModeEntered).toBe(true);
-      expect(result.parsed.planModeExited).toBe(true);
       expect(result.parsed.planSteps).toHaveLength(1);
       expect(result.parsed.planSteps[0].id).toBe('1');
     });

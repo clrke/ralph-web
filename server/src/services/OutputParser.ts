@@ -79,10 +79,6 @@ export interface ParsedMarker {
   planSteps: ParsedPlanStep[];
   stepCompleted: ParsedStepComplete | null;
   stepsCompleted: ParsedStepComplete[];
-  /** @deprecated Not used for business logic. Will be removed in future version. */
-  planModeEntered: boolean;
-  /** @deprecated Not used for business logic. Will be removed in future version. */
-  planModeExited: boolean;
   implementationComplete: boolean;
   implementationSummary: string | null;
   implementationStatus: ParsedImplementationStatus | null;
@@ -106,8 +102,6 @@ export class OutputParser {
       planSteps: this.parsePlanSteps(input),
       stepCompleted: stepsCompleted.length > 0 ? stepsCompleted[stepsCompleted.length - 1] : null,
       stepsCompleted,
-      planModeEntered: input.includes('[PLAN_MODE_ENTERED]'),
-      planModeExited: input.includes('[PLAN_MODE_EXITED]'),
       implementationComplete: input.includes('[IMPLEMENTATION_COMPLETE]'),
       implementationSummary: implementationInfo.summary,
       implementationStatus: this.parseImplementationStatus(input),
