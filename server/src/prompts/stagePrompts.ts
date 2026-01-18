@@ -3,6 +3,19 @@ import { escapeMarkers } from '../utils/sanitizeInput';
 import { hasValidationContext } from '../utils/validationContextExtractor';
 
 /**
+ * Options for prompt generation that control whether agents are defined
+ * externally via the --agents CLI flag or embedded in the prompt.
+ */
+export interface PromptOptions {
+  /**
+   * When true, agents are configured via the --agents CLI flag.
+   * Prompts will reference agent names only, without full instructions.
+   * This reduces prompt length by ~30-50%.
+   */
+  useExternalAgents?: boolean;
+}
+
+/**
  * Sanitize user-provided session fields to prevent prompt injection.
  * Returns a copy of the session with escaped markers in user input fields.
  */
@@ -216,6 +229,10 @@ Your plan will be automatically validated. To pass validation:
 /**
  * Agent definitions for streamlined prompts.
  * Maps agent type to its exploration instructions.
+ *
+ * NOTE: When useExternalAgents is true, these instructions are provided via
+ * the --agents CLI flag (see STAGE_AGENTS in ClaudeOrchestrator.ts).
+ * The prompt will reference agent names only without embedding full instructions.
  */
 const AGENT_DEFINITIONS: Record<string, { name: string; instructions: string }> = {
   frontend: {
@@ -266,10 +283,14 @@ const AGENT_DEFINITIONS: Record<string, { name: string; instructions: string }> 
  * Build Stage 1: Streamlined Feature Discovery prompt
  * A focused version for simple/trivial changes that only spawns relevant agents.
  * Uses session.suggestedAgents to determine which agents to spawn.
+ *
+ * @param session - The session containing feature information
+ * @param options - Optional prompt options (useExternalAgents to reduce prompt length)
  */
-export function buildStage1PromptStreamlined(session: Session): string {
+export function buildStage1PromptStreamlined(session: Session, options?: PromptOptions): string {
   // Sanitize user-provided fields to prevent marker injection
   const sanitized = sanitizeSessionFields(session);
+  const useExternalAgents = options?.useExternalAgents ?? false;
 
   const acceptanceCriteriaSection =
     sanitized.acceptanceCriteria.length > 0
@@ -299,12 +320,20 @@ ${sanitized.technicalNotes}`
   const validAgents = rawSuggestedAgents.filter((a) => AGENT_DEFINITIONS[a]);
   const suggestedAgents = validAgents.length > 0 ? validAgents : ALL_AGENT_KEYS;
 
-  const agentSections = suggestedAgents
-    .map((agentType, index) => {
-      const agent = AGENT_DEFINITIONS[agentType];
-      return `${index + 1}. **${agent.name}**: ${agent.instructions}`;
-    })
-    .join('\n\n');
+  // When using external agents, just reference agent names without full instructions
+  const agentSections = useExternalAgents
+    ? suggestedAgents
+        .map((agentType, index) => {
+          const agent = AGENT_DEFINITIONS[agentType];
+          return `${index + 1}. **${agent.name}** (${agentType})`;
+        })
+        .join('\n')
+    : suggestedAgents
+        .map((agentType, index) => {
+          const agent = AGENT_DEFINITIONS[agentType];
+          return `${index + 1}. **${agent.name}**: ${agent.instructions}`;
+        })
+        .join('\n\n');
 
   // For simple changes, always include a quick architecture check
   const architectureNote =
@@ -599,6 +628,10 @@ How should we address this?
 /**
  * Review agent definitions for streamlined Stage 2.
  * Maps agent type to focused review instructions for simple changes.
+ *
+ * NOTE: When useExternalAgents is true, these instructions are provided via
+ * the --agents CLI flag (see STAGE_AGENTS in ClaudeOrchestrator.ts).
+ * The prompt will reference agent names only without embedding full instructions.
  */
 const STAGE2_REVIEW_AGENTS: Record<string, { name: string; focus: string }> = {
   frontend: {
@@ -648,12 +681,20 @@ const STAGE2_REVIEW_AGENTS: Record<string, { name: string; focus: string }> = {
 /**
  * Build Stage 2: Streamlined Plan Review prompt for simple changes.
  * Uses reduced iterations (3 instead of 10) and spawns only relevant review agents.
+ *
+ * @param session - The session containing feature information
+ * @param plan - The plan to review
+ * @param currentIteration - Current review iteration number
+ * @param options - Optional prompt options (useExternalAgents to reduce prompt length)
  */
 export function buildStage2PromptStreamlined(
   session: Session,
   plan: Plan,
-  currentIteration: number
+  currentIteration: number,
+  options?: PromptOptions
 ): string {
+  const useExternalAgents = options?.useExternalAgents ?? false;
+
   const planStepsText =
     plan.steps.length > 0
       ? plan.steps
@@ -687,14 +728,24 @@ ${session.planValidationContext}
 
   // Build review agents section based on suggestedAgents
   const suggestedAgents = session.suggestedAgents || ['frontend', 'backend'];
-  const reviewAgentSections = suggestedAgents
-    .map((agentType, index) => {
-      const agent = STAGE2_REVIEW_AGENTS[agentType];
-      if (!agent) return null;
-      return `   ${index + 1}. **${agent.name}**: ${agent.focus}`;
-    })
-    .filter(Boolean)
-    .join('\n\n');
+  // When using external agents, just reference agent names without full instructions
+  const reviewAgentSections = useExternalAgents
+    ? suggestedAgents
+        .map((agentType, index) => {
+          const agent = STAGE2_REVIEW_AGENTS[agentType];
+          if (!agent) return null;
+          return `   ${index + 1}. **${agent.name}** (${agentType})`;
+        })
+        .filter(Boolean)
+        .join('\n')
+    : suggestedAgents
+        .map((agentType, index) => {
+          const agent = STAGE2_REVIEW_AGENTS[agentType];
+          if (!agent) return null;
+          return `   ${index + 1}. **${agent.name}**: ${agent.focus}`;
+        })
+        .filter(Boolean)
+        .join('\n\n');
 
   return `You are reviewing a ${session.assessedComplexity || 'simple'} change. This is a focused review.
 ${validationContextSection}
@@ -1590,6 +1641,10 @@ Fix: [Brief title]
 /**
  * Review agent definitions for streamlined Stage 5.
  * Maps agent type to focused review instructions for simple changes.
+ *
+ * NOTE: When useExternalAgents is true, these instructions are provided via
+ * the --agents CLI flag (see STAGE_AGENTS in ClaudeOrchestrator.ts).
+ * The prompt will reference agent names only without embedding full instructions.
  */
 const STAGE5_REVIEW_AGENTS: Record<string, { name: string; focus: string }> = {
   frontend: {
@@ -1640,12 +1695,20 @@ const STAGE5_REVIEW_AGENTS: Record<string, { name: string; focus: string }> = {
 /**
  * Build Stage 5: Streamlined PR Review prompt for simple changes.
  * Uses fewer review agents and focused review criteria.
+ *
+ * @param session - The session containing feature information
+ * @param plan - The implementation plan
+ * @param prInfo - Pull request information (title, branch, url)
+ * @param options - Optional prompt options (useExternalAgents to reduce prompt length)
  */
 export function buildStage5PromptStreamlined(
   session: Session,
   plan: Plan,
-  prInfo: { title: string; branch: string; url: string }
+  prInfo: { title: string; branch: string; url: string },
+  options?: PromptOptions
 ): string {
+  const useExternalAgents = options?.useExternalAgents ?? false;
+
   // Sanitize user-provided fields to prevent marker injection
   const sanitized = sanitizeSessionFields(session);
 
@@ -1660,14 +1723,24 @@ export function buildStage5PromptStreamlined(
   // Ensure CI/infrastructure is always included
   const agentsToUse = [...new Set([...suggestedAgents, 'infrastructure'])];
 
-  const reviewAgentSections = agentsToUse
-    .map((agentType, index) => {
-      const agent = STAGE5_REVIEW_AGENTS[agentType];
-      if (!agent) return null;
-      return `${index + 1}. **${agent.name}**: ${agent.focus}`;
-    })
-    .filter(Boolean)
-    .join('\n\n');
+  // When using external agents, just reference agent names without full instructions
+  const reviewAgentSections = useExternalAgents
+    ? agentsToUse
+        .map((agentType, index) => {
+          const agent = STAGE5_REVIEW_AGENTS[agentType];
+          if (!agent) return null;
+          return `${index + 1}. **${agent.name}** (${agentType})`;
+        })
+        .filter(Boolean)
+        .join('\n')
+    : agentsToUse
+        .map((agentType, index) => {
+          const agent = STAGE5_REVIEW_AGENTS[agentType];
+          if (!agent) return null;
+          return `${index + 1}. **${agent.name}**: ${agent.focus}`;
+        })
+        .filter(Boolean)
+        .join('\n\n');
 
   // Get the plan.json path from the plan.md path
   const planJsonPath = session.claudePlanFilePath

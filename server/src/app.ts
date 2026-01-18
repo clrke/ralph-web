@@ -37,6 +37,11 @@ import {
   buildSingleStepPromptLean,
   StepModificationContext,
 } from './prompts/stagePrompts';
+import {
+  getStage1ExplorationAgents,
+  getStage2ReviewAgents,
+  getStage5PRReviewAgents,
+} from './config/agentConfigs';
 import { Session, PlanStep, DEFAULT_USER_PREFERENCES, UserPreferences } from '@claude-code-web/shared';
 import { ClaudeResult } from './services/ClaudeOrchestrator';
 import { Plan, Question } from '@claude-code-web/shared';
@@ -443,12 +448,16 @@ async function spawnStage1ForPromotedSession(
   await resultHandler.saveConversationStart(sessionDir, 1, prompt);
 
   // Spawn Claude for Stage 1
+  // Get agents for Stage 1, filtered by session.suggestedAgents if available
+  const stage1Agents = getStage1ExplorationAgents(promotedSession.suggestedAgents);
+
   let hasReceivedOutput = false;
   orchestrator.spawn({
     prompt,
     projectPath: promotedSession.projectPath,
     sessionId: promotedSession.claudeSessionId || undefined,
-    allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+    allowedTools: orchestrator.getStageTools(1),
+    agents: stage1Agents,
     onOutput: (output, isComplete) => {
       if (!hasReceivedOutput) {
         hasReceivedOutput = true;
@@ -481,11 +490,15 @@ async function spawnStage1ForPromotedSession(
 
         const updatedSession = await sessionManager.getSession(promotedSession.projectId, promotedSession.featureId);
         if (updatedSession && effectiveValidation.missingContext) {
+          // Get agents for retry spawn (use same agents as initial spawn)
+          const retryStage1Agents = getStage1ExplorationAgents(updatedSession.suggestedAgents);
+
           orchestrator.spawn({
             prompt: effectiveValidation.missingContext,
             projectPath: updatedSession.projectPath,
             sessionId: result.sessionId || undefined,
-            allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+            allowedTools: orchestrator.getStageTools(1),
+            agents: retryStage1Agents,
             onOutput: (output, isComplete) => {
               eventBroadcaster?.claudeOutput(updatedSession.projectId, updatedSession.featureId, output, isComplete);
             },
@@ -589,6 +602,9 @@ async function spawnStage2Review(
   // Save "started" conversation entry immediately
   await resultHandler.saveConversationStart(sessionDir, 2, prompt);
 
+  // Get agents for Stage 2, filtered by session.suggestedAgents if available
+  const stage2Agents = getStage2ReviewAgents(session.suggestedAgents);
+
   // Spawn Claude with --resume if we have a session ID
   let hasReceivedOutput = false;
   orchestrator.spawn({
@@ -596,6 +612,7 @@ async function spawnStage2Review(
     projectPath: session.projectPath,
     sessionId: session.claudeSessionId || undefined,
     allowedTools: orchestrator.getStageTools(2),
+    agents: stage2Agents,
     onOutput: (output, isComplete) => {
       // Broadcast processing_output on first output received
       if (!hasReceivedOutput) {
@@ -2070,6 +2087,9 @@ async function spawnStage5PRReview(
   // Save "started" conversation entry immediately
   await resultHandler.saveConversationStart(sessionDir, 5, prompt);
 
+  // Get agents for Stage 5, filtered by session.suggestedAgents if available
+  const stage5Agents = getStage5PRReviewAgents(session.suggestedAgents);
+
   // Spawn Claude with Stage 5 tools
   let hasReceivedOutput = false;
   orchestrator.spawn({
@@ -2077,6 +2097,7 @@ async function spawnStage5PRReview(
     projectPath: session.projectPath,
     sessionId: session.claudeSessionId || undefined,
     allowedTools: orchestrator.getStageTools(5),
+    agents: stage5Agents,
     onOutput: (output, isComplete) => {
       // Broadcast processing_output on first output received
       if (!hasReceivedOutput) {
@@ -4326,11 +4347,13 @@ After creating all steps, write the plan to the file.`;
 
                 if (updatedSession) {
                   // Fire-and-forget re-prompt
+                  const retryAgents = getStage1ExplorationAgents(updatedSession.suggestedAgents);
                   orchestrator.spawn({
                     prompt: effectiveValidation.missingContext,
                     projectPath: updatedSession.projectPath,
                     sessionId: result.sessionId || undefined,
-                    allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+                    allowedTools: orchestrator.getStageTools(1),
+                    agents: retryAgents,
                     onOutput: (out: string, done: boolean) => eventBroadcaster?.claudeOutput(projectId, featureId, out, done),
                   }).then(async (retryResult) => {
                     await resultHandler.handleStage1Result(updatedSession, retryResult, effectiveValidation.missingContext!);

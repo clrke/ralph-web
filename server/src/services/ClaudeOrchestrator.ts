@@ -1,5 +1,7 @@
 import { spawn } from 'child_process';
 import { OutputParser, ParsedMarker } from './OutputParser';
+import type { AgentConfig, AgentsJson } from '../config/agentSchema';
+import { validateAgentsConfig, serializeAgentsConfig } from '../config/agentSchema';
 
 export type OutputCallback = (chunk: string, isComplete: boolean) => void;
 
@@ -11,6 +13,8 @@ export interface SpawnOptions {
   skipPermissions?: boolean;
   timeoutMs?: number;
   onOutput?: OutputCallback;
+  /** Optional subagent configurations to pass via --agents flag */
+  agents?: AgentsJson;
 }
 
 export interface ClaudeCommand {
@@ -52,6 +56,194 @@ const STAGE_TOOLS: Record<number, string[]> = {
   3: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'Task'],  // Implementation - full access including Task for complex multi-step work
   4: ['Read', 'Bash(git:*)', 'Bash(gh:*)'],  // Restricted to git and gh commands for PR creation
   5: ['Read', 'Glob', 'Grep', 'Task', 'Bash(git:diff*)', 'Bash(gh:pr*)', 'WebFetch', 'WebSearch', 'Edit(~/.claude-web/**/plan.md)', 'Edit(~/.claude-web/**/plan.json)'],  // PR review - read-only with limited diff/PR access + plan file edit
+};
+
+/**
+ * Agent definitions for each stage.
+ * These are the subagents that Claude can delegate to during each stage.
+ * All exploration/review agents use Haiku model for cost efficiency.
+ *
+ * Stage 1 (Discovery): Exploration agents for understanding the codebase
+ * Stage 2 (Plan Review): Review agents for validating the plan
+ * Stage 5 (PR Review): Review agents for validating the PR
+ *
+ * Note: Stages 3 (Implementation) and 4 (PR Creation) don't use subagents.
+ */
+export const STAGE_AGENTS: Record<number, Record<string, AgentConfig>> = {
+  // Stage 1: Discovery - Exploration agents
+  1: {
+    frontend: {
+      description: 'Explore UI layer patterns. Use proactively for frontend-related exploration.',
+      prompt: `Explore UI layer patterns.
+- Find: Components related to this feature, state management, styling approach
+- Check: Existing patterns for similar UI, reusable components, routing
+- Output: Relevant UI files, patterns to follow, potential reuse`,
+      tools: ['Read', 'Glob', 'Grep'],
+      model: 'haiku',
+    },
+    backend: {
+      description: 'Explore API/server layer patterns. Use proactively for backend-related exploration.',
+      prompt: `Explore API/server layer patterns.
+- Find: Related API routes, controllers, middleware, business logic
+- Check: Auth patterns, error handling, validation approach
+- Output: Relevant API files, patterns to follow, potential reuse`,
+      tools: ['Read', 'Glob', 'Grep'],
+      model: 'haiku',
+    },
+    database: {
+      description: 'Explore data layer patterns. Use proactively for database-related exploration.',
+      prompt: `Explore data layer patterns.
+- Find: Related models/schemas, migrations, query patterns
+- Check: ORM usage, relationships, indexing patterns
+- Output: Relevant data files, schema patterns to follow`,
+      tools: ['Read', 'Glob', 'Grep'],
+      model: 'haiku',
+    },
+    testing: {
+      description: 'Explore testing patterns. Use proactively for test-related exploration.',
+      prompt: `Explore testing patterns.
+- Find: Test files for similar features, test utilities, mocks
+- Check: Testing framework, coverage patterns, test organization
+- Output: Test patterns to follow, testing requirements`,
+      tools: ['Read', 'Glob', 'Grep'],
+      model: 'haiku',
+    },
+    infrastructure: {
+      description: 'Explore infrastructure and CI/CD patterns. Use proactively for infra-related exploration.',
+      prompt: `Explore infrastructure and CI/CD patterns.
+- Find: CI/CD configs, deployment scripts, environment configs
+- Check: Build process, deployment pipeline, environment management
+- Output: Relevant config files, CI/CD patterns to follow`,
+      tools: ['Read', 'Glob', 'Grep'],
+      model: 'haiku',
+    },
+    documentation: {
+      description: 'Explore documentation patterns. Use proactively for docs-related exploration.',
+      prompt: `Explore documentation patterns.
+- Find: README files, API docs, inline documentation
+- Check: Documentation standards, existing doc structure
+- Output: Relevant docs, documentation patterns to follow`,
+      tools: ['Read', 'Glob', 'Grep'],
+      model: 'haiku',
+    },
+  },
+
+  // Stage 2: Plan Review - Review agents
+  2: {
+    frontend: {
+      description: 'Review UI aspects of the plan. Use for frontend-related plan review.',
+      prompt: `Review UI aspects:
+- Component correctness and state handling
+- User input validation
+- Accessibility basics`,
+      tools: ['Read', 'Glob', 'Grep'],
+      model: 'haiku',
+    },
+    backend: {
+      description: 'Review API aspects of the plan. Use for backend-related plan review.',
+      prompt: `Review API aspects:
+- Endpoint correctness
+- Input validation and error handling
+- Auth checks if applicable`,
+      tools: ['Read', 'Glob', 'Grep'],
+      model: 'haiku',
+    },
+    database: {
+      description: 'Review data layer aspects of the plan. Use for database-related plan review.',
+      prompt: `Review data layer:
+- Schema correctness
+- Query efficiency
+- Data validation`,
+      tools: ['Read', 'Glob', 'Grep'],
+      model: 'haiku',
+    },
+    testing: {
+      description: 'Review test coverage of the plan. Use for test-related plan review.',
+      prompt: `Review test coverage:
+- Key functionality tested
+- Edge cases covered
+- Test quality`,
+      tools: ['Read', 'Glob', 'Grep'],
+      model: 'haiku',
+    },
+    infrastructure: {
+      description: 'Review infrastructure aspects of the plan. Use for infra-related plan review.',
+      prompt: `Review infra aspects:
+- Config correctness
+- CI/CD impact
+- Environment handling`,
+      tools: ['Read', 'Glob', 'Grep'],
+      model: 'haiku',
+    },
+    documentation: {
+      description: 'Review documentation aspects of the plan. Use for docs-related plan review.',
+      prompt: `Review documentation:
+- API docs if applicable
+- README updates
+- Code comments`,
+      tools: ['Read', 'Glob', 'Grep'],
+      model: 'haiku',
+    },
+  },
+
+  // Stage 5: PR Review - Review agents with diff access
+  5: {
+    frontend: {
+      description: 'Review UI changes in the PR. Use for frontend-related PR review.',
+      prompt: `Review UI changes:
+- git diff main...HEAD -- '*.tsx' '*.ts' '*.css' (client paths)
+- Correctness: Component logic, state handling
+- Basic security: XSS risks, input sanitization
+- Output: List of UI issues with file:line refs`,
+      tools: ['Read', 'Glob', 'Grep', 'Bash(git:diff*)'],
+      model: 'haiku',
+    },
+    backend: {
+      description: 'Review API changes in the PR. Use for backend-related PR review.',
+      prompt: `Review API changes:
+- git diff main...HEAD -- (server paths)
+- Correctness: Endpoint logic, error handling
+- Basic security: Auth checks, input validation
+- Output: List of backend issues with file:line refs`,
+      tools: ['Read', 'Glob', 'Grep', 'Bash(git:diff*)'],
+      model: 'haiku',
+    },
+    database: {
+      description: 'Review data layer changes in the PR. Use for database-related PR review.',
+      prompt: `Review data layer:
+- git diff main...HEAD -- (schema/migration paths)
+- Schema correctness, migration safety
+- Output: List of data issues with file:line refs`,
+      tools: ['Read', 'Glob', 'Grep', 'Bash(git:diff*)'],
+      model: 'haiku',
+    },
+    testing: {
+      description: 'Verify test coverage of the PR. Use for test-related PR review.',
+      prompt: `Verify test coverage:
+- Find test files matching changed source files
+- Check: New code has tests
+- Output: List of untested code paths`,
+      tools: ['Read', 'Glob', 'Grep'],
+      model: 'haiku',
+    },
+    infrastructure: {
+      description: 'Check CI status of the PR. Use for infra-related PR review.',
+      prompt: `Check CI status:
+- Run: gh pr checks --watch
+- Output: Final status (passing/failing)`,
+      tools: ['Read', 'Glob', 'Grep', 'Bash(gh:pr*)'],
+      model: 'haiku',
+    },
+    documentation: {
+      description: 'Review documentation changes in the PR. Use for docs-related PR review.',
+      prompt: `Review documentation changes:
+- Check: README updates, API docs
+- Verify: Docs match implementation
+- Output: Documentation gaps`,
+      tools: ['Read', 'Glob', 'Grep'],
+      model: 'haiku',
+    },
+  },
 };
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
@@ -264,6 +456,21 @@ export class ClaudeOrchestrator {
       args.push('--dangerously-skip-permissions');
     }
 
+    // Add --agents flag if agents are provided
+    if (options.agents && Object.keys(options.agents).length > 0) {
+      // Validate agents configuration with Zod
+      const validation = validateAgentsConfig(options.agents);
+      if (!validation.success) {
+        throw new Error(
+          `Invalid agents configuration: ${validation.errors?.join(', ')}`
+        );
+      }
+
+      // Serialize and check size limit (throws if exceeds 10KB)
+      const agentsJson = serializeAgentsConfig(options.agents);
+      args.push('--agents', agentsJson);
+    }
+
     args.push('-p', options.prompt);
 
     return {
@@ -448,6 +655,37 @@ export class ClaudeOrchestrator {
 
   getStageTools(stage: number): string[] {
     return STAGE_TOOLS[stage] || STAGE_TOOLS[1];
+  }
+
+  /**
+   * Get agent configurations for a given stage.
+   * Returns undefined if the stage doesn't use agents (e.g., Stage 3, 4).
+   *
+   * @param stage - The stage number (1, 2, or 5)
+   * @param agentTypes - Optional array of agent types to filter by (e.g., ['frontend', 'backend'])
+   * @returns AgentsJson object ready for CLI serialization, or undefined if no agents for this stage
+   */
+  getStageAgents(stage: number, agentTypes?: string[]): AgentsJson | undefined {
+    const stageAgents = STAGE_AGENTS[stage];
+    if (!stageAgents) {
+      return undefined;
+    }
+
+    // If no filter provided, return all agents for this stage
+    if (!agentTypes || agentTypes.length === 0) {
+      return stageAgents;
+    }
+
+    // Filter to only requested agent types
+    const filteredAgents: AgentsJson = {};
+    for (const agentType of agentTypes) {
+      if (stageAgents[agentType]) {
+        filteredAgents[agentType] = stageAgents[agentType];
+      }
+    }
+
+    // Return undefined if no matching agents found
+    return Object.keys(filteredAgents).length > 0 ? filteredAgents : undefined;
   }
 
   shouldSkipPermissions(stage: number): boolean {

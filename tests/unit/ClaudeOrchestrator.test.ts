@@ -3,6 +3,7 @@ import {
   ClaudeResult,
   SpawnOptions,
   MAX_PLAN_VALIDATION_ATTEMPTS,
+  STAGE_AGENTS,
 } from '../../server/src/services/ClaudeOrchestrator';
 import { OutputParser } from '../../server/src/services/OutputParser';
 import { EventEmitter } from 'events';
@@ -78,6 +79,154 @@ describe('ClaudeOrchestrator', () => {
       });
 
       expect(cmd.cwd).toBe('/my/project');
+    });
+
+    it('should include --agents flag when agents are provided', () => {
+      const agents = {
+        reviewer: {
+          description: 'Code reviewer',
+          prompt: 'Review code for quality',
+          tools: ['Read', 'Grep'],
+          model: 'haiku' as const,
+        },
+      };
+
+      const cmd = orchestrator.buildCommand({
+        prompt: 'Review code',
+        projectPath: '/test/project',
+        agents,
+      });
+
+      expect(cmd.args).toContain('--agents');
+      // Find the agents JSON argument
+      const agentsIndex = cmd.args.indexOf('--agents');
+      const agentsJson = cmd.args[agentsIndex + 1];
+      const parsedAgents = JSON.parse(agentsJson);
+      expect(parsedAgents.reviewer.description).toBe('Code reviewer');
+      expect(parsedAgents.reviewer.prompt).toBe('Review code for quality');
+      expect(parsedAgents.reviewer.tools).toEqual(['Read', 'Grep']);
+      expect(parsedAgents.reviewer.model).toBe('haiku');
+    });
+
+    it('should not include --agents flag when agents is empty object', () => {
+      const cmd = orchestrator.buildCommand({
+        prompt: 'Test',
+        projectPath: '/test/project',
+        agents: {},
+      });
+
+      expect(cmd.args).not.toContain('--agents');
+    });
+
+    it('should not include --agents flag when agents is undefined', () => {
+      const cmd = orchestrator.buildCommand({
+        prompt: 'Test',
+        projectPath: '/test/project',
+      });
+
+      expect(cmd.args).not.toContain('--agents');
+    });
+
+    it('should throw error for invalid agent configuration (missing description)', () => {
+      const invalidAgents = {
+        reviewer: {
+          prompt: 'Review code',
+          tools: ['Read'],
+        },
+      } as any;
+
+      expect(() => {
+        orchestrator.buildCommand({
+          prompt: 'Test',
+          projectPath: '/test/project',
+          agents: invalidAgents,
+        });
+      }).toThrow('Invalid agents configuration');
+    });
+
+    it('should throw error for invalid agent configuration (missing prompt)', () => {
+      const invalidAgents = {
+        reviewer: {
+          description: 'Code reviewer',
+          tools: ['Read'],
+        },
+      } as any;
+
+      expect(() => {
+        orchestrator.buildCommand({
+          prompt: 'Test',
+          projectPath: '/test/project',
+          agents: invalidAgents,
+        });
+      }).toThrow('Invalid agents configuration');
+    });
+
+    it('should throw error when agents JSON exceeds size limit', () => {
+      // Create a very large agent config
+      const largePrompt = 'x'.repeat(15000); // 15KB prompt alone
+      const largeAgents = {
+        reviewer: {
+          description: 'Code reviewer',
+          prompt: largePrompt,
+        },
+      };
+
+      expect(() => {
+        orchestrator.buildCommand({
+          prompt: 'Test',
+          projectPath: '/test/project',
+          agents: largeAgents,
+        });
+      }).toThrow('exceeds maximum allowed size');
+    });
+
+    it('should include multiple agents in --agents flag', () => {
+      const agents = {
+        frontend: {
+          description: 'Frontend reviewer',
+          prompt: 'Review UI code',
+          tools: ['Read', 'Glob'],
+          model: 'haiku' as const,
+        },
+        backend: {
+          description: 'Backend reviewer',
+          prompt: 'Review API code',
+          tools: ['Read', 'Grep'],
+          model: 'haiku' as const,
+        },
+      };
+
+      const cmd = orchestrator.buildCommand({
+        prompt: 'Review all code',
+        projectPath: '/test/project',
+        agents,
+      });
+
+      const agentsIndex = cmd.args.indexOf('--agents');
+      const agentsJson = cmd.args[agentsIndex + 1];
+      const parsedAgents = JSON.parse(agentsJson);
+      expect(Object.keys(parsedAgents)).toHaveLength(2);
+      expect(parsedAgents.frontend).toBeDefined();
+      expect(parsedAgents.backend).toBeDefined();
+    });
+
+    it('should place --agents before -p in arguments', () => {
+      const agents = {
+        reviewer: {
+          description: 'Code reviewer',
+          prompt: 'Review code',
+        },
+      };
+
+      const cmd = orchestrator.buildCommand({
+        prompt: 'Review code',
+        projectPath: '/test/project',
+        agents,
+      });
+
+      const agentsIndex = cmd.args.indexOf('--agents');
+      const promptIndex = cmd.args.indexOf('-p');
+      expect(agentsIndex).toBeLessThan(promptIndex);
     });
   });
 
@@ -662,6 +811,165 @@ Create authentication
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('succeeded after 1 attempt(s)')
       );
+    });
+  });
+
+  describe('STAGE_AGENTS', () => {
+    it('should be exported and define agents for Stage 1', () => {
+      expect(STAGE_AGENTS[1]).toBeDefined();
+      expect(Object.keys(STAGE_AGENTS[1])).toContain('frontend');
+      expect(Object.keys(STAGE_AGENTS[1])).toContain('backend');
+      expect(Object.keys(STAGE_AGENTS[1])).toContain('database');
+      expect(Object.keys(STAGE_AGENTS[1])).toContain('testing');
+      expect(Object.keys(STAGE_AGENTS[1])).toContain('infrastructure');
+      expect(Object.keys(STAGE_AGENTS[1])).toContain('documentation');
+    });
+
+    it('should be exported and define agents for Stage 2', () => {
+      expect(STAGE_AGENTS[2]).toBeDefined();
+      expect(Object.keys(STAGE_AGENTS[2])).toContain('frontend');
+      expect(Object.keys(STAGE_AGENTS[2])).toContain('backend');
+      expect(Object.keys(STAGE_AGENTS[2])).toContain('database');
+    });
+
+    it('should be exported and define agents for Stage 5', () => {
+      expect(STAGE_AGENTS[5]).toBeDefined();
+      expect(Object.keys(STAGE_AGENTS[5])).toContain('frontend');
+      expect(Object.keys(STAGE_AGENTS[5])).toContain('backend');
+      expect(Object.keys(STAGE_AGENTS[5])).toContain('infrastructure');
+    });
+
+    it('should not define agents for Stage 3 (implementation)', () => {
+      expect(STAGE_AGENTS[3]).toBeUndefined();
+    });
+
+    it('should not define agents for Stage 4 (PR creation)', () => {
+      expect(STAGE_AGENTS[4]).toBeUndefined();
+    });
+
+    it('should use haiku model for all agents', () => {
+      const stages = [1, 2, 5];
+      for (const stage of stages) {
+        const agents = STAGE_AGENTS[stage];
+        for (const agentName of Object.keys(agents)) {
+          expect(agents[agentName].model).toBe('haiku');
+        }
+      }
+    });
+
+    it('should have required description and prompt fields for all agents', () => {
+      const stages = [1, 2, 5];
+      for (const stage of stages) {
+        const agents = STAGE_AGENTS[stage];
+        for (const agentName of Object.keys(agents)) {
+          const agent = agents[agentName];
+          expect(agent.description).toBeDefined();
+          expect(agent.description.length).toBeGreaterThan(0);
+          expect(agent.prompt).toBeDefined();
+          expect(agent.prompt.length).toBeGreaterThan(0);
+        }
+      }
+    });
+
+    it('should have read-only tools for Stage 1 and 2 agents', () => {
+      const stages = [1, 2];
+      for (const stage of stages) {
+        const agents = STAGE_AGENTS[stage];
+        for (const agentName of Object.keys(agents)) {
+          const tools = agents[agentName].tools || [];
+          // Should not have write/edit capabilities
+          expect(tools).not.toContain('Write');
+          expect(tools).not.toContain('Edit');
+          expect(tools).not.toContain('Bash');
+        }
+      }
+    });
+
+    it('should allow limited Bash access for Stage 5 reviewers', () => {
+      const stage5Agents = STAGE_AGENTS[5];
+
+      // Frontend reviewer should have git diff access
+      expect(stage5Agents.frontend.tools).toContain('Bash(git:diff*)');
+
+      // Infrastructure reviewer should have gh pr access
+      expect(stage5Agents.infrastructure.tools).toContain('Bash(gh:pr*)');
+
+      // Testing reviewer should NOT have bash access
+      expect(stage5Agents.testing.tools).not.toContain('Bash');
+    });
+  });
+
+  describe('getStageAgents', () => {
+    it('should return all agents for Stage 1', () => {
+      const agents = orchestrator.getStageAgents(1);
+
+      expect(agents).toBeDefined();
+      expect(Object.keys(agents!)).toContain('frontend');
+      expect(Object.keys(agents!)).toContain('backend');
+      expect(Object.keys(agents!)).toContain('database');
+      expect(Object.keys(agents!)).toContain('testing');
+      expect(Object.keys(agents!)).toContain('infrastructure');
+      expect(Object.keys(agents!)).toContain('documentation');
+    });
+
+    it('should return all agents for Stage 2', () => {
+      const agents = orchestrator.getStageAgents(2);
+
+      expect(agents).toBeDefined();
+      expect(Object.keys(agents!).length).toBe(6);
+    });
+
+    it('should return all agents for Stage 5', () => {
+      const agents = orchestrator.getStageAgents(5);
+
+      expect(agents).toBeDefined();
+      expect(Object.keys(agents!).length).toBe(6);
+    });
+
+    it('should return undefined for Stage 3 (no agents)', () => {
+      const agents = orchestrator.getStageAgents(3);
+      expect(agents).toBeUndefined();
+    });
+
+    it('should return undefined for Stage 4 (no agents)', () => {
+      const agents = orchestrator.getStageAgents(4);
+      expect(agents).toBeUndefined();
+    });
+
+    it('should filter agents by provided agent types', () => {
+      const agents = orchestrator.getStageAgents(1, ['frontend', 'backend']);
+
+      expect(agents).toBeDefined();
+      expect(Object.keys(agents!)).toEqual(['frontend', 'backend']);
+    });
+
+    it('should return undefined if no matching agent types', () => {
+      const agents = orchestrator.getStageAgents(1, ['nonexistent']);
+      expect(agents).toBeUndefined();
+    });
+
+    it('should filter out invalid agent types and return valid ones', () => {
+      const agents = orchestrator.getStageAgents(1, ['frontend', 'nonexistent', 'backend']);
+
+      expect(agents).toBeDefined();
+      expect(Object.keys(agents!)).toEqual(['frontend', 'backend']);
+    });
+
+    it('should return all agents when empty array is provided', () => {
+      const agents = orchestrator.getStageAgents(1, []);
+
+      expect(agents).toBeDefined();
+      expect(Object.keys(agents!).length).toBe(6);
+    });
+
+    it('should return agents compatible with AgentsJson type', () => {
+      const agents = orchestrator.getStageAgents(1, ['frontend']);
+
+      expect(agents).toBeDefined();
+      expect(agents!.frontend.description).toBeDefined();
+      expect(agents!.frontend.prompt).toBeDefined();
+      expect(agents!.frontend.model).toBe('haiku');
+      expect(agents!.frontend.tools).toContain('Read');
     });
   });
 });

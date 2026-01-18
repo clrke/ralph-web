@@ -975,4 +975,163 @@ describe('Streamlined Prompts', () => {
       });
     });
   });
+
+  describe('useExternalAgents option', () => {
+    const baseSession: Session = {
+      version: '1.0',
+      id: 'test-session-id',
+      projectId: 'test-project',
+      featureId: 'test-feature',
+      title: 'Test Feature',
+      featureDescription: 'A test feature description with enough detail',
+      projectPath: '/test/project',
+      acceptanceCriteria: [{ text: 'Feature works', checked: false, type: 'manual' }],
+      affectedFiles: ['src/component.tsx'],
+      technicalNotes: 'Use existing patterns',
+      baseBranch: 'main',
+      featureBranch: 'feature/test',
+      baseCommitSha: 'abc123',
+      status: 'discovery',
+      currentStage: 1,
+      replanningCount: 0,
+      claudeSessionId: null,
+      claudePlanFilePath: '/tmp/plan.md',
+      currentPlanVersion: 0,
+      claudeStage3SessionId: null,
+      prUrl: null,
+      sessionExpiresAt: '2026-01-12T00:00:00Z',
+      createdAt: '2026-01-11T00:00:00Z',
+      updatedAt: '2026-01-11T00:00:00Z',
+      assessedComplexity: 'simple',
+      suggestedAgents: ['frontend', 'backend'],
+    };
+
+    const mockPlan: Plan = {
+      id: 'plan-123',
+      sessionId: 'session-123',
+      status: 'pending',
+      version: 1,
+      planVersion: 1,
+      steps: [
+        {
+          id: 'step-1',
+          title: 'Implement feature',
+          description: 'Create the main component',
+          status: 'pending',
+          order: 0,
+          dependencies: [],
+          complexity: 'low',
+        },
+      ],
+      createdAt: '2026-01-11T00:00:00Z',
+      updatedAt: '2026-01-11T00:00:00Z',
+    };
+
+    const prInfo = {
+      title: 'feat: Test',
+      branch: 'feature/test',
+      url: 'https://github.com/test/repo/pull/123',
+    };
+
+    describe('buildStage1PromptStreamlined with useExternalAgents', () => {
+      it('should include full agent instructions when useExternalAgents is false', () => {
+        const prompt = buildStage1PromptStreamlined(baseSession, { useExternalAgents: false });
+
+        // Full instructions include detailed content
+        expect(prompt).toContain('Explore UI layer patterns');
+        expect(prompt).toContain('Explore API/server layer patterns');
+      });
+
+      it('should include only agent names when useExternalAgents is true', () => {
+        const prompt = buildStage1PromptStreamlined(baseSession, { useExternalAgents: true });
+
+        // Should have agent names with type in parentheses
+        expect(prompt).toContain('**Frontend Agent** (frontend)');
+        expect(prompt).toContain('**Backend Agent** (backend)');
+        // Should NOT have the full instructions
+        expect(prompt).not.toContain('Explore UI layer patterns');
+        expect(prompt).not.toContain('Explore API/server layer patterns');
+      });
+
+      it('should produce shorter prompt when useExternalAgents is true', () => {
+        const fullPrompt = buildStage1PromptStreamlined(baseSession, { useExternalAgents: false });
+        const leanPrompt = buildStage1PromptStreamlined(baseSession, { useExternalAgents: true });
+
+        expect(leanPrompt.length).toBeLessThan(fullPrompt.length);
+      });
+
+      it('should default to false when options is undefined', () => {
+        const promptNoOptions = buildStage1PromptStreamlined(baseSession);
+        const promptFalse = buildStage1PromptStreamlined(baseSession, { useExternalAgents: false });
+
+        // Both should include full instructions
+        expect(promptNoOptions).toContain('Explore UI layer patterns');
+        expect(promptFalse).toContain('Explore UI layer patterns');
+      });
+    });
+
+    describe('buildStage2PromptStreamlined with useExternalAgents', () => {
+      it('should include full agent focus when useExternalAgents is false', () => {
+        const prompt = buildStage2PromptStreamlined(baseSession, mockPlan, 1, { useExternalAgents: false });
+
+        // Full focus includes detailed content
+        expect(prompt).toContain('Component correctness');
+        expect(prompt).toContain('Endpoint correctness');
+      });
+
+      it('should include only agent names when useExternalAgents is true', () => {
+        const prompt = buildStage2PromptStreamlined(baseSession, mockPlan, 1, { useExternalAgents: true });
+
+        // Should have agent names with type in parentheses
+        expect(prompt).toContain('**Frontend Reviewer** (frontend)');
+        expect(prompt).toContain('**Backend Reviewer** (backend)');
+        // Should NOT have the full focus
+        expect(prompt).not.toContain('Component correctness');
+        expect(prompt).not.toContain('Endpoint correctness');
+      });
+
+      it('should produce shorter prompt when useExternalAgents is true', () => {
+        const fullPrompt = buildStage2PromptStreamlined(baseSession, mockPlan, 1, { useExternalAgents: false });
+        const leanPrompt = buildStage2PromptStreamlined(baseSession, mockPlan, 1, { useExternalAgents: true });
+
+        expect(leanPrompt.length).toBeLessThan(fullPrompt.length);
+      });
+    });
+
+    describe('buildStage5PromptStreamlined with useExternalAgents', () => {
+      it('should include full agent focus when useExternalAgents is false', () => {
+        const prompt = buildStage5PromptStreamlined(baseSession, mockPlan, prInfo, { useExternalAgents: false });
+
+        // Full focus includes detailed content
+        expect(prompt).toContain('git diff main...HEAD');
+        expect(prompt).toContain('Correctness:');
+      });
+
+      it('should include only agent names when useExternalAgents is true', () => {
+        const prompt = buildStage5PromptStreamlined(baseSession, mockPlan, prInfo, { useExternalAgents: true });
+
+        // Should have agent names with type in parentheses
+        expect(prompt).toContain('**Frontend Reviewer** (frontend)');
+        expect(prompt).toContain('**Backend Reviewer** (backend)');
+        expect(prompt).toContain('**CI Reviewer** (infrastructure)');
+        // Should NOT have the full focus
+        expect(prompt).not.toContain('git diff main...HEAD');
+      });
+
+      it('should produce shorter prompt when useExternalAgents is true', () => {
+        const fullPrompt = buildStage5PromptStreamlined(baseSession, mockPlan, prInfo, { useExternalAgents: false });
+        const leanPrompt = buildStage5PromptStreamlined(baseSession, mockPlan, prInfo, { useExternalAgents: true });
+
+        expect(leanPrompt.length).toBeLessThan(fullPrompt.length);
+      });
+
+      it('should always include infrastructure agent even when useExternalAgents is true', () => {
+        const session = { ...baseSession, suggestedAgents: ['frontend'] };
+        const prompt = buildStage5PromptStreamlined(session, mockPlan, prInfo, { useExternalAgents: true });
+
+        // Infrastructure (CI) should always be included
+        expect(prompt).toContain('(infrastructure)');
+      });
+    });
+  });
 });
