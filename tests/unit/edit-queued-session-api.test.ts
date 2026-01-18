@@ -23,7 +23,7 @@ describe('Edit Queued Session API Endpoint', () => {
   });
 
   afterEach(async () => {
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 50));
     try {
       await fs.remove(testDir);
     } catch {

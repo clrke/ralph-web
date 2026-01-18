@@ -24,7 +24,7 @@ describe('API Routes', () => {
 
   afterEach(async () => {
     // Small delay to allow fire-and-forget async operations to settle
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 50));
     try {
       await fs.remove(testDir);
     } catch {

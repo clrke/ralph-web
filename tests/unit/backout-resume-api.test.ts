@@ -30,7 +30,7 @@ describe('Backout/Resume API Endpoints', () => {
   });
 
   afterEach(async () => {
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 50));
     try {
       await fs.remove(testDir);
     } catch {
