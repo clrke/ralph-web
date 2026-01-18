@@ -1,6 +1,7 @@
 import { ClaudeOrchestrator, SpawnOptions, ClaudeResult } from '../../server/src/services/ClaudeOrchestrator';
 import { OutputParser } from '../../server/src/services/OutputParser';
 import { Session } from '@claude-code-web/shared';
+import { getStage1ExplorationAgents } from '../../server/src/config/agentConfigs';
 
 /**
  * Tests for Stage 1 sessionId preservation across different scenarios:
@@ -588,6 +589,118 @@ describe('Stage 1 SessionId - Mock Spawn Verification', () => {
       // Verify sessionId was not passed
       const callArgs = spawnSpy.mock.calls[0][0] as SpawnOptions;
       expect(callArgs.sessionId).toBeUndefined();
+    });
+  });
+});
+
+/**
+ * Tests for Stage 1 retry agents parameter.
+ *
+ * The Stage 1 retry spawn (validation re-prompt) in createApp should include
+ * the agents parameter to provide external agent definitions via --agents flag.
+ */
+describe('Stage 1 Retry Agents Parameter', () => {
+  let orchestrator: ClaudeOrchestrator;
+  let outputParser: OutputParser;
+
+  beforeEach(() => {
+    outputParser = new OutputParser();
+    orchestrator = new ClaudeOrchestrator(outputParser);
+  });
+
+  describe('Stage 1 retry should include agents parameter', () => {
+    it('should include --agents flag when agents are provided in Stage 1 retry', () => {
+      const retryAgents = getStage1ExplorationAgents();
+
+      const cmd = orchestrator.buildCommand({
+        prompt: 'Retry Stage 1 discovery with missing context',
+        projectPath: '/test/project',
+        sessionId: 'existing-session-123',
+        allowedTools: orchestrator.getStageTools(1),
+        agents: retryAgents,
+      });
+
+      expect(cmd.args).toContain('--agents');
+      // Verify agents JSON is present in args
+      const agentsIndex = cmd.args.indexOf('--agents');
+      expect(agentsIndex).toBeGreaterThan(-1);
+      const agentsJson = cmd.args[agentsIndex + 1];
+      expect(agentsJson).toBeTruthy();
+      expect(() => JSON.parse(agentsJson)).not.toThrow();
+    });
+
+    it('should use orchestrator.getStageTools(1) for consistency with other Stage 1 spawns', () => {
+      const stage1Tools = orchestrator.getStageTools(1);
+
+      // Verify expected Stage 1 tools
+      expect(stage1Tools).toContain('Read');
+      expect(stage1Tools).toContain('Glob');
+      expect(stage1Tools).toContain('Grep');
+      expect(stage1Tools).toContain('Task');
+
+      // These were the hardcoded tools previously - verify they match getStageTools(1)
+      const previouslyHardcodedTools = ['Read', 'Glob', 'Grep', 'Task'];
+      for (const tool of previouslyHardcodedTools) {
+        expect(stage1Tools).toContain(tool);
+      }
+    });
+
+    it('should filter agents by suggestedAgents when provided', () => {
+      // With no filter - should return all Stage 1 agents
+      const allAgents = getStage1ExplorationAgents();
+      expect(allAgents).toBeDefined();
+
+      // With specific filter - use actual agent names from STAGE_AGENTS
+      const filteredAgents = getStage1ExplorationAgents(['frontend', 'backend']);
+      expect(filteredAgents).toBeDefined();
+
+      if (filteredAgents && allAgents) {
+        // Filtered should have fewer or equal agents
+        expect(Object.keys(filteredAgents).length).toBeLessThanOrEqual(Object.keys(allAgents).length);
+
+        // Filtered should only contain requested agents
+        expect(Object.keys(filteredAgents)).toContain('frontend');
+        expect(Object.keys(filteredAgents)).toContain('backend');
+        expect(Object.keys(filteredAgents).length).toBe(2);
+      }
+    });
+
+    it('should return undefined agents when suggestedAgents filter matches nothing', () => {
+      const noMatchAgents = getStage1ExplorationAgents(['nonexistent-agent']);
+      expect(noMatchAgents).toBeUndefined();
+    });
+  });
+
+  describe('Stage 1 retry command structure with agents', () => {
+    it('should have correct command structure for Stage 1 retry with agents', () => {
+      const retryAgents = getStage1ExplorationAgents();
+      const sessionId = 'retry-session-456';
+
+      const cmd = orchestrator.buildCommand({
+        prompt: 'Re-prompt for missing context',
+        projectPath: '/test/project',
+        sessionId,
+        allowedTools: orchestrator.getStageTools(1),
+        agents: retryAgents,
+      });
+
+      // Should have --resume for sessionId
+      expect(cmd.args).toContain('--resume');
+      expect(cmd.args).toContain(sessionId);
+
+      // Should have --allowedTools
+      expect(cmd.args).toContain('--allowedTools');
+
+      // Should have --agents
+      expect(cmd.args).toContain('--agents');
+
+      // Should have -p for prompt
+      expect(cmd.args).toContain('-p');
+
+      // Verify --agents appears before -p (as per buildCommand implementation)
+      const agentsIndex = cmd.args.indexOf('--agents');
+      const promptIndex = cmd.args.indexOf('-p');
+      expect(agentsIndex).toBeLessThan(promptIndex);
     });
   });
 });

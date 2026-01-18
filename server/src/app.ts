@@ -4347,11 +4347,13 @@ After creating all steps, write the plan to the file.`;
 
                 if (updatedSession) {
                   // Fire-and-forget re-prompt
+                  const retryAgents = getStage1ExplorationAgents(updatedSession.suggestedAgents);
                   orchestrator.spawn({
                     prompt: effectiveValidation.missingContext,
                     projectPath: updatedSession.projectPath,
                     sessionId: result.sessionId || undefined,
-                    allowedTools: ['Read', 'Glob', 'Grep', 'Task'],
+                    allowedTools: orchestrator.getStageTools(1),
+                    agents: retryAgents,
                     onOutput: (out: string, done: boolean) => eventBroadcaster?.claudeOutput(projectId, featureId, out, done),
                   }).then(async (retryResult) => {
                     await resultHandler.handleStage1Result(updatedSession, retryResult, effectiveValidation.missingContext!);
